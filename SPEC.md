@@ -178,9 +178,140 @@ from the longest window a subscriber actually asked for rather than kept "just
 in case". A delta is handed out per record because that is what a live consumer
 wants; it is not handed out per record *because it is free*.
 
-## 3 onward
+## 3. Framing — where a record ends
 
-Reserved, each written by its batch: §3 framing (R1), §4 routing (R2), §5
-completion (R3), §6 subscriptions (R4), §7 ingest (R5 file and stdin, R6
-OTLP/HTTP), §8 CLI (R7). A batch adds its section here in the same commit as
-its code, and nothing else edits them.
+`Framer` answers one question: **the bytes arrived in a chunk nobody chose, so
+where does a record end?** It owns a remainder buffer, splits on `\n`, and hands
+complete lines to `spanweave.read_records`. It parses nothing, classifies
+nothing, and looks inside no line — a record's identity, its trace id and its
+kind are the library's (§1.1).
+
+It is the one piece whose failure mode is silent. Framing wrongly does not
+raise: the reader decodes half a multi-byte character to U+FFFD, reports
+`undecodable_bytes`, and hands back a record that is *subtly not the one that
+was sent* (§2.1). That is why this is a module with a corpus-wide test rather
+than three lines in an ingest loop.
+
+### 3.1 The surface
+
+```python
+class Framer:
+    def push(self, chunk: bytes) -> spanweave.Records: ...
+    def document(self, body: bytes) -> spanweave.Records: ...
+    def flush(self) -> spanweave.Records: ...
+    @property
+    def pending_bytes(self) -> int: ...
+```
+
+`spanweave.Records` is the return type, not a type of the receiver's own: it
+already carries exactly the three things a read produced — the records, the
+diagnostics, and `skipped_records` — and a wrapper would add a second name for
+each. One `Framer` per byte stream; the remainder and the line count are that
+stream's, so two streams are two framers. There is no lock and no concurrency
+(§1.4): a framer is a pure function of the bytes it has been handed, in the
+order it was handed them.
+
+### 3.2 `push` — a chunk of a line-delimited stream
+
+Everything up to and including the **last** `\n` in the buffer goes to
+`read_records` as one call; everything after it is kept. A chunk that completes
+no line reads nothing and reports nothing — the bytes are in the remainder, not
+gone, and `pending_bytes` is where that is visible.
+
+The terminator travels with the lines rather than being stripped, so the reader
+is given exactly the bytes a file would have given it; the final empty piece is
+a blank line, which it ignores.
+
+Two consequences worth stating because they are the reason the remainder exists
+rather than side effects of it:
+
+- A **multi-byte character split across chunks** is never handed over in halves.
+  The two halves meet in the remainder before any line containing them is
+  complete, so `undecodable_bytes` reports only bytes the input actually holds,
+  never the receiver's own chunking.
+- A **BOM split across chunks** is likewise whole by the time the reader sees
+  it, which is what lets the reader apply its head-of-stream tolerance (§2.1) to
+  a stream the receiver is reading in pieces.
+
+The reader's **container detection and deduplication are per call** (§2.1,
+§2.2), and a push is one call. So a chunk's complete lines are read as one
+input: two identical lines in one chunk are one record and one
+`duplicate_record`, and the same two lines split across two chunks are two
+records — the second of which is the `Builder`'s refusal (§4), not the framer's
+problem. The receiver grows no dedup cache of its own.
+
+### 3.3 `document` — a whole body, handed over unsplit
+
+A JSON document is not a record until its closing brace, so a body is read in
+one call or not at all. `document(body)` is `read_records(body)`: a **method
+rather than a flag on `push`**, because the caller knows which of the two it is
+holding and the bytes do not say.
+
+The honest statement of why it is needed: a pretty-printed export pushed in
+chunks is lost. Each push hands over a run of lines that are not records, and
+every one becomes a `malformed_record` — loudly, which is the point, but the
+export is gone. A framer that buffered until something parsed would be the
+reader's §2.1 rule reimplemented here, differently, and it would hold a tail
+forever on the ordinary line-delimited input it was given.
+
+`document` carries no line offset (§3.5): the body is the whole input as far as
+its caller is concerned. It neither reads nor clears the remainder — a body and
+a tail are different transports, and neither may eat the other's bytes.
+
+### 3.4 `flush` and `pending_bytes` — the remainder is reported, never dropped
+
+`pending_bytes` is the remainder's length. Non-zero is the **ordinary** state of
+a growing file read at an instant: a tail that stops mid-record has not failed,
+it has not finished, and calling it `malformed_record` would produce one per
+poll on a file that is merely still being written. So a truncated final line is
+`pending_bytes > 0` and nothing else until `flush`.
+
+`flush` reads the remainder as the stream's final line and hands back what that
+was — a complete record that simply arrived without a `\n` becomes a record; a
+truncated one becomes the `malformed_record` carrying its text, which is the
+only place that text survives (§1.5). Either way the remainder is read exactly
+once and the framer is then holding nothing. An empty remainder reads nothing
+and reports nothing: there was no final line, and saying there was would invent
+a fact.
+
+**No cap, and that is a gap stated rather than a decision made.** A stream that
+never sends a `\n` grows the remainder without bound. `pending_bytes` is what
+makes that visible to a caller who wants to act on it; which bytes to refuse and
+what to call the event is a policy, and inventing one here is a halt point
+(`CONTRIBUTING.md`). The receiver reports; it does not decide.
+
+### 3.5 Diagnostics carry the line's position in the stream
+
+The reader numbers lines **within the call it was given**, which for a push is
+the chunk. A diagnostic whose number was 1 because its line happened to open a
+chunk is useless: it points at a line of a buffer nobody kept. So each push's
+diagnostics are **re-issued with the absolute line offset added** — the number
+is the line's position in the whole stream — and `flush`'s remainder is numbered
+as the line after every line `push` handed over.
+
+Three rules make that precise:
+
+- The chunk-local number is **replaced, not kept alongside**. How the bytes were
+  chunked is the receiver's own doing and says nothing about the input;
+  publishing both would leave a reader guessing which to act on.
+- A diagnostic that names no line comes back untouched. A `duplicate_record`,
+  and a container form's "the input …", have no number to fix, and inventing one
+  would be worse than leaving it.
+- The re-issued tuple is **re-sorted** by the library's own order
+  (`spanweave` `SPEC.md` §5.2 — `(code, node_id, message)`). Renumbering changes
+  the message, so a tuple sorted by the old numbers would quietly break a
+  property the caller is entitled to.
+
+The number is read off the front of the reader's message, because a
+`spanweave.Diagnostic` carries no line field. That is a limitation of this seam
+and it is named here rather than worked around silently; the test asserts the
+result against `read_records` of the whole stream rather than against a sentence,
+so what is pinned is the rule — the number is absolute — and not the library's
+prose.
+
+## 4 onward
+
+Reserved, each written by its batch: §4 routing (R2), §5 completion (R3), §6
+subscriptions (R4), §7 ingest (R5 file and stdin, R6 OTLP/HTTP), §8 CLI (R7). A
+batch adds its section here in the same commit as its code, and nothing else
+edits them.

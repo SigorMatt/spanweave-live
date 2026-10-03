@@ -107,5 +107,18 @@ exclude = ["^corpus/"]
 module = ["tests.*"]
 strict = false
 
+[[tool.mypy.overrides]]
+# `spanweave` ships no `py.typed` marker, so `--strict` refuses to look at it
+# even though every line of it is annotated. The two ways out are not
+# equivalent: `ignore_missing_imports` would make `Records`, `Diagnostic` and
+# `read_records` all `Any`, and then every use of them in this package would
+# type-check vacuously -- a green gate that has stopped asking the question.
+# `follow_untyped_imports` instead analyses the installed source, so the
+# receiver is checked against the library's real signatures. The marker
+# belongs upstream; until it is there, this is the honest local answer and not
+# a suppression. R1.
+module = ["spanweave.*"]
+follow_untyped_imports = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

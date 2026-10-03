@@ -7,12 +7,14 @@ rules, enforces nothing, and owns no clock (`CLAUDE.md`, `SPEC.md` §1).
 
 Nothing here is frozen: pre-1.0, by `0.0.x`, deliberately.
 
-This module is the public API. At R0 it exports the version alone; each later
-batch adds the one name it built (`SPEC.md` §3 onward).
+This module is the public API. Each batch adds the one name it built
+(`SPEC.md` §3 onward): R1 adds `Framer`.
 """
 
 from __future__ import annotations
 
-__all__ = ["__version__"]
+from spanweave_live.framing import Framer
+
+__all__ = ["Framer", "__version__"]
 
 __version__ = "0.0.1"
