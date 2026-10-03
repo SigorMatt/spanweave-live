@@ -1,0 +1,111 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "spanweave-live"
+version = "0.0.1"
+description = "A receiver that turns telemetry in flight into live spanweave graphs. Pre-1.0: nothing is frozen."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.11"
+keywords = ["telemetry", "tracing", "opentelemetry", "agents", "llm", "graph"]
+classifiers = [
+    # Pre-1.0 and saying so in the only two places a tool reads: the version
+    # number and this classifier. Nothing here is frozen -- not the API, not
+    # the event codes, not the CLI (CLAUDE.md, "Nothing is frozen").
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Software Development :: Libraries",
+    "Typing :: Typed",
+]
+# The receiver's ONE runtime dependency, pinned to one commit. It is pinned by
+# sha rather than by version range because the receiver's conformance gate
+# compares its live graphs byte for byte against `spanweave.build` of the same
+# records: a floating dependency would make a graph-shape change in spanweave
+# arrive as a failure in this repo with no commit of its own to explain it.
+# `corpus/` is a submodule at the SAME sha, and `tests/test_pins.py` holds the
+# two equal -- moving one without the other is the failure that pin exists to
+# catch. The URL is HTTPS, not SSH, so an unauthenticated clone (CI, a
+# stranger) resolves it.
+dependencies = [
+    "spanweave @ git+https://github.com/SigorMatt/spanweave@e42f257b91be1bd9c7be6bcdbd31313947401288",
+]
+
+[project.scripts]
+spanweave-live = "spanweave_live.cli:main"
+
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.6",
+    "mypy>=1.11",
+    "pytest>=8",
+]
+
+[project.urls]
+Homepage = "https://github.com/SigorMatt/spanweave-live"
+Issues = "https://github.com/SigorMatt/spanweave-live/issues"
+
+[tool.hatch.metadata]
+# `spanweave @ git+https://...` is a direct reference, and hatchling refuses to
+# build metadata containing one unless this says so. It is deliberate, not a
+# convenience: the dependency is pinned to a commit on purpose (above), and that
+# is only expressible as a direct reference.
+allow-direct-references = true
+
+[tool.hatch.build.targets.wheel]
+# Ship the library only. tests/, fixtures/ and corpus/ are development and
+# human-run, and `corpus/` in particular is another project's repository.
+packages = ["spanweave_live"]
+
+[tool.hatch.build.targets.sdist]
+# Declared rather than defaulted: hatchling's default sdist is "everything
+# .gitignore does not exclude", which also ships untracked scratch lying in
+# the builder's working directory. `corpus/` is deliberately absent -- it is a
+# submodule, not this project's content, and an sdist carrying a second
+# repository's working tree would be a copy nothing holds at a sha.
+include = [
+    "/spanweave_live",
+    "/tests",
+    "/.github",
+    "/*.md",
+    "/LICENSE",
+    "/Makefile",
+    "/pyproject.toml",
+    "/uv.lock",
+]
+exclude = ["/corpus"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+# Markdown code blocks in these docs are illustrative -- type sketches, shell
+# transcripts -- not library code. Formatting prose is not ruff's job here.
+extend-exclude = ["*.md", "corpus"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF", "ANN", "PTH"]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests and the harnesses under tests/ are not the library.
+"tests/**" = ["ANN"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_unreachable = true
+disallow_any_explicit = false
+exclude = ["^corpus/"]
+
+[[tool.mypy.overrides]]
+module = ["tests.*"]
+strict = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

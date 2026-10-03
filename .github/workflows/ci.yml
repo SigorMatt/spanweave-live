@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+# setup-uv resolves its version by fetching a manifest from
+# raw.githubusercontent.com. That fetch is a known intermittent failure
+# (astral-sh/setup-uv#849, #869). Passing github-token authenticates it.
+# The token is provided automatically by Actions -- nothing to create.
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Held equal to the `Programming Language :: Python` classifiers in
+        # pyproject.toml. A receiver that sits between someone's exporter and
+        # someone's consumer must not narrow either one's runtime.
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # `corpus/` is the pinned spanweave repository, and the conformance
+          # gate reads its fixtures. Checked out over HTTPS by the Actions
+          # token, which is why the submodule URL in .gitmodules is HTTPS and
+          # not SSH: an unauthenticated clone has to resolve it.
+          submodules: true
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.1.0
+        with:
+          version: "0.11.25"
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - run: uv sync --extra dev --python ${{ matrix.python-version }}
+      # make check wraps the exact toolchain commands (ruff, ruff format, mypy
+      # --strict, pytest) plus the invariant gate.
+      - run: make check
+      # make check runs everything under `uv run`, with the source tree on the
+      # path -- so it can only answer questions about the repository. This is
+      # the only gate that builds the distribution, installs the wheel into a
+      # throwaway venv and runs it from outside the repo. It never publishes.
+      - run: make install-check
+
+  conformance:
+    # The conformance gate is a cross-machine claim -- same bytes in, same
+    # bytes out, on any machine -- so it is worth proving on more than the one
+    # OS that generated the expected graphs.
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: true
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.1.0
+        with:
+          version: "0.11.25"
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - run: uv sync --extra dev
+      - run: make conformance
