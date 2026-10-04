@@ -25,23 +25,20 @@ test:
 gates:
 	uv run pytest tests/test_gates.py tests/test_pins.py -v
 
-# Conformance gate A (WORKPLAN.md R2, SPEC.md section 4): interleave two
-# scenarios' records from the corpus, push them through Framer + Router, and
-# assert each trace's graph serializes byte for byte to `spanweave.build` of
-# its own rendering. R0 is the repository skeleton and has neither a Framer nor
-# a Router, so there is nothing to compare yet and this target says so rather
-# than printing a reassuring nothing. It becomes real in R2 and is green or red
-# from then on.
+# Conformance gate A (SPEC.md section 4.7): every pair of renderings from two
+# corpus scenarios, one of them relabelled onto a second trace id, interleaved
+# by a seeded shuffle, framed in seeded chunks through one Framer, routed
+# through one Router -- and each trace's graph compared BYTE FOR BYTE against
+# spanweave.build of its own rendering. This is the project's central claim and
+# from R2 onward this target is green or red; it no longer asserts nothing.
+#
+# It is also run by `check`, via `test`. This target is how you run it alone,
+# and how CI names it in a log.
 conformance:
-	@echo "conformance: NO GATE YET -- R0 is the repository skeleton."
-	@echo "  Gate A (tests/test_conformance.py) arrives in R2: the corpus'"
-	@echo "  renderings interleaved through Framer + Router, each trace's graph"
-	@echo "  compared byte for byte against spanweave.build of its own rendering."
-	@echo "  Until R2 this target asserts NOTHING. It is not a pass."
 	@test -d corpus/fixtures/conformance || { \
-	  echo "  corpus/ is not checked out: run 'git submodule update --init'"; \
+	  echo "corpus/ is not checked out: run 'git submodule update --init'"; \
 	  exit 1; }
-	@echo "  corpus/fixtures/conformance is present, so R2 has its scenarios."
+	uv run pytest tests/test_conformance.py -v
 
 # Prove that what SHIPS works: builds the wheel, installs it into a throwaway
 # venv, and runs it from a working directory outside the repo -- the only gate

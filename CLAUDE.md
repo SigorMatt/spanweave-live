@@ -90,10 +90,12 @@ bytes ──► Framer ──► spanweave.read_records ──► Router ──�
   `tests/test_gates.py` watches it fail against planted violations. A gate nobody
   has watched fail is a gate nobody knows works.
 - `corpus/` is the pinned `spanweave` repository. Read it; never write it.
-- `fixtures/conformance/` is built from the corpus. The cross-interleaving
-  equivalence test (gate A, R2) is this project's central claim: records of two
-  traces, shuffled together and framed in arbitrary chunks, produce each trace's
-  graph **byte for byte** as `spanweave.build` of that trace alone.
+- The corpus' own `fixtures/conformance/` is read in place, through `corpus/`,
+  rather than copied into a `fixtures/` of this repo's own: a copy is a second
+  thing to keep at the pin. The cross-interleaving equivalence test (gate A,
+  `tests/test_conformance.py`, R2) is this project's central claim: records of
+  two traces, shuffled together and framed in arbitrary chunks, produce each
+  trace's graph **byte for byte** as `spanweave.build` of that trace alone.
 
 ## Commands
 
@@ -102,7 +104,7 @@ Tooling is `uv`. The `Makefile` is the source of truth for the gates.
 ```bash
 make check            # THE gate: ruff, ruff format --check, mypy --strict, pytest, gates
 make gates            # the invariant gate and the pin test alone
-make conformance      # gate A (a no-op that says so until R2)
+make conformance      # gate A (real from R2: tests/test_conformance.py, ~25s)
 make install-check    # wheel into a throwaway venv, run from OUTSIDE the repo (needs network once)
 uv run pytest tests/test_gates.py::test_the_package_reaches_for_no_ambient_runtime
 ```

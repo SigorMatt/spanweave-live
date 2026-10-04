@@ -309,9 +309,208 @@ result against `read_records` of the whole stream rather than against a sentence
 so what is pinned is the rule — the number is absolute — and not the library's
 prose.
 
-## 4 onward
+## 4. Routing — which builder does this record belong to?
 
-Reserved, each written by its batch: §4 routing (R2), §5 completion (R3), §6
-subscriptions (R4), §7 ingest (R5 file and stdin, R6 OTLP/HTTP), §8 CLI (R7). A
-batch adds its section here in the same commit as its code, and nothing else
-edits them.
+`Router` answers one question and holds one thing: **a `spanweave.Builder` per
+trace id**, created the first time that trace is seen. A record arrives, the
+router asks the library which trace it belongs to, and hands it to that trace's
+builder. It does not evaluate the record, score it, hold it, or look at what the
+graph came to say — it partitions, and the graphs are the caller's (§1.2, §1.3).
+
+Partitioning is the receiver's job rather than the library's because
+`spanweave.Builder` is documented as one builder per trace: "Records of two
+traces in one builder are kept and reported exactly as a multi-trace file is,
+and partitioning a live stream by trace is the caller's" (`spanweave`
+`SPEC.md` §10, `OPEN_QUESTIONS.md` §19). This section is that caller.
+
+### 4.1 The surface
+
+```python
+Record = Any  # whatever `spanweave.read_records` yielded
+
+REFUSED = "refused"
+REFUSED_AT_CAP = "refused_at_cap"
+
+@dataclass(frozen=True, slots=True)
+class Event:
+    code: str                    # the receiver's own code, above
+    index: int                   # the record's 1-based arrival index
+    trace_id: str | None
+    spanweave_code: str | None   # the library's code, where the library refused
+    detail: str
+
+@dataclass(frozen=True, slots=True)
+class Routed:
+    index: int
+    trace_id: str | None         # None: no trace id, so the no-trace builder
+    builder: spanweave.Builder | None  # None only when nothing absorbed it
+    version: int | None          # the version the absorption produced
+    events: tuple[Event, ...]
+
+def trace_id_of(record: Record) -> str | None: ...
+
+class Router:
+    def __init__(
+        self,
+        *,
+        max_traces: int | None = None,
+        adapter: str | None = None,
+        temporal: bool = True,
+    ) -> None: ...
+    def route(self, record: Record) -> Routed: ...
+    @property
+    def trace_ids(self) -> tuple[str, ...]: ...
+    def builder(self, trace_id: str | None) -> spanweave.Builder | None: ...
+    @property
+    def no_trace(self) -> spanweave.Builder: ...
+    @property
+    def counts(self) -> Mapping[str, int]: ...
+```
+
+`Record` is `Any` and deliberately not a JSON type of the receiver's own:
+`spanweave`'s `JsonValue` is itself `Any` and is not exported, and a second,
+narrower definition here would be a shape the library never promised.
+
+`adapter` and `temporal` are passed through to every `Builder` the router
+makes, so a caller that names a dialect or turns temporal edges off gets the
+same thing live as `spanweave.build` gives it in batch. The router reads
+neither.
+
+### 4.2 The trace id comes from the adapter surface, never from a key
+
+`trace_id_of(record)` asks `spanweave.adapters.classify(record)` which adapters
+claim the record, takes the single claimant, calls that adapter's
+`parse([record])`, and reads `trace_id` off the spans it yields. That is the
+whole of it. There is no key table, no dialect test, no `record["trace_id"]`,
+and no fallback that reads one (§1.1).
+
+Three answers are **no trace id**, and each is the same answer:
+
+- **Nobody claimed the record.** The library's own treatment is an `unknown`
+  node plus an `unclaimed_record` diagnostic, and that is what the no-trace
+  builder produces, because the record is fed to a real `Builder`.
+- **More than one adapter claimed it.** The library refuses an ambiguous
+  record rather than guessing (`spanweave` `SPEC.md` §6.1), so there is nobody
+  to ask for a trace id. The record goes to the no-trace builder, which raises
+  the library's own refusal, and that becomes a `refused` event (§4.4).
+- **The claimant reported no single trace id** — no `trace_id` on the spans it
+  parsed, or more than one distinct id across them. §1.1 already fixes this
+  answer: "If a record's trace id cannot be had through the adapter surface,
+  the answer is 'no trace id' and a counted event, not a key lookup." Choosing
+  among several would be a policy, and inventing one is a halt point.
+
+A `spanweave.SpanweaveError` raised while classifying or parsing is also "no
+trace id". It is **not** swallowed: the record goes to the no-trace builder,
+whose `feed` reaches the same code and raises the same refusal, and the event
+carries the library's `code` verbatim.
+
+**The cost, stated.** `classify` runs every adapter's `detect` over the record
+and `parse` then translates it a second time — the builder's own `feed` does
+both again. The second parse is paid deliberately and is registered as a thread
+(`WORKPLAN.md` §3, 2026-10-04): a `spanweave.trace_id_of(record)` upstream
+would halve it. It is **not** worked around here, because the only workaround
+is a dialect read, and §1.1 says what that costs.
+
+### 4.3 One builder per trace, and the no-trace builder
+
+The first record of a trace creates its `Builder`; every later record of that
+trace reaches the same one. `trace_ids` lists the identified traces in **first
+arrival order** — the order traces were seen is a fact about the stream, and
+sorting it would throw that away; nothing in the graphs depends on it.
+
+The **no-trace builder** is a `Builder` like any other and exists from the
+start. It is the receiver's honest place for a record that identifies no trace,
+and the point of using a builder rather than a counter is that it carries the
+library's own account of what those records were: `missing_trace_id` once per
+graph, and `unclaimed_record` per unclaimed record, exactly as a batch build of
+the same records reports them (`spanweave` `SPEC.md` §6.1, §7). The receiver
+invents no event code for either.
+
+One consequence inherited rather than chosen: a no-trace builder holding
+**only** unclaimed records refuses `graph()`, because `spanweave` refuses an
+input no adapter can read rather than returning a graph of `unknown` nodes
+(`spanweave` `SPEC.md` §6.1, §10.5). The receiver does not paper over that.
+
+### 4.4 A refusal is an event, and routing continues
+
+A re-sent span is normal under at-least-once export (§2.2), so a `Builder`
+refusal is routine and loud rather than exceptional: `route` catches
+`spanweave.SpanweaveError` from `feed`, records an `Event` with code `refused`
+carrying the record's arrival index and the library's `code`, counts it, and
+**returns normally**. The next record is routed. Nothing is retried, nothing is
+suppressed, and the receiver grows no deduplicator of its own (§2.2).
+
+The refused record is not absorbed — `spanweave` `SPEC.md` §10.5 promises the
+builder is left exactly as it was — so `Routed.version` is the builder's
+unchanged version, not the version the record would have produced.
+
+### 4.5 `max_traces` is a cap, and the cap is counted
+
+`max_traces` bounds how many identified traces the router holds builders for,
+because the receiver's cost is in `feed` and in materialization (§2.3) and an
+unbounded stream of trace ids is unbounded memory. At the cap, a record for a
+**new** trace produces an Event with code `refused_at_cap` carrying the record's
+index and the trace id, counted, and `Routed.builder` is `None`: no builder is
+created and the record is not absorbed. It is **refused, in the open** — the
+count and the event are the receiver's answer to "what did you not handle?"
+(§1.5), and silence would have been the alternative.
+
+A record for a trace the router already holds is never refused at the cap, and
+neither is a record with no trace id: the no-trace builder is not a trace, and
+counting it against the cap would make "no trace id" the thing that evicts
+real ones. `max_traces=None` is no cap.
+
+Which traces to evict, and when, is **not** here: eviction is completion's
+business (§5), and a cap that quietly released a live builder would be a
+retention policy nobody asked for.
+
+### 4.6 Counts, not a log
+
+The router keeps a count per event code and nothing else. The events of one
+record are on that record's `Routed`, where the caller can report them as it
+likes (R7 writes each to stderr as one JSON line); the router does not
+accumulate them, because an event list grows with the stream and §2.3 is about
+exactly that. `counts` is bounded by the number of codes.
+
+### 4.7 Gate A — the central claim
+
+`tests/test_conformance.py` is the claim this project exists to make: **how
+records of two traces were interleaved cannot be seen in either trace's
+graph.** For every pair of renderings drawn from two different corpus
+scenarios, with one of the two relabelled onto a second trace id, the pair's
+arrivals are interleaved by a seeded shuffle that preserves each rendering's own
+order, pushed through one `Framer` in seeded chunks, and routed; then each
+trace's `graph()` must serialize **byte for byte** to `spanweave.dumps` of
+`spanweave.build` of that rendering alone.
+
+Two things about the comparison are stated rather than assumed:
+
+- **`meta.source_digest` is dropped from the batch side.** A `Builder` carries
+  no digest of an input it never saw (`spanweave` `SPEC.md` §10.4), so the
+  digest is the one field that cannot match. It is removed from the *batch*
+  graph, and nothing else is normalized on either side.
+- **The relabelling is a trace id and nothing else.** Every corpus rendering
+  identifies one trace, `t1`, so two renderings fed to one router would share a
+  builder and the test would assert nothing. The relabelling is a byte
+  substitution of the token `"t1"`, and the test first asserts that every
+  occurrence of it in the rendering is a trace-id value — so a corpus where
+  that stops being true fails loudly instead of quietly rewriting something
+  else.
+
+**What gate A does not catch, said plainly.** It does not catch a router that
+reads `record["trace_id"]`. `spanweave.read_records` normalizes an OTLP
+container's `traceId` to `trace_id` while unpacking it, so by the time a router
+sees a record every corpus rendering — the `otlp_container` ones included —
+answers a `trace_id` lookup with exactly what the adapter surface would have
+said. The dialect read is caught instead by a record **no adapter claims** that
+nonetheless carries a `trace_id` key (`tests/test_routing.py`): the adapter
+surface says "no trace id" and the key says `t1`, so a dialect read puts an
+`unknown` node in a trace's graph that belongs in the no-trace builder. §1.1's
+warning is still right about why the read is wrong; the corpus is simply not
+where it shows.
+
+## 5 onward
+
+Reserved, each written by its batch: §5 completion (R3), §6 subscriptions (R4),
+§7 ingest (R5 file and stdin, R6 OTLP/HTTP), §8 CLI (R7). A batch adds its
+section here in the same commit as its code, and nothing else edits them.

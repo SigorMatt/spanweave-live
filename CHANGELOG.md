@@ -8,6 +8,58 @@ of change is a **batch** (`WORKPLAN.md`), and each entry names the batch.
 
 ## Unreleased
 
+### R2 — partition: one `Builder` per trace, and conformance gate A (2026-10-04)
+
+Added
+
+- `spanweave_live/routing.py`: `Router`, the second piece of the receiver
+  (`SPEC.md` §4). `route(record) -> Routed` finds the record's trace id through
+  `spanweave.adapters.classify` and the claiming adapter's `parse` — and through
+  nothing else — then hands the record to that trace's `spanweave.Builder`,
+  created on first sight. `Event`, `Routed`, `trace_id_of`, and the codes
+  `refused` and `refused_at_cap`, all exported from `spanweave_live`.
+- A record with no trace id — nobody claimed it, more than one adapter claimed
+  it, or the claimant reported no single id — goes to the **no-trace builder**,
+  which is a `Builder` and therefore carries `spanweave`'s own
+  `missing_trace_id` and `unclaimed_record`. The receiver invents no code for
+  either, and does not paper over `spanweave` refusing `graph()` for a builder
+  holding only unclaimed records.
+- A `Builder` refusal (a span re-sent under at-least-once export) is an `Event`
+  with code `refused` carrying the record's arrival index and the library's own
+  `code`, counted, and routing continues. `max_traces` is a cap: a new trace at
+  the cap is `refused_at_cap`, counted, with no builder made — refused in the
+  open rather than dropped. The router keeps **counts**, not an event log, so
+  nothing it holds grows with the stream.
+- `SPEC.md` §4: the surface, why the trace id may only come from the adapter
+  surface and what the second parse costs, one builder per trace and the
+  no-trace builder, refusals, the cap, counts-not-a-log, and §4.7 on gate A.
+- `tests/test_conformance.py` — **gate A**: all 1354 pairs of renderings from
+  two of the corpus' 29 scenarios (53 renderings, two of them whole OTLP
+  documents), one side relabelled onto a second trace id, interleaved by a
+  seeded shuffle that preserves each rendering's own order, framed in seeded
+  chunks through one `Framer`, routed through one `Router` — and each trace's
+  `graph()` compared byte for byte against `spanweave.dumps` of
+  `spanweave.build` of its own rendering. Ten written-down seeds; 27 080 graph
+  comparisons; about 25 s.
+- `tests/test_routing.py`: 20 tests, including the one that tells a dialect read
+  apart from the adapter surface — a record **no adapter claims** that
+  nonetheless carries a `trace_id` key.
+
+Changed
+
+- `make conformance` runs gate A instead of printing "NO GATE YET". A green
+  `conformance` job now means something.
+
+Fixed (in the plan's premises, not in code)
+
+- `WORKPLAN.md` R2 expected `otlp_container` to catch a router keyed by
+  `record["trace_id"]`. It does not: `spanweave.read_records` normalizes a
+  container's `traceId` to `trace_id` while unpacking it, so by the time a
+  router sees a record **every** corpus rendering answers a dialect read with
+  exactly what the adapter surface would have said. Gate A cannot catch that
+  mutation; `SPEC.md` §4.7 says so, and `tests/test_routing.py` catches it with
+  a hand-authored unclaimed record instead.
+
 ### R1 — framing: bytes in, complete records out (2026-10-04)
 
 Added
