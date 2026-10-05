@@ -5,7 +5,7 @@ network, the clock and the consumer (`spanweave` `OPEN_QUESTIONS.md` §19,
 decided 2026-09-29). One batch = one sub-agent = one commit = one concern.
 This file plus git is the only state; any session can resume cold from it.
 
-Last updated: 2026-10-05 (run 2 in progress; R2a done, R2b next).
+Last updated: 2026-10-05 (run 2 in progress; R2a, R2b done, R3 next).
 
 ---
 
@@ -148,7 +148,7 @@ commit that cannot say `plan:`, and the watcher exempts it once per series.
 | R1 | **Framing: bytes in, complete records out.** `Framer` (SPEC §3): `push(chunk: bytes) -> Records` splits on `\n`, keeps the remainder, hands only complete lines to `spanweave.read_records`; `document(body: bytes) -> Records` hands a whole OTLP-JSON body over unsplit; `flush() -> Records` reads the remainder as a final line and reports it; `pending_bytes` is the remainder's length. Diagnostics from `read_records` are re-issued per chunk with the absolute line offset added. Tests red on the parent: over every rendering of the corpus, feeding the bytes in seeded random chunk sizes (1 to whole) yields `read_records(whole)`'s records exactly; a chunk boundary inside a multi-byte character yields no `undecodable_bytes`; a truncated final line is `pending_bytes > 0` and not a `malformed_record` until `flush()`. Mutation: a framer that hands partial lines over fails the first test. | done (a4fec60) | 10 |
 | R2 | **Partition: one `Builder` per trace, and conformance gate A.** `Router` (SPEC §4): `route(record) -> Routed` finds the trace id through `spanweave.adapters.classify` and the claiming adapter's `parse`, never by a key of its own; one `Builder` per trace id, created on first sight; a record with no trace id or no claimant goes to the no-trace builder (which carries `missing_trace_id`/`unclaimed_record` as batch does); a `Builder` refusal is an event `refused` with the record index and the spanweave code, counted, and routing continues; `max_traces` is a cap — at the cap a new trace is `refused_at_cap`, counted, never dropped silently. Gate A, `tests/test_conformance.py`: for every pair of renderings from two scenarios, interleave their records by a seeded shuffle, push through `Framer` + `Router`, and assert each trace's `graph()` serializes byte for byte to `spanweave.build` of its own rendering; run it for ten seeds. Tests red on the parent; mutation: a router keyed by the record's own `trace_id` key (a dialect read) fails `tests/test_routing.py::test_a_record_no_adapter_claims_is_not_routed_by_its_trace_id_key`. ~~fails on `otlp_container`~~ — corrected by R2, see §4. | done (d762484) | 15 |
 | R2a | **The run-1 review's eight `next batch` items, closed.** Read `patches/REVIEW-2026-10-04.md` and close every `next batch` item as the file states it, one commit, tests first. Among them: the import gate is held to walking (a test asserts the gate's module set equals `rglob` of `spanweave_live/`, and a planted nested module importing `time` is caught with no gate edit); the 612-framing sweep gains renderings that carry a diagnostic and a skipped record (a corpus rendering with one line corrupted, generated from the corpus at test time, never a hand-copied fixture), so the diagnostics and `skipped_records` assertions compare non-empty sequences and a `push` reporting `skipped_records=0` fails; SPEC states the HTTPS pin for both the dependency and the submodule, held by a test; SPEC and CHANGELOG state the `py.typed` override and why; SPEC §3.3 states the `push`-vs-`document` trap in full (a whole body pushed happens to read; chunked it does not). Items the file lists that this row does not name are closed too. | done (7fdbff3) | 8 |
-| R2b | **The remainder has a caller-set cap.** `Framer(max_pending_bytes=None)`; SPEC §3.4 rewritten from "no cap" to the policy in §3. Tests red on the parent: a stream with no `\n` past the cap yields one `malformed_record`, `skipped_records=1`, one `fragment_too_long` event with the length, and the framer continues on the next chunk; with the cap `None`, R1's behaviour is unchanged across the whole sweep. Mutation: a framer that drops the oversize remainder silently fails the `skipped_records` assertion. | todo | 5 |
+| R2b | **The remainder has a caller-set cap.** `Framer(max_pending_bytes=None)`; SPEC §3.4 rewritten from "no cap" to the policy in §3. Tests red on the parent: a stream with no `\n` past the cap yields one `malformed_record`, `skipped_records=1`, one `fragment_too_long` event with the length, and the framer continues on the next chunk; with the cap `None`, R1's behaviour is unchanged across the whole sweep. Mutation: a framer that drops the oversize remainder silently fails the `skipped_records` assertion. | done (d152c3b) | 5 |
 | R2c | **Pins bumped to a spanweave that ships `py.typed`; the override deleted.** After PR #4 merges: `pyproject.toml` pin and `corpus/` submodule to the new `main` sha (the two-way pin test holds them equal); `[tool.mypy]` override for `spanweave.*` deleted, and a test asserts no `follow_untyped_imports` remains; `make check` green with `mypy --strict` analysing spanweave itself. If PR #4 is not merged when this row is reached, status `awaiting PR #4` and the run stops. | awaiting R5 | 4 |
 | R3 | **Completion is a policy with an injected clock.** `Completion` (SPEC §5): three policies, each a value — `Quiet(seconds)`, `RootEnded(grace_seconds)`, `Cap(records)` — composable as any-of; `now: Callable[[], float]` is injected, never `time.time` inside `spanweave_live/`; `Router.tick()` evaluates policies and returns the traces completed; a completed trace's final graph is materialized, optionally written with `spanweave.dump` to a directory the caller names, and its builder released; a record arriving for a completed trace opens a new builder and emits `late_arrival` with the trace id and the gap. Tests on a fake clock: each policy fires exactly when its definition says; a late arrival is an event, never silent, and never a mutation of the written graph. Mutation: a `Quiet` that fires one tick early fails. | todo | 10 |
 | R4 | **Subscription and delta fan-out.** `Subscriptions` (SPEC §6): a consumer registers a callback for one trace or all; after each absorbed record the router hands each subscriber `delta(since=version-1)` (per-record mode) or, for a subscriber that asked for `every=N`, `delta(since=last_seen)`; retention is set from the longest window any subscriber asked for; a callback that raises is isolated — recorded as `consumer_error` with the trace id and version, other subscribers still called, the record still absorbed. Tests: folding every delta a subscriber received onto its first graph equals the final `graph()`; a raising subscriber never stalls another. Mutation: a fan-out that skips the subscriber after the raising one fails. | todo | 10 |
@@ -273,6 +273,25 @@ the repository is empty; R1 onward land on `receiver`.
   (15.5–17.1 % of routing) now lives in SPEC §4.2 rather than only in this
   file, and its citations point at "§3 while the series runs, `TASKS.md`
   after" — so the number outlives WORKPLAN.md's deletion at close.
+- 2026-10-05 R2b (`d152c3b`, CI green on that sha, 6/6): the framer cap is in
+  as §3 decided — `Framer(*, max_pending_bytes=None)`, strict `>` boundary,
+  `document` and `flush` uncapped. Tests 232 → 340; gate A still ~25.4 s. The
+  **red-on-parent run was real this time** (parent `7fdbff3` is code, not a
+  `plan:` commit): 108 failed / 172 passed, and R1's other framing tests all
+  still passed there, which is what makes the 108 meaningful.
+- 2026-10-05 R2b — two surface choices the decision left to the batch, now in
+  SPEC §3.1: `FramingEvent` is **its own type**, not routing's `Event` (a
+  framing event has a length and no record index, trace id or spanweave code,
+  and `framing.py` importing from `routing.py` would be an upward import);
+  and events ride **beside** the return value (`Framer.events`,
+  `Framer.counts`) because §3.1 forbids wrapping `spanweave.Records`. R3's
+  completion events and R4's `consumer_error` should follow routing's `Event`,
+  not this one — the split is deliberate, not an inconsistency to tidy.
+- 2026-10-05 R2b — **a consequence worth carrying forward** (SPEC §3.4): a cut
+  line's fragments are each numbered as a line, so **line numbers downstream
+  of a `fragment_too_long` are the framer's count, not the input's**. Any
+  later batch that reports a line number to a human (R7's CLI especially)
+  inherits this.
 
 ## 5. Origins
 
