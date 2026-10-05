@@ -11,7 +11,9 @@ This module is the public API. Each batch adds the one name it built
 (`SPEC.md` §3 onward): R1 adds `Framer`, R2 `Router` and the types its
 decisions come back in, R2b the framer's cap and the event it reports, R3 the
 completion policies, the clock the caller supplies with them, and `Router.tick`,
-R4 `Subscriptions` and the `Update` one consumer is handed.
+R4 `Subscriptions` and the `Update` one consumer is handed, R5 the two file
+ingests -- `tail` and `stdin` -- and the codes for what happens to a file that
+is not growth.
 """
 
 from __future__ import annotations
@@ -34,6 +36,16 @@ from spanweave_live.completion import (
     root_ended,
 )
 from spanweave_live.framing import FRAGMENT_TOO_LONG, Framer, FramingEvent
+from spanweave_live.ingest import (
+    DEFAULT_CHUNK_BYTES,
+    REOPEN_FAILED,
+    ROTATED,
+    TRUNCATED,
+    VANISHED,
+    Tail,
+    stdin,
+    tail,
+)
 from spanweave_live.routing import (
     REFUSED,
     REFUSED_AT_CAP,
@@ -58,6 +70,7 @@ __all__ = [
     "CAP",
     "COMPLETED",
     "CONSUMER_ERROR",
+    "DEFAULT_CHUNK_BYTES",
     "DELTA_UNAVAILABLE",
     "DELTA_UNSENT",
     "FRAGMENT_TOO_LONG",
@@ -67,7 +80,11 @@ __all__ = [
     "REFUSED",
     "REFUSED_AT_CAP",
     "RELEASED",
+    "REOPEN_FAILED",
     "ROOT_ENDED",
+    "ROTATED",
+    "TRUNCATED",
+    "VANISHED",
     "WRITTEN",
     "Cap",
     "Completed",
@@ -84,10 +101,13 @@ __all__ = [
     "Router",
     "Subscription",
     "Subscriptions",
+    "Tail",
     "TraceState",
     "Update",
     "__version__",
     "root_ended",
+    "stdin",
+    "tail",
     "trace_id_of",
 ]
 

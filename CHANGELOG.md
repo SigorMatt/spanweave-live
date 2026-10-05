@@ -8,6 +8,82 @@ of change is a **batch** (`WORKPLAN.md`), and each entry names the batch.
 
 ## Unreleased
 
+### R5 — ingest: a growing file, and a pipe (2026-10-05)
+
+The fifth piece (`SPEC.md` §7, new; §7.1 written, §7.2 reserved for R6). The
+first piece that touches the outside world, and it touches as little of it as the
+job allows: it opens a file, reads chunks, hands them to `Framer.push`, and hands
+back what the framer said. It looks inside no chunk and routes nothing.
+
+Added
+
+- `spanweave_live.ingest`, with `tail(path, *, now, sleep, poll_seconds, …)` and
+  `stdin(stream=None, …)`. `tail` returns a `Tail`, which **is** the iterator of
+  `spanweave.Records`; `stdin` is a generator. The asymmetry is the framer's own
+  (`SPEC.md` §3.1): the yielded value is `spanweave.Records` and stays that way,
+  so a tail's events ride **beside** the yields and a bare generator has nowhere
+  to put them — and a pipe, which cannot be truncated or rotated, has no events
+  to carry. A `Tail` is iterated once and a second iteration raises, because an
+  "again" would resume the first one's stream while looking like a fresh start.
+- **`sleep` is injected and has no default, so the seam allowlist in
+  `tests/gates.py` is still empty.** R0 predicted R5 would need the first entry
+  and R5 does not, for the reason R3 did not: a seam with no default is a seam the
+  caller binds, and there is then no `time` import under `spanweave_live/` to
+  exempt. The real `time.sleep` and `time.monotonic` are R7's CLI's to bind. The
+  gate's note now records two wrong predictions rather than one, and says R6's
+  listener should be made to prove it needs a line.
+- `truncated`, `rotated`, `vanished` and `reopen_failed`, as the router's `Event`
+  (`SPEC.md` §4.1) rather than a type of their own: R2b split `FramingEvent` off
+  because framing is *below* routing, and ingest is *above* it. Truncation is
+  `os.fstat` of the open handle against the offset; rotation is `(st_dev, st_ino)`
+  of the path against the open handle — the platform's own answer to "the same
+  file", read and not chosen, so no policy was invented and nothing halted.
+- `Event.offset: int | None` — one more optional field, as R3 added `seconds` and
+  R4 added `version`, because §1.5 is only true where a caller can match on the
+  number instead of reading it out of a sentence.
+- One yield per read, **including a read that completed no line**: "nothing
+  arrived" and "nothing was completed" are different answers and `pending_bytes`
+  is where the second is visible. A poll with an event to report yields too, so
+  no event is invisible to a caller that only looks between yields.
+
+Stated, because the honest answer was not an event
+
+- A **short read** is not an event: `read(n)` returning fewer than `n` bytes is
+  how a file says "that is all for now", and a code for it would be a code per
+  poll on a file that is merely still being written.
+- A file **truncated and regrown past the old offset between two polls** is
+  indistinguishable from growth, and `SPEC.md` §7.1 says so rather than offering a
+  heuristic that would be wrong differently. `poll_seconds` is how narrow that
+  window is, and it is the caller's number.
+- An open that fails **at the start** raises; it is not an event. The first open is
+  the caller's claim that there is a file there, and waiting for one to appear is a
+  retry policy the receiver does not carry (`SPEC.md` §1.2).
+- A tail **does not flush** when it stops: its stop is the caller's `until`, which
+  is not end of input, so the remainder stays visible as `pending_bytes`. `stdin`
+  does flush, because EOF **is** end of input and a pipe's last line without a
+  `\n` is a record only the flush can produce.
+
+Tested
+
+- **A corpus rendering appended in random chunks is the graph gate A asserts.**
+  Every line-delimited rendering, written to a real file in seeded chunks while
+  the tail is asleep, compared byte for byte against `spanweave.build` with gate
+  A's own loader, chunker and comparison imported — not a weaker one of this
+  file's own (`SPEC.md` §4.7, §7.1). Ten seeds; the file is 34 tests in ~1.2 s.
+- **Truncation and rotation are two contents in one file**, the second relabelled
+  onto a second trace id, and **both** graphs must come out exactly. The named
+  mutation — a tail that treats truncation as ordinary growth — fails on the
+  missing event, on the offset, and on the second trace's graph, because it reads
+  at an offset the new content never had.
+- The remainder held at a truncation comes back as **one `malformed_record` with
+  its text**, never joined to the head of the new content: a line made of two
+  files would be §3's failure mode reached through the back door.
+- Rotation is claimed only on a poll that read nothing, so the bytes written to
+  the old inode in the same breath as the rename are handed over first; a vanished
+  path is **one** event however many polls find it gone; every wait is the
+  caller's `sleep`, called with `poll_seconds`, and the clock moves only because
+  the test's driver moved it.
+
 ### R4 — the deltas go out, and nothing is concluded about them (2026-10-05)
 
 The fourth piece (`SPEC.md` §6, new). A consumer registers a callback and, after

@@ -142,8 +142,11 @@ and fake in every test.
 
 No module under `spanweave_live/` imports `time`, `datetime`, `random`,
 `socket`, `threading` or `asyncio`, except a seam file named in the allowlist in
-`tests/gates.py`, and the gate fails the build when one does. The allowlist is
-empty at R0.
+`tests/gates.py`, and the gate fails the build when one does. The allowlist was
+empty at R0 and is **still empty**: R3 needed no entry for the clock (§5.2) and
+R5 needed none for sleeping (§7.1), because a seam with no default is a seam the
+caller binds and there is then no import to exempt. R6's listener is the last
+candidate.
 
 Why a gate and not a convention: completion is a timeout policy (§5), and a
 timeout policy tested against the real clock is a test that passes on a fast
@@ -1300,8 +1303,229 @@ first failure would fail, and what a fan-out that merely logged and continued
 without an event would also fail, because the event is asserted with its trace id
 and version.
 
-## 7 onward
+## 7. Ingest — where the bytes come from
 
-Reserved, each written by its batch: §7 ingest (R5 file and stdin, R6
-OTLP/HTTP), §8 CLI (R7). A batch adds its section here in the same commit as its
+Everything above this section is given bytes or records by somebody. This is the
+somebody. An ingest answers one question — **how do the bytes reach the
+framer?** — and knows nothing else: it does not look inside a chunk, does not
+know what a record is, and never routes one. `Framer` (§3) decides where a record
+ends, `Router` (§4) decides where it goes, and an ingest hands over chunks and
+hands back what the framer said about them.
+
+§7.1 is the two sources that are files, and is R5's. §7.2 is the OTLP/HTTP
+endpoint and is **R6's**, reserved here and written by that batch; §8 is the CLI
+(R7), which is where the real `time.monotonic`, the real `time.sleep` and the
+real listener are finally bound.
+
+### 7.1 `tail` and `stdin` — a growing file, and a pipe
+
+```python
+TRUNCATED = "truncated"
+ROTATED = "rotated"
+VANISHED = "vanished"
+REOPEN_FAILED = "reopen_failed"
+DEFAULT_CHUNK_BYTES = 65_536
+
+class Tail:
+    def __init__(
+        self,
+        path: str | os.PathLike[str],
+        *,
+        now: Callable[[], float],
+        sleep: Callable[[float], None],
+        poll_seconds: float,
+        start: int = 0,
+        framer: Framer | None = None,
+        chunk_bytes: int = DEFAULT_CHUNK_BYTES,
+        until: Callable[[], bool] | None = None,
+    ) -> None: ...
+    def __iter__(self) -> Iterator[spanweave.Records]: ...
+    @property
+    def framer(self) -> Framer: ...
+    @property
+    def offset(self) -> int: ...
+    @property
+    def polls(self) -> int: ...
+    @property
+    def reads(self) -> int: ...
+    @property
+    def events(self) -> tuple[Event, ...]: ...
+    @property
+    def counts(self) -> Mapping[str, int]: ...
+
+def tail(path, *, now, sleep, poll_seconds, start=0, framer=None,
+         chunk_bytes=DEFAULT_CHUNK_BYTES, until=None) -> Tail: ...
+
+def stdin(stream: BinaryIO | None = None, *, framer: Framer | None = None,
+          chunk_bytes: int = DEFAULT_CHUNK_BYTES) -> Iterator[spanweave.Records]: ...
+```
+
+That block is the whole public surface, declared exactly as the code accepts it.
+Everything after `path` is keyword-only, for §3.1's and §4.1's reason: these are
+seams and policies the caller binds, not a reading order, and a positional slot
+would be a contract this document never offered.
+
+**`tail` returns a `Tail`, and `stdin` is a generator**, which is the one place
+this section's shape is not symmetric. The asymmetry is forced and it is the
+framer's own (§3.1): the yielded value is `spanweave.Records` and stays that way,
+so a tail's events have to ride **beside** the yields — and a bare generator has
+nowhere to put them. A pipe cannot be truncated or rotated, so `stdin` has no
+events to carry and needs no object to carry them. Both are iterated **once**, and
+a second iteration of a `Tail` **raises**: the framer, the offset and the line
+count are that stream's, so an "again" would resume the first iteration while
+looking like a fresh start. One `Tail` per file, as one `Framer` per byte stream
+(§3.1). Reading one looks like this:
+`for records in tail(path, now=…, sleep=…, poll_seconds=…)`.
+
+**One yield per read, including a read that completed no line.** "Nothing
+arrived" and "nothing was completed" are different answers, and
+`Framer.pending_bytes` is where the second one is visible (§3.4). A tail that
+swallowed the empty result would make a caller unable to tell a quiet file from
+a file in the middle of a record.
+
+`framer` is injected rather than built in, so the caller sets the remainder's cap
+(§3.4) and keeps a handle on `pending_bytes`. `chunk_bytes` bounds one `bytes`
+object per read and nothing else: it is not a policy about content, and a read
+that returns fewer bytes than asked for is the ordinary way a file says "that is
+all for now" — **not** an event, because an event there would be an event per
+poll on a file that is merely still being written.
+
+`start` is the offset to begin at, and `0` — the whole file, then everything
+after it — is the default, because a receiver's first question about a file is
+what is in it. A caller that wants only new bytes passes the file's current size.
+
+`until` is the caller's stop condition, asked once before each poll; `None`
+follows forever. It is the caller's because "stop after this long" is a policy
+(§1.2) and because a test needs a stop that is not a timeout.
+
+#### The clock and the sleeping are the caller's, and the allowlist stays empty
+
+`now` and `sleep` have **no defaults**, exactly as `Completion.now` has none
+(§5.2). So **no module under `spanweave_live/` imports `time`, and the seam
+allowlist in `tests/gates.py` is still empty after this batch** — R5 was the
+batch R0 expected to need the first entry for `sleep`, and it does not, for the
+same reason R3 did not need one for the clock: a parameter with no default costs
+the caller one argument and costs the test suite nothing, while a module holding
+`time.sleep` as a default would have to be exempted from the gate forever. R7's
+CLI binds the real pair.
+
+What that buys is the only kind of tail test worth having. The file is written
+**when the tail sleeps**, in the test's own scripted order, so "it read the bytes
+appended between these two polls" is a fact the test states rather than a race it
+hopes to win. A tail tested against the real clock asserts that the writer got
+there in time, which is a property of the machine, and such a test gets tuned
+until it asserts nothing.
+
+#### Three things that are not growth, and how each is detected
+
+Each is an `Event` (§4.1) — **routing's**, not a type of its own. R2b split
+`FramingEvent` off because framing is *below* routing and a framing event has a
+length and none of a routing event's facts; ingest is *above* routing, so there
+is no upward import to avoid and the facts fit. `index` is how many chunks this
+source had handed to its framer when the event happened (§4.1's reading, one
+layer down), `seconds` is how long the tail had been reading the content it is
+leaving, and `offset` — the one field this batch added, as R3 added `seconds` and
+R4 added `version` — is where in that content it had read to.
+
+- **`truncated`.** `os.fstat` of the **open handle** says the file is shorter
+  than the offset the tail has reached. The content the tail was reading is gone,
+  so it seeks to 0 and reads the new content from the start. The check is made
+  **before** each poll's reads, not after them, so a file truncated and regrown
+  to less than the old offset is still caught.
+- **`rotated`.** `path.stat()` and `os.fstat` of the open handle disagree about
+  `(st_dev, st_ino)`: the path now names a different file. The tail reopens **by
+  path**, at 0. It is checked only on a poll that **read nothing**, so every byte
+  written to the old file before the rename is handed over first — that honesty
+  costs one poll and is what makes "a rotation loses nothing" true.
+- **`vanished`.** `path.stat()` raises: the path names nothing. The open handle
+  is **kept and still read**, because on a POSIX system an unlinked or renamed
+  file is still the file the tail holds and the bytes already written to it are
+  still owed. Reported **once per vanishing**, not once per poll: how many times
+  the path disappeared is a fact about the file, while how many polls found it
+  gone is a fact about the caller's `poll_seconds` and would grow without bound
+  (§4.6).
+- `reopen_failed` is the narrow fourth: a rotation was seen and the new path
+  could not be opened. The replacement is opened **before** the old handle is
+  closed, so the tail keeps following what it already had rather than following
+  nothing, and the next poll tries again. Reported once per failure, for
+  `vanished`'s reason.
+
+**`(st_dev, st_ino)` is read, not chosen.** "The same file" is the operating
+system's own answer, which is a platform fact of the kind this document may
+state; a *policy* about what should count as the same file — a size heuristic, a
+name pattern, a modification time — would be the receiver inventing a rule
+(§1.2) and would have been a halt. None is invented here.
+
+**What is not detectable, said rather than claimed away.** A file truncated and
+then regrown **past** the old offset between two polls is indistinguishable from
+growth: the size is larger than the offset and no byte of the evidence survives.
+The tail will read from the middle of the new content and the records it reads
+will be whatever is there. `poll_seconds` is how narrow that window is, and it is
+the caller's number. The receiver's answer to this is the honest one — it is
+written down — and not a heuristic that would be wrong in a different way.
+
+#### The remainder at a restart is reported, never joined
+
+A truncation or a rotation happens while the framer may be holding an incomplete
+final line. Those bytes belong to content that no longer exists, so the restart
+**flushes** the framer: the fragment comes back as the `malformed_record`
+carrying its text, counted in `skipped_records`, which is the only place those
+bytes survive (§1.5, §3.4). Keeping the remainder instead would hand the reader
+one line made of two files, and the record it produced would be a record nobody
+wrote — the §3 failure mode (a record that is *subtly not the one that was
+sent*) reached through the back door.
+
+Two consequences of there being one framer per tail rather than one per file,
+both stated because they are the kind of thing a reader is entitled to find
+written down:
+
+- **Line numbers are the tail's count, not the file's.** The framer numbers the
+  lines it has handed over (§3.4 made the same point about a cut line), so after
+  a restart its numbers continue rather than going back to 1. The `truncated` or
+  `rotated` event, with its offset, is what tells a reader where the file's own
+  count began again.
+- **A tail does not flush when it stops.** Its stop is the caller's `until`, and
+  that is not end of input: a growing file read at an instant ordinarily ends
+  mid-record (§3.4). So the remainder is left where it is visible —
+  `Tail.framer.pending_bytes` — and a caller whose own stop *is* end of input
+  calls `flush()`. `stdin` is the other way round and flushes itself, because
+  **EOF is end of input**: the last line of a pipe that closed without a `\n` is
+  a record only the flush can produce. That final yield is always made, even when
+  the remainder was empty, because "the stream ended" is the one thing a caller
+  cannot read off the chunks.
+
+An open that fails **at the start** is not an event: it raises. The first open is
+the caller's claim that there is a file at that path, and "wait for a file to
+appear" is a retry policy the receiver does not carry (§1.2). Everything that
+happens to the file *after* that is an event, which is the line this section
+draws.
+
+#### What this section is tested against
+
+`tests/test_ingest.py`, and its central test is **gate A's comparison reached
+through a file**: every line-delimited corpus rendering is written to a file in
+seeded random chunks — appended only while the tail is asleep — and each trace's
+`graph()` must serialize byte for byte to `spanweave.dumps` of `spanweave.build`
+of that rendering, using gate A's own loader, chunker and comparison
+(`SPEC.md` §4.7). A second loader or a second comparison here would be a weaker
+gate wearing the same name, so there is neither.
+
+Truncation and rotation are then asserted as **two contents in one file**: the
+file holds one scenario's rendering, is emptied (or rotated away), and then holds
+a second scenario's rendering relabelled onto a second trace id — and **both**
+graphs must come out exactly, which is what a tail that treated truncation as
+growth cannot do, because it would read at an offset the new content never had.
+The named mutation for this section is that one: `truncated` never fires, and the
+test fails on the missing event, on the second trace's graph, and on the offset.
+
+### 7.2 The OTLP/HTTP endpoint
+
+Reserved for R6, written by that batch: stdlib `http.server` only, one handler
+for `POST /v1/traces`, bodies to `Framer.document` and **never** to `push`
+(§3.3), and the listener factory injected so the tests bind a loopback socket on
+port 0. Nothing under `spanweave_live/` opens a socket before that batch.
+
+## 8 onward
+
+Reserved: §8 CLI (R7). A batch adds its section here in the same commit as its
 code, and nothing else edits them.

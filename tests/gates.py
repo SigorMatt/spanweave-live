@@ -64,10 +64,15 @@ AMBIENT_MODULES = (
 # R0 predicted that R3 would add the `now` default and R6 the listener factory.
 # **R3 added nothing**, and that is worth recording rather than quietly leaving:
 # `Completion.now` has no default at all, so the caller supplies the clock and
-# no module under the package has an import to exempt (`SPEC.md` §5.2). A seam
-# file holding a default is still how R6's listener is expected to go; a seam
-# file holding a *clock* now looks avoidable, and the next batch that wants one
-# should say why `now` with no default was not enough.
+# no module under the package has an import to exempt (`SPEC.md` §5.2).
+#
+# **R5 added nothing either**, which was the other prediction: `tail` takes
+# `sleep` with no default, as `Completion` takes `now` with none, so the only
+# `time` in the project is the one R7's CLI will bind (`SPEC.md` §7.1). Two
+# batches that were each expected to need the first entry did not, and the
+# pattern they share is a parameter with no default. R6's listener factory is the
+# last candidate, and it should be made to prove it the same way: a batch that
+# wants a line here says why an injected seam with no default was not enough.
 SEAMS: Mapping[str, frozenset[str]] = {}
 
 

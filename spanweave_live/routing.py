@@ -93,7 +93,9 @@ class Event:
     #: line number: the router never saw the bytes. On an event a **tick**
     #: emitted (`SPEC.md` §5.4) there is no record to index, so it is the
     #: router's arrival count when the tick ran -- the honest nearest thing, and
-    #: what places the tick in the stream.
+    #: what places the tick in the stream. On an event an **ingest** emitted
+    #: (`SPEC.md` §7.1) there is no router at all, so it is how many chunks that
+    #: source had handed to its framer: the same rule, read one layer down.
     index: int
     trace_id: str | None
     spanweave_code: str | None
@@ -108,6 +110,11 @@ class Event:
     #: each are. `None` for every code that is not. Here for `seconds`' reason
     #: and no other (`SPEC.md` §4.1, §6.1).
     version: int | None = None
+    #: The byte offset this event is about, where it is about one: §7.1's ingest
+    #: codes each are -- where in the content the tail had read to when it was
+    #: truncated, rotated or could not reopen. `None` for every code that is
+    #: not. Here for `seconds`' reason and no other (`SPEC.md` §4.1, §7.1).
+    offset: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
