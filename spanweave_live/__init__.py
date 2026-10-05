@@ -9,15 +9,34 @@ Nothing here is frozen: pre-1.0, by `0.0.x`, deliberately.
 
 This module is the public API. Each batch adds the one name it built
 (`SPEC.md` §3 onward): R1 adds `Framer`, R2 `Router` and the types its
-decisions come back in, R2b the framer's cap and the event it reports.
+decisions come back in, R2b the framer's cap and the event it reports, R3 the
+completion policies, the clock the caller supplies with them, and `Router.tick`.
 """
 
 from __future__ import annotations
 
+from spanweave_live.completion import (
+    CAP,
+    COMPLETED,
+    LATE_ARRIVAL,
+    NOT_WRITTEN,
+    QUIET,
+    RELEASED,
+    ROOT_ENDED,
+    WRITTEN,
+    Cap,
+    Completion,
+    Policy,
+    Quiet,
+    RootEnded,
+    TraceState,
+    root_ended,
+)
 from spanweave_live.framing import FRAGMENT_TOO_LONG, Framer, FramingEvent
 from spanweave_live.routing import (
     REFUSED,
     REFUSED_AT_CAP,
+    Completed,
     Event,
     Routed,
     Router,
@@ -25,15 +44,31 @@ from spanweave_live.routing import (
 )
 
 __all__ = [
+    "CAP",
+    "COMPLETED",
     "FRAGMENT_TOO_LONG",
+    "LATE_ARRIVAL",
+    "NOT_WRITTEN",
+    "QUIET",
     "REFUSED",
     "REFUSED_AT_CAP",
+    "RELEASED",
+    "ROOT_ENDED",
+    "WRITTEN",
+    "Cap",
+    "Completed",
+    "Completion",
     "Event",
     "Framer",
     "FramingEvent",
+    "Policy",
+    "Quiet",
+    "RootEnded",
     "Routed",
     "Router",
+    "TraceState",
     "__version__",
+    "root_ended",
     "trace_id_of",
 ]
 

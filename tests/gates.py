@@ -58,10 +58,16 @@ AMBIENT_MODULES = (
 #
 # Adding a line here is a deliberate, reviewed act, made in the same commit as
 # the file it names, and it names the narrowest thing that works: ONE file and
-# ONE module. R3 adds the `now`/`sleep` defaults and R6 the listener factory;
-# each is one seam module whose whole job is to hold the import that everything
-# else is given instead of taking. If an entry would be needed anywhere else,
-# that is a design conversation (`CONTRIBUTING.md`), not a line in this dict.
+# ONE module. If an entry would be needed anywhere else, that is a design
+# conversation (`CONTRIBUTING.md`), not a line in this dict.
+#
+# R0 predicted that R3 would add the `now` default and R6 the listener factory.
+# **R3 added nothing**, and that is worth recording rather than quietly leaving:
+# `Completion.now` has no default at all, so the caller supplies the clock and
+# no module under the package has an import to exempt (`SPEC.md` §5.2). A seam
+# file holding a default is still how R6's listener is expected to go; a seam
+# file holding a *clock* now looks avoidable, and the next batch that wants one
+# should say why `now` with no default was not enough.
 SEAMS: Mapping[str, frozenset[str]] = {}
 
 

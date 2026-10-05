@@ -8,6 +8,78 @@ of change is a **batch** (`WORKPLAN.md`), and each entry names the batch.
 
 ## Unreleased
 
+### R3 — completion is a policy, with the caller's clock (2026-10-05)
+
+The third piece (`SPEC.md` §5, new). Nothing in a live stream says a trace is
+over, so the receiver does not claim to know: completion is **when the caller's
+policy says to stop holding a builder**, evaluated against a clock the caller
+supplied. It enforces nothing, holds nothing and refuses nothing — a record for a
+trace already completed is absorbed, into a new builder, and reported.
+
+Added
+
+- `spanweave_live.completion`, the lower of the two layers: values and pure
+  functions only, importing nothing from `routing.py`.
+- Three policies, each a **value**, composable as **any-of** in the caller's
+  order: `Quiet(seconds)`, `RootEnded(grace_seconds)`, `Cap(records)`. Every
+  boundary is **inclusive** and tested from both sides — the tick before must not
+  fire and the tick at it must — because "fires at the right time" is the whole of
+  what a timeout policy is. `Quiet(0)` and `Cap(1)` are legal: the number is the
+  caller's and the receiver holds no opinion about it (`SPEC.md` §1.2).
+- `Completion(*, policies, now, out_dir)` — keyword-only, and **`now` has no
+  default**. That is the batch's one design decision worth stating twice: a
+  module holding `time.monotonic` as a default would have earned the first entry
+  in `tests/gates.py`'s seam allowlist, and requiring the argument instead keeps
+  **the allowlist empty** after the batch R0 predicted would grow it. No module
+  under `spanweave_live/` imports `time`. R7's CLI binds the real clock.
+- `Router(completion=...)` and `Router.tick() -> tuple[Completed, ...]`: one
+  clock reading per tick, traces evaluated in `trace_ids` order, and the traces
+  this tick completed returned. A router with no completion policy reads no clock
+  and completes nothing, which is exactly what R2 was — gate A is untouched.
+- Completing a trace is four reported steps: `completed` (naming the policy, with
+  the trace's open lifetime), materialize, `written` / `not_written`, `released`.
+  The builder is **dropped**, which is the point (`SPEC.md` §2.3), and that frees
+  a slot at `max_traces`. The no-trace builder is never completed: it is not a
+  trace.
+- `late_arrival`: a record for a completed trace opens a **new builder**, is
+  absorbed into it, and reports the **gap** on the receiver's clock. The graph
+  already written is never rewritten or appended to — generation 1 is
+  `<trace_id>.json` and generation *n* is `<trace_id>.<n>.json`, beside it, because
+  editing a report the receiver already made would make its output depend on what
+  arrived after it made it.
+- `Event.seconds: float | None` — one optional field on the router's `Event`
+  (`SPEC.md` §4.1), for the durations §5's codes are about. A number a caller can
+  only read out of a sentence is a number it cannot match on, and §1.5 is only
+  true if it can. `FramingEvent` stays separate for R2b's reason: merging *that*
+  one would be four fields that are `None` wherever they are not the emitter's.
+- `RootEnded` decides "root" and "ended" from **structure the graph already
+  states**, through `spanweave`'s public surface and never a dialect: a root is a
+  node with no incoming `parent` edge **and no `orphan_parent` diagnostic naming
+  it** (both halves `spanweave` §4.0), and ended is `ended_at is not None`. The
+  orphan half is what makes it usable live, where a trace's root arriving after
+  its children is ordinary: an orphan has no `parent` edge either, and reading one
+  as a root would complete traces whose real root is still in flight. **At least
+  one root and every root ended** — the conservative reading, because with "any"
+  one finished sibling would complete a trace whose other top-level operation was
+  still running.
+- A trace id is **untrusted input**, so no file is named from one that is not a
+  single path component (empty, `.`, `..`, or carrying a separator or a NUL):
+  `not_written` with the reason, and nothing written outside the directory the
+  caller named. A failed write is an event too, not a traceback that would lose
+  every other trace the receiver was holding.
+- `tests/test_completion.py`: 45 tests, all on a **fake clock the test owns**.
+  340 → 385 tests.
+
+Known cost, stated rather than hidden
+
+- The router remembers, per trace id it has ever completed, four numbers and a
+  flag — what the `late_arrival` gap and a second generation's file name need. It
+  is not a builder and not a graph, but it **is** unbounded in the number of
+  distinct trace ids a stream completes, and `max_traces` does not bound it
+  (`SPEC.md` §5.5). The fix is a policy for *forgetting* a completed trace, which
+  is a number somebody has to choose, so this batch names it rather than invents
+  it — as R1 did with the framer's cap before it was decided.
+
 ### R2b — the framer's remainder has a caller-set cap (2026-10-05)
 
 R1 left the remainder uncapped and said so in `SPEC.md` §3.4, as a gap named

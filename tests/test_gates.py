@@ -112,6 +112,12 @@ def test_the_real_allowlist_is_empty_until_a_batch_adds_a_seam():
     # R0 has no seam file. This is not a style preference: it is the fact the
     # gate's whole value rests on, and a batch that adds an entry here changes
     # this assertion deliberately, in the same commit, with a reason.
+    #
+    # R3 was the batch expected to need the first entry — completion is a
+    # timeout policy, and a timeout policy wants a clock — and it needed none:
+    # `Completion.now` has no default, so the caller holds the import
+    # (`SPEC.md` §5.2). The allowlist is still empty after the batch that was
+    # supposed to grow it.
     assert dict(gates.SEAMS) == {}
 
 
@@ -141,7 +147,12 @@ def test_the_gate_scans_every_module_in_the_package_and_not_a_list():
     assert gates.package_files() == walked
     # Named rather than implied: the package really has subdirectories to reach
     # once a batch adds one, and the walk above is what reaches them.
-    assert {p.name for p in walked} >= {"__init__.py", "framing.py", "routing.py"}
+    assert {p.name for p in walked} >= {
+        "__init__.py",
+        "completion.py",
+        "framing.py",
+        "routing.py",
+    }
 
 
 def test_the_walk_reaches_a_module_nested_in_a_subpackage(tmp_path, monkeypatch):

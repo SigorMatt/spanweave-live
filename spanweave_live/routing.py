@@ -17,17 +17,34 @@ pin. The cost of doing it properly is a second parse per record, measured at
 thread in `SPEC.md` §4.2 -- which is where the number is, and which outlives
 the plan -- not worked around.
 
-Nothing here reads the clock, sleeps, opens a socket or shuffles anything.
+Nothing here reads the clock, sleeps, opens a socket or shuffles anything. The
+clock `tick` evaluates completion against is the caller's `now`, handed to the
+`Completion` it was given (`SPEC.md` §5.2); a router without a completion policy
+never reads one at all.
 """
 
 from __future__ import annotations
 
+import pathlib
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Final
 
-from spanweave import Builder, SpanweaveError
+from spanweave import Builder, Graph, SpanweaveError
 from spanweave.adapters import classify, get
+
+from spanweave_live.completion import (
+    COMPLETED,
+    LATE_ARRIVAL,
+    NOT_WRITTEN,
+    RELEASED,
+    WRITTEN,
+    Completion,
+    Policy,
+    TraceState,
+    root_ended,
+    write,
+)
 
 #: One record, as `spanweave.read_records` yielded it.
 #:
@@ -59,11 +76,20 @@ class Event:
 
     code: str
     #: The record's 1-based arrival index in this router. Arrival order, not a
-    #: line number: the router never saw the bytes.
+    #: line number: the router never saw the bytes. On an event a **tick**
+    #: emitted (`SPEC.md` §5.4) there is no record to index, so it is the
+    #: router's arrival count when the tick ran -- the honest nearest thing, and
+    #: what places the tick in the stream.
     index: int
     trace_id: str | None
     spanweave_code: str | None
     detail: str
+    #: The duration this event is about, where it is about one: the gap for a
+    #: `late_arrival`, the trace's open lifetime for a `completed`. `None` for
+    #: `refused` and `refused_at_cap`, which are about no duration. A field
+    #: rather than a sentence because `SPEC.md` §1.5 is only true if a caller
+    #: can match on the number (`SPEC.md` §4.1, §5.1).
+    seconds: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,6 +108,54 @@ class Routed:
     builder: Builder | None
     version: int | None
     events: tuple[Event, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class Completed:
+    """One trace a `tick` completed, and what completing it did (`§5.4`).
+
+    Here beside `Routed` rather than in `completion.py` for one reason, and it
+    is layering rather than taste: this carries routing `Event`s, so declaring
+    it over there would make completion import routing while routing imports
+    completion. `completion.py` is the lower layer and holds values and pure
+    functions only (`SPEC.md` §5.1).
+
+    `graph` is `None` only where the library refused to materialize it, and
+    `path` is `None` wherever nothing was written -- including the ordinary case
+    of a caller that named no directory. `events` says which of those it was.
+    """
+
+    trace_id: str
+    #: The value that fired. A caller tells `Quiet` from `Cap` by this, not by
+    #: parsing a sentence.
+    policy: Policy
+    #: The builder's version at the instant it was released.
+    version: int
+    graph: Graph | None
+    path: pathlib.Path | None
+    events: tuple[Event, ...] = ()
+
+
+@dataclass(slots=True)
+class _Book:
+    """What the router remembers about one trace for completion's sake.
+
+    Not a public type and not a graph: four numbers, which is what `TraceState`
+    (`SPEC.md` §5.6) and a generation's file name need. A book **outlives** the
+    builder it was opened for, because the gap on a `late_arrival` and the file
+    name of a second generation are both facts about a trace already completed
+    (`SPEC.md` §5.5), and that cost is stated there rather than hidden here.
+    """
+
+    first_record_at: float
+    last_record_at: float
+    #: When an ended root was first *seen*, never the span's own `ended_at`.
+    root_ended_at: float | None = None
+    #: 1 for the first builder of this trace, 2 for the one a late arrival
+    #: opened, and so on. It is in the file name from 2 onward (`§5.5`).
+    generation: int = 1
+    #: When this trace was completed, while no builder is held for it.
+    completed_at: float | None = None
 
 
 def trace_id_of(record: Record) -> str | None:
@@ -124,7 +198,12 @@ class Router:
     caller that names a dialect or turns temporal edges off gets live what
     `spanweave.build` gives it in batch. The router reads neither.
 
-    All three settings are **keyword-only**, as `SPEC.md` §4.1 declares them:
+    `completion` is the caller's policy and the caller's clock (`SPEC.md` §5).
+    `tick` evaluates it; `route` keeps the two numbers it needs. A router
+    without one holds every builder it ever made and reads no clock, which is
+    what R2 was and what gate A still exercises.
+
+    All four settings are **keyword-only**, as `SPEC.md` §4.1 declares them:
     they are independent knobs with no reading order, and a positional order
     here would be a contract the spec never offered.
 
@@ -138,11 +217,15 @@ class Router:
     max_traces: int | None = None
     adapter: str | None = None
     temporal: bool = True
+    #: The caller's completion policy, with the caller's clock in it, or `None`
+    #: for a router that completes nothing and reads no clock (`SPEC.md` §5).
+    completion: Completion | None = None
 
     _builders: dict[str, Builder] = field(default_factory=dict, init=False)
     _no_trace: Builder | None = field(default=None, init=False)
     _counts: dict[str, int] = field(default_factory=dict, init=False)
     _index: int = field(default=0, init=False)
+    _books: dict[str, _Book] = field(default_factory=dict, init=False)
 
     @property
     def trace_ids(self) -> tuple[str, ...]:
@@ -197,6 +280,11 @@ class Router:
         self._index += 1
         index = self._index
         trace_id = trace_id_of(record)
+        # One reading, and only where there is a policy to measure against: a
+        # router with no completion reads no clock at all, which is why R2's
+        # behaviour -- gate A included -- is untouched by R3 (`SPEC.md` §5.2).
+        now = None if self.completion is None else self.completion.now()
+        events: tuple[Event, ...] = ()
 
         if trace_id is None:
             builder = self.no_trace
@@ -210,19 +298,24 @@ class Router:
                     return self._at_cap(index, trace_id)
                 existing = Builder(adapter=self.adapter, temporal=self.temporal)
                 self._builders[trace_id] = existing
+                events += self._began(index, trace_id, now)
             builder = existing
+            if now is not None:
+                self._activity(trace_id, now)
 
         try:
             version = builder.feed(record)
         except SpanweaveError as refusal:
-            event = self._counted(
-                Event(
-                    code=REFUSED,
-                    index=index,
-                    trace_id=trace_id,
-                    spanweave_code=refusal.code,
-                    detail=str(refusal),
-                )
+            events += (
+                self._counted(
+                    Event(
+                        code=REFUSED,
+                        index=index,
+                        trace_id=trace_id,
+                        spanweave_code=refusal.code,
+                        detail=str(refusal),
+                    )
+                ),
             )
             # The builder is left exactly as it was (`spanweave` §10.5), so the
             # version reported is the one it already had.
@@ -231,9 +324,283 @@ class Router:
                 trace_id=trace_id,
                 builder=builder,
                 version=builder.version,
-                events=(event,),
+                events=events,
             )
-        return Routed(index=index, trace_id=trace_id, builder=builder, version=version)
+        return Routed(
+            index=index,
+            trace_id=trace_id,
+            builder=builder,
+            version=version,
+            events=events,
+        )
+
+    def tick(self) -> tuple[Completed, ...]:
+        """Evaluate the completion policies against the clock; complete what is
+        due, and return the traces this tick completed (`SPEC.md` §5.4).
+
+        One clock reading for the whole tick, and the traces are evaluated in
+        `trace_ids` order, so what a tick does is a function of the stream and
+        the reading. Two readings inside one tick could complete one trace and
+        not the next for a reason no caller could see.
+
+        With no completion policy it returns `()` and reads nothing: a tick is
+        not a thing the receiver wanted, it is a thing the caller asked for.
+
+        The **no-trace builder is never completed**, for the cap's reason
+        (`SPEC.md` §4.5): it is not a trace, and releasing it would throw away
+        the library's own account of the records that identified none on a
+        timeout that was about something else.
+
+        It raises nothing a record can cause, as `route` does not: a graph the
+        library refuses is reported, not raised (`SPEC.md` §5.4).
+        """
+        completion = self.completion
+        if completion is None:
+            return ()
+        now = completion.now()
+        watching = completion.watches_root
+        completed: list[Completed] = []
+        # A tuple snapshot, because completing releases builders out of the dict
+        # this iterates.
+        for trace_id in self.trace_ids:
+            builder = self._builders[trace_id]
+            book = self._book(trace_id, now)
+            if watching and book.root_ended_at is None and self._root_ended(builder):
+                # First *seen*, and recorded once: the grace runs from here, not
+                # from the span's own `ended_at` (`SPEC.md` §5.2, §5.6).
+                book.root_ended_at = now
+            state = TraceState(
+                trace_id=trace_id,
+                now=now,
+                records=builder.version,
+                first_record_at=book.first_record_at,
+                last_record_at=book.last_record_at,
+                root_ended_at=book.root_ended_at,
+            )
+            policy = completion.fired(state)
+            if policy is not None:
+                completed.append(
+                    self._complete(completion, trace_id, builder, book, policy, now)
+                )
+        return tuple(completed)
+
+    def _complete(
+        self,
+        completion: Completion,
+        trace_id: str,
+        builder: Builder,
+        book: _Book,
+        policy: Policy,
+        now: float,
+    ) -> Completed:
+        """Say so, materialize, write, release -- each of them reported (§5.4)."""
+        index = self._index
+        events: list[Event] = [
+            self._counted(
+                Event(
+                    code=COMPLETED,
+                    index=index,
+                    trace_id=trace_id,
+                    spanweave_code=None,
+                    detail=(
+                        f"the {policy.code} policy fired on {policy!r}: this "
+                        f"trace had absorbed {builder.version} records and was "
+                        f"last fed at {book.last_record_at!r} on the caller's "
+                        f"clock, which now reads {now!r}"
+                    ),
+                    seconds=now - book.first_record_at,
+                )
+            )
+        ]
+
+        graph: Graph | None = None
+        refusal: SpanweaveError | None = None
+        try:
+            graph = builder.graph()
+        except SpanweaveError as error:
+            refusal = error
+
+        path: pathlib.Path | None = None
+        if completion.out_dir is not None:
+            path, written = self._write(
+                completion, index, trace_id, book.generation, graph, refusal
+            )
+            events.append(written)
+
+        version = builder.version
+        del self._builders[trace_id]
+        book.completed_at = now
+        events.append(
+            self._counted(
+                Event(
+                    code=RELEASED,
+                    index=index,
+                    trace_id=trace_id,
+                    spanweave_code=None,
+                    detail=(
+                        f"the builder for {trace_id!r} was released at version "
+                        f"{version}; the router holds {len(self._builders)} "
+                        f"identified traces"
+                    ),
+                )
+            )
+        )
+        return Completed(
+            trace_id=trace_id,
+            policy=policy,
+            version=version,
+            graph=graph,
+            path=path,
+            events=tuple(events),
+        )
+
+    def _write(
+        self,
+        completion: Completion,
+        index: int,
+        trace_id: str,
+        generation: int,
+        graph: Graph | None,
+        refusal: SpanweaveError | None,
+    ) -> tuple[pathlib.Path | None, Event]:
+        """Write the final graph, or say why there is no file (`SPEC.md` §5.4).
+
+        Three things stop a write and each is one `not_written`: the library
+        refused the graph, the trace id is not usable as one path component, or
+        the filesystem refused. None of them raises -- a receiver that died on
+        one unwritable file would lose every other trace it was holding.
+
+        The first of the three is **unreachable** through the public surface
+        today and kept deliberately (`SPEC.md` §5.4): a builder refuses a graph
+        only when nothing in it was claimed, and an identified trace has a
+        claimed record by construction. `graph()`'s refusals are the library's to
+        define and a pin move can add one.
+        """
+        if graph is None:
+            return None, self._counted(
+                Event(
+                    code=NOT_WRITTEN,
+                    index=index,
+                    trace_id=trace_id,
+                    spanweave_code=None if refusal is None else refusal.code,
+                    detail=(
+                        f"the library refused to materialize the graph of "
+                        f"{trace_id!r}, so there is nothing to write: {refusal}"
+                    ),
+                )
+            )
+        path = completion.path_for(trace_id, generation)
+        if path is None:
+            return None, self._counted(
+                Event(
+                    code=NOT_WRITTEN,
+                    index=index,
+                    trace_id=trace_id,
+                    spanweave_code=None,
+                    detail=(
+                        f"{trace_id!r} is not usable as one path component, so "
+                        f"no file was named from it; a trace id is untrusted "
+                        f"input and a file named from it must not be able to "
+                        f"leave the directory the caller named"
+                    ),
+                )
+            )
+        try:
+            write(graph, path)
+        except OSError as error:
+            return None, self._counted(
+                Event(
+                    code=NOT_WRITTEN,
+                    index=index,
+                    trace_id=trace_id,
+                    spanweave_code=None,
+                    detail=f"writing {str(path)!r} failed: {error}",
+                )
+            )
+        return path, self._counted(
+            Event(
+                code=WRITTEN,
+                index=index,
+                trace_id=trace_id,
+                spanweave_code=None,
+                detail=str(path),
+            )
+        )
+
+    def _root_ended(self, builder: Builder) -> bool:
+        """Has this trace's root ended, as far as the graph says (`§5.6`)?
+
+        A graph the library **refuses** is "no root seen yet" and no event: the
+        alternative is one event per tick for the life of the stream, which is
+        the unbounded accumulation §4.6 exists to avoid, and the condition is
+        permanent and reaches the caller the moment it asks for the graph
+        (`SPEC.md` §5.7). Nothing was dropped -- a decision was not made.
+
+        Unreachable today for `_write`'s reason, and kept for the same one.
+        """
+        try:
+            graph = builder.graph()
+        except SpanweaveError:
+            return False
+        return root_ended(graph)
+
+    def _book(self, trace_id: str, now: float) -> _Book:
+        book = self._books.get(trace_id)
+        if book is None:
+            book = _Book(first_record_at=now, last_record_at=now)
+            self._books[trace_id] = book
+        return book
+
+    def _began(self, index: int, trace_id: str, now: float | None) -> tuple[Event, ...]:
+        """A builder was just made for this trace; is it a **second** one?
+
+        A book that outlived its builder is a trace the caller's policy
+        completed, so this record is late: a new builder is opened, the record
+        is absorbed into it, and the gap is reported (`SPEC.md` §5.5). The
+        record is not refused, not dropped and not held -- the policy said stop
+        holding a builder, not stop receiving telemetry (`SPEC.md` §1.3).
+        """
+        if now is None:
+            return ()
+        book = self._books.get(trace_id)
+        if book is None:
+            self._books[trace_id] = _Book(first_record_at=now, last_record_at=now)
+            return ()
+        completed_at = book.completed_at
+        # This generation's records and this generation's silence.
+        book.first_record_at = now
+        book.last_record_at = now
+        book.root_ended_at = None
+        if completed_at is None:
+            return ()
+        book.completed_at = None
+        book.generation += 1
+        return (
+            self._counted(
+                Event(
+                    code=LATE_ARRIVAL,
+                    index=index,
+                    trace_id=trace_id,
+                    spanweave_code=None,
+                    detail=(
+                        f"{trace_id!r} was completed at {completed_at!r} on the "
+                        f"caller's clock and a record for it arrived at {now!r}; "
+                        f"generation {book.generation} of its builder is open "
+                        f"and the record is absorbed into it"
+                    ),
+                    seconds=now - completed_at,
+                )
+            ),
+        )
+
+    def _activity(self, trace_id: str, now: float) -> None:
+        """A record reached this trace's builder, absorbed or refused (`§5.3`).
+
+        Either way it is activity: a re-sent span is the exporter still talking
+        about this trace, and counting a refusal as silence would complete a
+        trace that is plainly still arriving.
+        """
+        self._book(trace_id, now).last_record_at = now
 
     def _at_cap(self, index: int, trace_id: str) -> Routed:
         """A new trace the router has no room for. Refused, in the open."""

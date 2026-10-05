@@ -480,6 +480,7 @@ class Event:
     trace_id: str | None
     spanweave_code: str | None   # the library's code, where the library refused
     detail: str
+    seconds: float | None = None # the duration the event is about, if any (§5.1)
 
 @dataclass(frozen=True, slots=True)
 class Routed:
@@ -498,8 +499,10 @@ class Router:
         max_traces: int | None = None,
         adapter: str | None = None,
         temporal: bool = True,
+        completion: Completion | None = None,   # §5
     ) -> None: ...
     def route(self, record: Record) -> Routed: ...
+    def tick(self) -> tuple[Completed, ...]: ...   # §5.4
     @property
     def trace_ids(self) -> tuple[str, ...]: ...
     def builder(self, trace_id: str | None) -> spanweave.Builder | None: ...
@@ -520,6 +523,17 @@ accepted `Router(1, 'openinference', False)` positionally. The settings are
 keyword-only now (a test constructs one positionally and requires a
 `TypeError`): they are independent knobs with no reading order, and a
 positional order would be a contract this document never offered.
+
+R3 added two names to that block and one field. `completion` and `tick` are
+§5's and are specified there. `Event.seconds` is the one field a completion
+event needs that a routing event never had: a `late_arrival` is defined by a
+**gap**, and a number a caller can only read out of a sentence is a number the
+caller cannot match on (§1.5). It is one optional field shared by the codes
+that are about a duration and `None` for `refused` and `refused_at_cap`, which
+is why §5 follows this `Event` rather than declaring a type of its own — and
+why §3.1's `FramingEvent` still does: a framing event has a length and *none*
+of `index`, `trace_id` or `spanweave_code`, so merging that one would be four
+fields that are `None` wherever they are not the emitter's, not one.
 
 `Record` is `Any` and deliberately not a JSON type of the receiver's own:
 `spanweave`'s `JsonValue` is itself `Any` and is not exported, and a second,
@@ -585,6 +599,13 @@ trace reaches the same one. `trace_ids` lists the identified traces in **first
 arrival order** — the order traces were seen is a fact about the stream, and
 sorting it would throw that away; nothing in the graphs depends on it.
 
+`trace_ids` is the traces the router **holds a builder for**, which is the same
+thing until completion (§5): a completed trace's builder is released and its id
+leaves the list, and if a late record re-opens it, it rejoins at the end,
+because that new builder is the newest one the router made. That is still
+arrival order — of builders, which is what the router has — and §5.5 says so
+where it can be read next to the event that causes it.
+
 The **no-trace builder** is a `Builder` like any other and exists from the
 start. It is the receiver's honest place for a record that identifies no trace,
 and the point of using a builder rather than a counter is that it carries the
@@ -629,7 +650,12 @@ real ones. `max_traces=None` is no cap.
 
 Which traces to evict, and when, is **not** here: eviction is completion's
 business (§5), and a cap that quietly released a live builder would be a
-retention policy nobody asked for.
+retention policy nobody asked for. The two meet in one direction only —
+completion releases a builder, which frees a slot, so the next new trace is not
+refused — and never in the other: reaching the cap completes nothing and
+hurries nothing. A router at its cap with no completion policy stays there, and
+`refused_at_cap` is the honest report of that rather than a reason to drop
+somebody's live trace.
 
 ### 4.6 Counts, not a log
 
@@ -676,8 +702,332 @@ surface says "no trace id" and the key says `t1`, so a dialect read puts an
 warning is still right about why the read is wrong; the corpus is simply not
 where it shows.
 
-## 5 onward
+## 5. Completion — when is a trace finished?
 
-Reserved, each written by its batch: §5 completion (R3), §6 subscriptions (R4),
-§7 ingest (R5 file and stdin, R6 OTLP/HTTP), §8 CLI (R7). A batch adds its
-section here in the same commit as its code, and nothing else edits them.
+Nothing in a live stream says a trace is over. A span is not announced as the
+last one, an exporter that has gone quiet may be about to send ten more, and a
+trace whose root ended at 12:00:01 can gain a tool span at 12:00:09 under
+at-least-once export. So "finished" is **not a fact the receiver can know**, and
+a receiver that claimed to know it would be wrong on exactly the traces that
+matter.
+
+What the receiver can do is stop holding a builder, and that is all completion
+is: **a policy the caller chose about when to stop**, evaluated against a clock
+the caller supplied. Three consequences, each of them this section's shape:
+
+- A policy is a **value** the caller constructed, not a rule the receiver
+  believes in (§1.2). The receiver evaluates it; it has no opinion about whether
+  the trace is really over, and it says `completed` rather than `finished` or
+  `complete` for that reason.
+- Completion **enforces nothing** (§1.3). It does not hold a record, delay one,
+  refuse one or gate anything. A record for a trace the caller's policy already
+  completed is absorbed, into a new builder, and reported (§5.5).
+- Completion is **bookkeeping and observation**: materialize, optionally write,
+  release, count. Every one of those four is an event with a code (§1.5),
+  because a builder that vanished from a router with nothing said about it is
+  the silence this project does not do.
+
+### 5.1 The surface
+
+```python
+QUIET = "quiet"
+ROOT_ENDED = "root_ended"
+CAP = "cap"
+
+COMPLETED = "completed"
+WRITTEN = "written"
+NOT_WRITTEN = "not_written"
+RELEASED = "released"
+LATE_ARRIVAL = "late_arrival"
+
+@dataclass(frozen=True, slots=True)
+class TraceState:
+    trace_id: str
+    now: float                   # the tick's one clock reading
+    records: int                 # the builder's version: records absorbed
+    first_record_at: float       # when this builder's first record arrived
+    last_record_at: float        # when its most recent record arrived
+    root_ended_at: float | None  # when an ended root was FIRST seen, if ever
+
+class Policy(Protocol):
+    code: ClassVar[str]
+    watches_root: ClassVar[bool]
+    def fires(self, state: TraceState) -> bool: ...
+
+@dataclass(frozen=True, slots=True)
+class Quiet:
+    seconds: float
+
+@dataclass(frozen=True, slots=True)
+class RootEnded:
+    grace_seconds: float
+
+@dataclass(frozen=True, slots=True)
+class Cap:
+    records: int
+
+def root_ended(graph: spanweave.Graph) -> bool: ...
+
+@dataclass(frozen=True, slots=True)
+class Completion:
+    def __init__(
+        self,
+        *,
+        policies: tuple[Policy, ...] = (),
+        now: Callable[[], float],
+        out_dir: pathlib.Path | None = None,
+    ) -> None: ...
+    def fired(self, state: TraceState) -> Policy | None: ...
+    @property
+    def watches_root(self) -> bool: ...
+
+# in `routing.py`, beside `Routed`:
+@dataclass(frozen=True, slots=True)
+class Completed:
+    trace_id: str
+    policy: Policy
+    version: int
+    graph: spanweave.Graph | None   # None only where the library refused it
+    path: pathlib.Path | None       # where it was written, if it was
+    events: tuple[Event, ...]
+```
+
+That block is the whole public surface, declared **exactly** as the code accepts
+it, `*` included: `Completion`'s three settings are keyword-only for §4.1's
+reason, and `now` has **no default**, which is §5.2.
+
+`Completed` lives in `routing.py` next to `Routed` rather than in
+`completion.py`, and the reason is layering rather than taste. It carries
+routing `Event`s, so putting it in `completion.py` would make completion import
+routing while routing imports completion. `completion.py` is therefore the
+lower layer and holds only values and pure functions — the policies, the state
+they see, `root_ended`, and the codes — and the router is what keeps books,
+emits events, writes files and releases builders.
+
+### 5.2 The clock is the caller's, and no module here reads one
+
+`now: Callable[[], float]` is handed to `Completion` by whoever constructs it,
+and **nothing under `spanweave_live/` imports `time`** (§1.4). The seam
+allowlist in `tests/gates.py` is still empty after this batch, which was the
+design goal rather than an accident: a module holding `time.monotonic` as a
+default would have earned an allowlist entry, and `now` with no default costs
+the caller one argument and costs the test suite nothing. R7's CLI is where the
+real clock is bound.
+
+Three rules make the reading deterministic:
+
+- A tick takes **one** clock reading and evaluates every trace against it. Two
+  readings inside one tick could complete one trace and not the next for a
+  reason no caller could see.
+- `route` reads the clock **once per record**, and only when the router has a
+  completion policy. A router without one reads no clock at all, which is why
+  R2's behaviour — and gate A — is untouched by this batch.
+- Every duration here is measured on **that** clock, never on a span's
+  timestamps. `Node.started_at` and `Node.ended_at` are the observed system's
+  clock as its exporter reported it; comparing them against `now()` would make
+  a receiver decision depend on two clocks agreeing, and clock skew would then
+  complete traces early or never. The receiver's claim is about what it saw and
+  when **it** saw it, which is the only claim it is in a position to make.
+
+### 5.3 The three policies, and the instant each fires
+
+Each is a value, each answers one question about `TraceState`, and the boundary
+of each is stated here because "fires at the right time" is the whole of what a
+timeout policy is. All three boundaries are **inclusive** — the policy fires at
+the first tick at which its condition holds, not the one after.
+
+| Policy | Fires when | `watches_root` |
+|---|---|---|
+| `Quiet(seconds)` | `now - last_record_at >= seconds` | no |
+| `RootEnded(grace_seconds)` | an ended root has been seen, and `now - root_ended_at >= grace_seconds` | yes |
+| `Cap(records)` | `records >= self.records` | no |
+
+- **`Quiet(seconds)`** is "no record for this trace for this long". Any record
+  the router routed to that trace is activity, **absorbed or refused**: a
+  re-sent span is the exporter still talking about this trace, and treating a
+  refusal as silence would complete a trace that is plainly still arriving.
+  `Quiet(0)` completes a trace on the first tick after any record, which is
+  legal and is what "no cap on the caller's policy" means (§1.2).
+- **`Cap(records)`** is "this trace has absorbed this many records". The count
+  is the builder's own `version`, so there is no second counter to drift from
+  it, and a refused record does not count because it was not absorbed
+  (`spanweave` §10.5) — it is already reported as `refused` (§4.4).
+- **`RootEnded(grace_seconds)`** is the only one that looks at the graph, and
+  §5.6 is what it is allowed to look at.
+
+### 5.4 `tick()` — evaluate, then materialize, write and release
+
+`Router.tick()` takes one clock reading, evaluates the policies against every
+trace the router holds — in `trace_ids` order, so the result is deterministic —
+and returns the traces this tick completed, as `Completed` values. With no
+completion policy it returns `()` and reads no clock.
+
+The policies compose as **any-of**: the first policy in the caller's tuple whose
+`fires` is true is the one that completed the trace, and it is carried on
+`Completed.policy` so a caller can tell `Quiet` from `Cap` without parsing a
+sentence. The caller's order is the order, because "first that fires" over a
+tuple is a fact the caller can predict and "the strictest" would be the receiver
+ranking somebody's policies.
+
+Completing one trace is four steps, in this order, and the events come back on
+`Completed.events` in that order:
+
+1. **Say so.** `COMPLETED` names the policy that fired and carries `seconds` =
+   how long the trace was open on the receiver's clock (`now -
+   first_record_at`). It is first because it is the decision; the three steps
+   after it are what the decision caused.
+2. **Materialize.** `builder.graph()`, which is the batch graph of what was
+   absorbed (`spanweave` §10). It can refuse — a builder holding only records no
+   adapter claimed refuses rather than returning a graph of `unknown` nodes
+   (§4.3) — and then `Completed.graph` is `None` and the refusal is reported by
+   step 3 rather than raised. `tick()` raises nothing a record can cause, for
+   `route`'s reason (§4.4). That refusal is, today, **unreachable** through this
+   surface and the handling is deliberately kept anyway: a builder refuses a
+   graph only when nothing in it was claimed (§4.3), and a trace the router
+   identified has at least one claimed record by construction — the trace id came
+   from a claiming adapter (§4.2). So no test covers it, which is said here
+   rather than left for a reader to discover: `graph()`'s refusals are the
+   library's to define, a pin move can add one, and the receiver's answer to a
+   new one should be a `not_written` event and not a traceback that loses every
+   other trace it was holding.
+3. **Write, if the caller named a directory.** `spanweave.dump(graph, path)`
+   into `out_dir`, and `WRITTEN` with the path. Three things stop a write, and
+   each is `NOT_WRITTEN` with a `detail` saying which: the graph was refused in
+   step 1 (`spanweave_code` carries the library's code); the trace id is not
+   usable as **one** path component — it is empty, it is `.` or `..`, or it
+   contains a separator or a NUL — because a trace id is untrusted input
+   (`CLAUDE.md` 9) and a file named from it must not be able to leave the
+   directory the caller named; or the write itself failed (`OSError`, reported
+   verbatim). A receiver that died on one unwritable file would lose every other
+   trace it was holding, and a receiver that wrote outside the named directory
+   would be doing something the caller never asked for. `out_dir` is created if
+   it does not exist, with its parents.
+4. **Release.** The builder is dropped — that is the point of the whole section
+   (§2.3: a finished trace should stop costing memory) — and `RELEASED` carries
+   the version released. `router.builder(trace_id)` is `None` afterwards and the
+   id leaves `trace_ids` (§4.3).
+
+`Event.index` on all of these is the router's arrival count at the tick — how
+many records had been routed when the tick ran. A tick is not caused by a record
+and there is no record index to report; the arrival count is the honest nearest
+thing and it is what lets a caller place the tick in the stream.
+
+The **no-trace builder is never completed**, for §4.5's reason: it is not a
+trace. Releasing it would throw away the library's own account of the records
+that identified none (§4.3) on a timeout that was about something else.
+
+### 5.5 A late arrival is an event, and the written file is never touched again
+
+A record for a trace that was completed opens a **new builder** and is absorbed
+into it, and `route` reports `LATE_ARRIVAL` with the trace id and `seconds` =
+the gap between the completion and this arrival on the receiver's clock. The
+record is not refused, not dropped and not held: the caller's policy said stop
+holding a builder, and it did not say stop receiving telemetry (§1.3).
+
+One case does not re-open: a router **at `max_traces`** has no room for the new
+builder, so the record is `refused_at_cap` (§4.5) and there is no late arrival to
+report, because nothing was re-opened. The cap's event is the report, the trace
+stays completed, and a later record that *is* admitted carries the gap from the
+original completion — which is still the true gap.
+
+The new builder starts at version 0 and is the newest builder the router holds,
+so the id rejoins `trace_ids` at the end (§4.3). Its `Cap` and `Quiet` are its
+own: this generation's records, this generation's silence.
+
+**The file already written is not rewritten and not appended to.** If this
+second generation completes too, it is written beside the first, not over it:
+generation 1 is `<trace_id>.json` — the name §8's CLI documents — and generation
+*n* > 1 is `<trace_id>.<n>.json`. The reason is §1.5 read the other way round:
+the first file is a report the receiver already made about records it had, and
+editing it would make the receiver's output depend on what arrived *after* it
+said that. Two files are two honest statements; one overwritten file is a lost
+one. A reader who wants the whole trace folds them, and the gap in the
+`late_arrival` event is what tells them there is something to fold.
+
+**What remembering a completion costs, stated rather than hidden.** The gap and
+the generation are facts about a trace whose builder is gone, so the router keeps
+a small record per trace id it has ever held — four floats, an int and a flag,
+and never a graph or a builder. Releasing therefore returns the materialization
+and the absorbed records, which is where this project's cost is (§2.3), and not
+quite everything: that record is **unbounded in the number of distinct trace ids
+a stream completes**. A receiver running for a month would hold one per trace it
+ever saw. That is said here because `max_traces` (§4.5) does *not* bound it — it
+bounds builders — and because the fix is a policy for **forgetting** a completed
+trace, which is a number somebody has to choose and so is a decision rather than
+this section's to invent (§1.2, and the same reasoning R1 applied to the framer's
+cap before §3 decided it). A caller that cannot afford it today builds a new
+`Router` per window; what it loses by doing that is the `late_arrival` gap, which
+is the thing the record is for.
+
+### 5.6 What a policy may look at, and what it may not
+
+`TraceState` has six fields and they are a trace id, a clock reading and four
+numbers. There is deliberately **no span, no node, no name and no kind** on it:
+a policy may not consult what a record meant, what a tool was called or what a
+graph came to say, because that would be the receiver holding a rule (§1.2) and
+a completion policy that fired on `name == "final_answer"` would be a detector
+with a timeout. A test holds `TraceState`'s field set to exactly those six.
+
+`RootEnded` is the one policy that needs the graph, and it reads **structure the
+graph already states**, through `spanweave`'s public surface, never a dialect
+(§1.1) and never a definition of its own:
+
+- A **root** is a node with no incoming `parent` edge and no `orphan_parent`
+  diagnostic naming it. Both halves are the library's: "a record that names no
+  parent at all is a **root**, and a root is not a truncated trace" and
+  "`orphan_parent` reports a parent the record **named** and this input does not
+  carry" (`spanweave` §4.0). The second half is what makes this usable live,
+  where a trace's root arriving after its children is the ordinary case
+  (`spanweave` §10.6): a child whose parent has not arrived yet has no `parent`
+  edge either, and counting it as a root would complete traces whose real root
+  is still in flight. Only `parent` edges are read — `call_result`, `data`,
+  `link` and `temporal` assert something else, and `temporal` is derived.
+- **Ended** is `node.ended_at is not None`: the span reported an end. A dialect
+  that reports no end time therefore never satisfies `RootEnded`, and that is
+  the honest answer rather than a guess — such a caller wants `Quiet`.
+- `root_ended(graph)` is true when the graph has **at least one** root and
+  **every** root has ended. A trace can have several roots (nodes with no parent
+  are siblings at trace root, `spanweave` §4.3), so "any" and "all" are a real
+  choice and this is the conservative one: with "any", one finished sibling would
+  complete a trace whose other top-level operation was still running. A graph
+  with no root at all — every node an orphan — is **not** ended, because there is
+  nothing there whose end could mean the trace's end.
+
+`root_ended_at` is recorded at the **first tick that sees it**, and then never
+recomputed: the grace runs from when the receiver saw the root end, not from the
+span's own `ended_at` (§5.2), and not from the second tick that noticed the same
+thing.
+
+### 5.7 What `RootEnded` costs, said rather than hidden
+
+Deciding from the graph means materializing the graph, and §2.3 is that
+materialization is where this project's cost is. Three things keep it bounded,
+and they are the reason this is affordable rather than an argument that it is
+free:
+
+- The pinned `Builder` **caches** its graph until the next `feed`
+  (`spanweave/api.py`, `Builder.graph`), so a tick on a trace that has absorbed
+  nothing since the last tick materializes nothing. Stated as a property of the
+  pin rather than of the contract, deliberately: `spanweave` §10.2 promises the
+  opposite — "`graph()` sorts the nodes and indexes them afresh every time it is
+  asked" — so this is a cost the pin happens to spare us and not a guarantee to
+  build a policy on. Nothing here is *correct* because of it.
+- The graph is materialized only while `root_ended_at` is `None`. Once an ended
+  root has been seen, the grace is arithmetic on two floats.
+- It happens only when a `RootEnded` is in the caller's tuple. `Completion`
+  exposes that as `watches_root`, and a router with only `Quiet` and `Cap` never
+  calls `graph()` until it completes something.
+
+A graph the library **refuses** while a tick is evaluating `RootEnded` is "no
+root seen yet", and it is not an event. (Unreachable today, for step 2's reason,
+and handled for step 2's reason.) The alternative is one event per tick for
+the life of the stream, which is the unbounded accumulation §4.6 exists to avoid,
+and the condition is not hidden by leaving it out: it is permanent, it is the
+library's own answer, and the caller meets it the moment it asks that builder for
+a graph. Nothing was dropped — a decision was not made, and the trace stays open.
+
+## 6 onward
+
+Reserved, each written by its batch: §6 subscriptions (R4), §7 ingest (R5 file
+and stdin, R6 OTLP/HTTP), §8 CLI (R7). A batch adds its section here in the same
+commit as its code, and nothing else edits them.
