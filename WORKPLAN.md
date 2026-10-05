@@ -5,7 +5,7 @@ network, the clock and the consumer (`spanweave` `OPEN_QUESTIONS.md` §19,
 decided 2026-09-29). One batch = one sub-agent = one commit = one concern.
 This file plus git is the only state; any session can resume cold from it.
 
-Last updated: 2026-10-05 (run 2 in progress; R2a, R2b, R3 done, R4 next).
+Last updated: 2026-10-05 (run 2 in progress; R2a, R2b, R3, R4 done, R5 next).
 
 ---
 
@@ -151,7 +151,7 @@ commit that cannot say `plan:`, and the watcher exempts it once per series.
 | R2b | **The remainder has a caller-set cap.** `Framer(max_pending_bytes=None)`; SPEC §3.4 rewritten from "no cap" to the policy in §3. Tests red on the parent: a stream with no `\n` past the cap yields one `malformed_record`, `skipped_records=1`, one `fragment_too_long` event with the length, and the framer continues on the next chunk; with the cap `None`, R1's behaviour is unchanged across the whole sweep. Mutation: a framer that drops the oversize remainder silently fails the `skipped_records` assertion. | done (d152c3b) | 5 |
 | R2c | **Pins bumped to a spanweave that ships `py.typed`; the override deleted.** After PR #4 merges: `pyproject.toml` pin and `corpus/` submodule to the new `main` sha (the two-way pin test holds them equal); `[tool.mypy]` override for `spanweave.*` deleted, and a test asserts no `follow_untyped_imports` remains; `make check` green with `mypy --strict` analysing spanweave itself. If PR #4 is not merged when this row is reached, status `awaiting PR #4` and the run stops. | awaiting R5 | 4 |
 | R3 | **Completion is a policy with an injected clock.** `Completion` (SPEC §5): three policies, each a value — `Quiet(seconds)`, `RootEnded(grace_seconds)`, `Cap(records)` — composable as any-of; `now: Callable[[], float]` is injected, never `time.time` inside `spanweave_live/`; `Router.tick()` evaluates policies and returns the traces completed; a completed trace's final graph is materialized, optionally written with `spanweave.dump` to a directory the caller names, and its builder released; a record arriving for a completed trace opens a new builder and emits `late_arrival` with the trace id and the gap. Tests on a fake clock: each policy fires exactly when its definition says; a late arrival is an event, never silent, and never a mutation of the written graph. Mutation: a `Quiet` that fires one tick early fails. | done (e09af3f) | 10 |
-| R4 | **Subscription and delta fan-out.** `Subscriptions` (SPEC §6): a consumer registers a callback for one trace or all; after each absorbed record the router hands each subscriber `delta(since=version-1)` (per-record mode) or, for a subscriber that asked for `every=N`, `delta(since=last_seen)`; retention is set from the longest window any subscriber asked for; a callback that raises is isolated — recorded as `consumer_error` with the trace id and version, other subscribers still called, the record still absorbed. Tests: folding every delta a subscriber received onto its first graph equals the final `graph()`; a raising subscriber never stalls another. Mutation: a fan-out that skips the subscriber after the raising one fails. | todo | 10 |
+| R4 | **Subscription and delta fan-out.** `Subscriptions` (SPEC §6): a consumer registers a callback for one trace or all; after each absorbed record the router hands each subscriber `delta(since=version-1)` (per-record mode) or, for a subscriber that asked for `every=N`, `delta(since=last_seen)`; retention is set from the longest window any subscriber asked for; a callback that raises is isolated — recorded as `consumer_error` with the trace id and version, other subscribers still called, the record still absorbed. Tests: folding every delta a subscriber received onto its first graph equals the final `graph()`; a raising subscriber never stalls another. Mutation: a fan-out that skips the subscriber after the raising one fails. | done (54a6009) | 10 |
 | R5 | **Ingest: file tail and stdin.** `tail(path, *, now, sleep, poll_seconds)` (SPEC §7.1) follows a growing file from an offset through `Framer.push`, survives truncation (restarts from 0 and emits `truncated`), and rotation (reopens by path); `stdin()` reads chunks until EOF. Both are generators of `Records` with `sleep` injected, so the test drives them on a fake clock with a file it appends to between ticks. Tests: a corpus rendering appended in random chunks is routed to the same graphs as gate A; truncation and rotation are events. | awaiting R3 | 10 |
 | R6 | **Ingest: OTLP/HTTP JSON endpoint.** (SPEC §7.2) Stdlib `http.server` only; one handler for `POST /v1/traces` with `Content-Type: application/json`, body → `Framer.document`; `Content-Encoding: gzip` accepted; anything else 415; the listener factory is injected so tests use a loopback socket on port 0. Tests: the `otlp_container` renderings posted as bodies route to the batch graph; a non-JSON body is 400 with the receiver's event, never a traceback. | awaiting R5 | 10 |
 | R7 | **CLI.** `spanweave-live tail <path> --out <dir> [--quiet S] [--root-grace S] [--cap N] [--deltas]` and `spanweave-live serve --port P --out <dir>`: final graphs written as `<trace_id>.json` with `spanweave.dump`; `--deltas` writes each per-record delta document to stdout as one line; every event to stderr as one JSON line with its code; exit codes documented. Tests through `subprocess` on a corpus rendering. | awaiting R6 | 8 |
@@ -325,6 +325,33 @@ the repository is empty; R1 onward land on `receiver`.
   has no test. `README.md`'s "R1–R7 will bring…" sentence is stale a third
   time over; **R9 owns the README** and no batch before it should patch that
   line piecemeal.
+- 2026-10-05 R4 (`54a6009`, CI green on that sha, 6/6): subscriptions and
+  delta fan-out are in. Tests 385 → 410; gate A ~25.2 s, unchanged. Red on the
+  code parent `e09af3f` was meaningful: its own 385 passed, all 25 new red.
+  The central claim is asserted twice (per-record and `every=2`), and in a form
+  that cannot skip a delta: the first delta's additions **are** the first
+  graph, and folding the rest onto it equals `graph()` byte for byte.
+- 2026-10-05 R4 — **R4 bounds a cost rather than adding one.** A `spanweave`
+  `Builder` defaults to `retain("all")`, so every router since R2 has been
+  holding a journal entry per absorbed record; retention is now
+  `builder.retain(max(every for covering subscriptions))` per trace, applied
+  only when the window **changes**, and `window(trace_id)` is `None` — leaving
+  retention **untouched, not 0** — when nobody covers a trace, because
+  `Routed.builder` is public and a caller's own `retain` must not become a
+  traceback instead of a `delta_unavailable` event. Cursors are one `int` per
+  subscription per *currently held* builder, forgotten on release, so
+  `max_traces` bounds them. **R3's §5.5 per-trace-id book is still the
+  series' only unbounded thread**, untouched and not depended on.
+- 2026-10-05 R4 — specified choices: subscriber order is **registration
+  order** (SPEC §6.2) because `id()`/`hash()`/callback names are either
+  unstable across processes or a ranking nobody chose; `trace_id=None`
+  subscribes to the **no-trace builder too**, deliberately unlike §4.5/§5.4,
+  because reporting throws nothing away while releasing does (§6.3); and
+  `delta_unsent` is a **report, not a flush** — an `every=N` subscriber's
+  residual window is an event, never a final partial delivery. Routing's
+  `Event` gained one optional field `version`, following R3's `seconds`.
+- 2026-10-05 R4 — **the seam allowlist is still empty**; R4 needed no entry
+  either. R5 (`sleep`) and R6 (a listener) remain the only candidates.
 
 ## 5. Origins
 
