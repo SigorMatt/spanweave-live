@@ -8,6 +8,60 @@ of change is a **batch** (`WORKPLAN.md`), and each entry names the batch.
 
 ## Unreleased
 
+### R2b — the framer's remainder has a caller-set cap (2026-10-05)
+
+R1 left the remainder uncapped and said so in `SPEC.md` §3.4, as a gap named
+rather than a policy invented: which bytes to refuse is a decision, and a batch
+does not make one. The decision is made (`WORKPLAN.md` §3, *framer cap*,
+2026-10-05) and this batch implements it and nothing else.
+
+Added
+
+- `Framer(max_pending_bytes=None)` — a cap on the remainder, **keyword-only**,
+  and `None` by **default**, which is unbounded exactly as R1 shipped. The
+  default is the receiver's whole position: how many bytes of an unterminated
+  line are too many is the caller's policy, and a number chosen here would be
+  the receiver carrying one of its own (`SPEC.md` §1.2). Readable back as
+  `Framer.max_pending_bytes`.
+- When a push leaves more than the cap in the remainder, the remainder is handed
+  to `read_records` as one line — alongside whatever complete lines that push
+  also completed — so it comes back as a `malformed_record` carrying its text,
+  counted in `skipped_records`, and **never dropped** (`SPEC.md` §1.5). The
+  framer is then holding nothing, so the next chunk reads as an ordinary chunk:
+  a cap that wedged the stream it capped would be worse than no cap.
+- `FRAGMENT_TOO_LONG` (`"fragment_too_long"`) and `FramingEvent(code, line,
+  length, detail)`, exported from `spanweave_live`: the event the framer emits
+  when the cap is reached, carrying the **length** of the fragment. Read back as
+  `Framer.events` (the most recent call's, reset by every call, never a log) and
+  `Framer.counts` (per code, for the life of the framer — bounded by the number
+  of codes, which is §4.6's choice for the router). A type of its own rather
+  than the router's `Event`: a framer has no record index, no trace id and no
+  library refusal code, and the router has no field for a length.
+- `SPEC.md` §3.4 **rewritten** from "no cap, and that is a gap stated rather
+  than a decision made" to the policy: the cap is the most the framer will keep,
+  the boundary is strict (`>`, so a remainder exactly at the cap is one the
+  caller allowed, and `0` is legal), neither `document` nor `flush` is capped,
+  and the cost is named — once a line is cut into fragments each fragment is
+  numbered as a line of its own, so line numbers downstream of a
+  `fragment_too_long` are the framer's count of what it handed over rather than
+  the input's count of its own lines. §3.1's surface block now declares the
+  constructor, `events` and `counts`, and says why the events sit beside the
+  return value instead of in it (a wrapper would be the second name for records,
+  diagnostics and skips that §3.1 refuses).
+- `tests/test_framing.py`: six new tests plus one new sweep. The cap tests assert
+  the strict boundary at the byte, one `malformed_record` with
+  `skipped_records == 1` and one `fragment_too_long` carrying the length, that
+  the framer **continues on the next chunk**, that a chunk hands over its
+  complete lines *before* its over-cap tail (one push, two reads, one result),
+  that `document` and `flush` are uncapped, and — the assertion the design exists
+  to make true — that concatenating the text of every `malformed_record` from a
+  stream that never sends a `\n` **reproduces the input byte for byte**. The new
+  sweep re-runs all 51 renderings × 2 forms × 12 framings = **1224** framings
+  against `Framer(max_pending_bytes=None)` and requires R1's behaviour unchanged
+  *and* that no event is emitted and no count kept anywhere in it, so a cap that
+  fired on a `>=`, or that replaced `None` with a number of its own, fails over
+  the whole corpus rather than in a sample of it. 340 tests.
+
 ### R2a — the run-1 review's findings, closed (2026-10-05)
 
 A fix batch: no new piece, no new behaviour the receiver did not already have.

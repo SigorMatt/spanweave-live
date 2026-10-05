@@ -23,7 +23,7 @@ from pathlib import Path
 import pytest
 from spanweave import Diagnostic, Records, read_records
 
-from spanweave_live import Framer
+from spanweave_live import FRAGMENT_TOO_LONG, Framer
 
 REPO = Path(__file__).resolve().parent.parent
 CORPUS = REPO / "corpus" / "fixtures" / "conformance"
@@ -107,13 +107,17 @@ def chunked(body: bytes, seed: int) -> list[bytes]:
     return chunks
 
 
-def framed(chunks: list[bytes]) -> tuple[Records, ...]:
-    """Push every chunk through one `Framer`, then flush it."""
-    framer = Framer()
+def framing_of(chunks: list[bytes], framer: Framer) -> tuple[Records, ...]:
+    """Push every chunk through `framer`, then flush it."""
     results = [framer.push(chunk) for chunk in chunks]
     results.append(framer.flush())
     assert framer.pending_bytes == 0, "a flushed framer is holding nothing"
     return tuple(results)
+
+
+def framed(chunks: list[bytes]) -> tuple[Records, ...]:
+    """Push every chunk through one default `Framer`, then flush it."""
+    return framing_of(chunks, Framer())
 
 
 def records_of(results: tuple[Records, ...]) -> tuple[object, ...]:
@@ -205,6 +209,49 @@ def test_seeded_chunkings_of_a_rendering_read_as_the_whole_input_does(rendering,
         assert sum(r.skipped_records for r in results) == whole.skipped_records, (
             f"{form}, {label}"
         )
+
+
+@pytest.mark.parametrize("form", FORMS)
+@pytest.mark.parametrize("rendering", line_renderings(), ids=rendering_id)
+def test_a_cap_of_none_is_r1s_behaviour_over_the_whole_sweep(rendering, form):
+    """`max_pending_bytes=None` is unbounded, exactly as R1 shipped (§3.4).
+
+    The default is `None` because a default cap would be the receiver inventing
+    a policy, so the no-cap path is the one almost every caller runs and the
+    claim that the cap changed nothing about it has to be held over the whole
+    sweep rather than a sample of it: the same 51 renderings x 2 forms x 12
+    framings = 1224 framings the test above runs, re-run against a framer
+    constructed with the cap spelled out.
+
+    Two things are asserted, and the second is the one a sampled test would
+    miss: the records, diagnostics and `skipped_records` are `read_records` of
+    the whole input, and **no event is emitted and no count is kept** anywhere
+    in the sweep. An over-eager cap -- one that fired on a `>=`, or that capped
+    `None` to some number of its own -- would cut corpus lines loose and show up
+    as a `fragment_too_long` here even where the records still happened to
+    match.
+    """
+    body = form_of(rendering, form)
+    whole = read_records(body)
+
+    chunkings: dict[str, list[bytes]] = {
+        "one byte at a time": [body[i : i + 1] for i in range(len(body))],
+        "one chunk": [body],
+    }
+    for seed in SEEDS:
+        chunkings[f"seed {seed}"] = chunked(body, seed)
+
+    for label, chunks in chunkings.items():
+        framer = Framer(max_pending_bytes=None)
+        assert framer.max_pending_bytes is None
+        results = framing_of(chunks, framer)
+        assert records_of(results) == whole.records, f"{form}, {label}"
+        assert diagnostics_of(results) == list(whole.diagnostics), f"{form}, {label}"
+        assert sum(r.skipped_records for r in results) == whole.skipped_records, (
+            f"{form}, {label}"
+        )
+        assert framer.events == (), f"{form}, {label}"
+        assert framer.counts == {}, f"{form}, {label}"
 
 
 # --------------------------------------------------------------------------
@@ -569,3 +616,193 @@ def test_document_leaves_the_line_remainder_alone():
     body = b'{"resourceSpans":[{"scopeSpans":[{"spans":[{"traceId":"t1"}]}]}]}'
     assert framer.document(body) == read_records(body)
     assert framer.pending_bytes == len(TRUNCATED_TAIL)
+
+
+# --------------------------------------------------------------------------
+# The remainder's cap is the caller's number (`SPEC.md` §3.4).
+# --------------------------------------------------------------------------
+
+# Small on purpose: the cap is a policy, and a test that needed a megabyte to
+# cross it would be asserting the policy rather than the mechanism.
+CAP = 64
+
+# A fragment of a line, with no `\n` anywhere in it, longer than CAP.
+OVERSIZE = b'{"trace_id":"t1","span_id":"' + b"s" * CAP
+GOOD_LINE = b'{"trace_id":"t1","span_id":"s1"}\n'
+
+
+def test_the_cap_is_a_keyword_the_caller_sets_and_defaults_to_no_cap():
+    """`None` by default, and never positional (`SPEC.md` §3.1, §3.4).
+
+    The default is the whole of the receiver's position on it: how many bytes of
+    an unterminated line are too many is the caller's policy, and a number
+    chosen here would be the receiver carrying one of its own (`CLAUDE.md`
+    standing rule 2). Keyword-only for the reason `Router`'s settings are: a
+    positional slot is a reading order, and `SPEC.md` never offered one.
+    """
+    assert Framer().max_pending_bytes is None
+    assert Framer(max_pending_bytes=CAP).max_pending_bytes == CAP
+    with pytest.raises(TypeError):
+        Framer(CAP)  # type: ignore[misc]
+
+
+def test_the_cap_is_the_most_the_framer_will_keep_so_the_boundary_is_strict():
+    """A remainder exactly at the cap is one the caller allowed.
+
+    `>` and not `>=`, asserted at the byte: at `CAP` bytes nothing has happened
+    and the remainder is still pending, and the `CAP + 1`th byte is what trips
+    it. A cap that fired one byte early would refuse a line the caller's own
+    number permits, and nothing else in this file would notice.
+    """
+    framer = Framer(max_pending_bytes=CAP)
+
+    assert framer.push(b"x" * CAP) == Records(
+        records=(), diagnostics=(), skipped_records=0
+    )
+    assert framer.pending_bytes == CAP
+    assert framer.events == ()
+    assert framer.counts == {}
+
+    tripped = framer.push(b"x")
+    assert [d.code for d in tripped.diagnostics] == ["malformed_record"]
+    (event,) = framer.events
+    assert event.length == CAP + 1
+    assert framer.pending_bytes == 0
+
+
+def test_a_fragment_past_the_cap_is_read_as_a_line_and_the_framer_continues():
+    """At the cap the bytes are reported, and the stream goes on (§1.5, §3.4).
+
+    The decision the receiver is allowed to make is *when to stop keeping*
+    bytes, never whether to keep them at all. So the over-cap remainder goes to
+    the reader as one line: it comes back as the `malformed_record` carrying its
+    text -- the only place those bytes survive -- it is counted in
+    `skipped_records`, and the `fragment_too_long` event says how long it was.
+
+    The last two assertions are the ones that make it a cap rather than a wall.
+    The framer is holding nothing afterwards, so the **next** chunk reads as an
+    ordinary line: a cap that wedged the stream it capped, or that went on
+    reporting the fragment it already reported, would be worse than no cap.
+    """
+    framer = Framer(max_pending_bytes=CAP)
+
+    # Nothing yet: under the cap, an unterminated line is merely pending.
+    assert framer.push(OVERSIZE[:CAP]) == Records(
+        records=(), diagnostics=(), skipped_records=0
+    )
+    assert framer.events == ()
+
+    result = framer.push(OVERSIZE[CAP:])
+
+    assert result.records == ()
+    assert [d.code for d in result.diagnostics] == ["malformed_record"]
+    assert result.skipped_records == 1
+    # Verbatim, which is what "never dropped" has to mean to mean anything.
+    assert result.diagnostics[0].source == OVERSIZE.decode()
+    assert result.diagnostics[0].message.startswith("line 1 ")
+
+    (event,) = framer.events
+    assert event.code == FRAGMENT_TOO_LONG == "fragment_too_long"
+    assert event.length == len(OVERSIZE)
+    assert event.line == 1
+    assert str(CAP) in event.detail
+    assert framer.counts == {FRAGMENT_TOO_LONG: 1}
+    assert framer.pending_bytes == 0
+
+    # And the framer continues: the next chunk is an ordinary line.
+    carried_on = framer.push(GOOD_LINE)
+    assert carried_on.records == read_records(GOOD_LINE).records
+    assert carried_on.diagnostics == ()
+    assert carried_on.skipped_records == 0
+    assert framer.events == (), "events are the last call's, not a log"
+    assert framer.counts == {FRAGMENT_TOO_LONG: 1}, "counts are the stream's"
+
+
+def test_a_chunk_hands_over_its_complete_lines_before_its_over_cap_tail():
+    """One push, two reads, one result -- and the records are not lost.
+
+    A chunk can both complete lines and leave an over-cap tail. The lines are
+    the reader's as usual and the tail is cut loose in the same push, so the
+    caller gets one `Records` carrying both: the record, the fragment's
+    `malformed_record`, and the skip. A framer that cut the tail loose *instead*
+    of reading the chunk would lose a record it had whole.
+    """
+    framer = Framer(max_pending_bytes=CAP)
+    result = framer.push(GOOD_LINE + OVERSIZE)
+
+    assert result.records == read_records(GOOD_LINE).records
+    assert [d.code for d in result.diagnostics] == ["malformed_record"]
+    assert result.skipped_records == 1
+    assert result.diagnostics[0].source == OVERSIZE.decode()
+
+    (event,) = framer.events
+    assert event.length == len(OVERSIZE)
+    # Line 1 was the good line, so the fragment is line 2 of the stream.
+    assert event.line == 2
+    assert result.diagnostics[0].message.startswith("line 2 ")
+    assert framer.pending_bytes == 0
+
+
+def test_every_byte_of_an_endless_line_is_accounted_for_and_none_is_dropped():
+    """The cap never loses a byte, however long the line that hit it.
+
+    A stream that sends no `\\n` at all, in chunks that each cross the cap: the
+    fragments come back one per crossing, and **concatenating the text of every
+    `malformed_record` reproduces the input exactly**. That is the assertion the
+    whole design of §3.4 exists to make true -- a framer that truncated, or that
+    dropped the oversize remainder and carried on, keeps the records and the
+    diagnostics it would have had and fails here on the bytes.
+
+    `skipped_records` is summed as well, because it is the number a caller adds
+    up (standing rule 5): one skip per fragment, never a silent zero.
+    """
+    stream = b"x" * (CAP * 5 + 7)
+    chunks = [stream[i : i + CAP + 1] for i in range(0, len(stream), CAP + 1)]
+    assert len(chunks) > 1, "a one-chunk stream would not test the carry-over"
+
+    framer = Framer(max_pending_bytes=CAP)
+    results = []
+    events = []
+    for chunk in chunks:
+        results.append(framer.push(chunk))
+        events.extend(framer.events)
+    results.append(framer.flush())
+
+    diagnostics = [d for result in results for d in result.diagnostics]
+    assert {d.code for d in diagnostics} == {"malformed_record"}
+    assert "".join(d.source or "" for d in diagnostics).encode() == stream
+    assert sum(r.skipped_records for r in results) == len(diagnostics)
+    assert all(r.records == () for r in results)
+    assert framer.pending_bytes == 0
+
+    # One event per crossing, every fragment but the flushed tail, and the
+    # lengths they report are the bytes that were handed over -- all of them.
+    assert len(events) == len(diagnostics) - 1 == framer.counts[FRAGMENT_TOO_LONG]
+    assert [e.code for e in events] == [FRAGMENT_TOO_LONG] * len(events)
+    assert [e.line for e in events] == list(range(1, len(events) + 1))
+    flushed_tail = len(results[-1].diagnostics[0].source or "")
+    assert sum(e.length for e in events) == len(stream) - flushed_tail
+
+
+def test_the_cap_does_not_reach_a_document_or_the_flush_of_a_short_remainder():
+    """The cap bounds a remainder, and a body is not one (`SPEC.md` §3.3).
+
+    A body arrives whole or not at all, so there is nothing for a cap to bound
+    and capping it would truncate an export the caller handed over complete. And
+    `flush` reads whatever is left whatever its length, because that is what
+    `flush` is for -- under a cap there is never more than the cap left to read,
+    since `push` cut anything longer loose when it crossed.
+    """
+    body = b'{"resourceSpans":[{"scopeSpans":[{"spans":[{"traceId":"t1"}]}]}]}'
+    assert len(body) > CAP
+    framer = Framer(max_pending_bytes=CAP)
+    assert framer.document(body) == read_records(body)
+    assert framer.events == ()
+    assert framer.counts == {}
+
+    framer.push(TRUNCATED_TAIL)
+    assert framer.pending_bytes == len(TRUNCATED_TAIL)
+    flushed = framer.flush()
+    assert [d.code for d in flushed.diagnostics] == ["malformed_record"]
+    assert flushed.diagnostics[0].source == TRUNCATED_TAIL.decode()
+    assert framer.events == ()

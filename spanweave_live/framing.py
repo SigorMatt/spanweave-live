@@ -13,6 +13,12 @@ that was sent. Framing is therefore the receiver's job, and getting it wrong
 does not raise: it quietly changes the records. That is what makes it worth a
 module and a corpus-wide test rather than three lines in an ingest loop.
 
+The one policy it takes is `max_pending_bytes`, the cap on the remainder, and
+that is the caller's number -- there is no default cap (`SPEC.md` §3.4). At the
+cap the remainder is read as a line rather than kept, so the bytes come back as
+a `malformed_record` and a `FramingEvent` says how many they were. Nothing is
+dropped.
+
 Nothing here reads the clock, sleeps, opens a socket or shuffles anything: a
 `Framer` is a pure function of the bytes it has been handed, in the order it
 was handed them.
@@ -21,8 +27,17 @@ was handed them.
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
+from dataclasses import dataclass
+from typing import Final
 
 from spanweave import Diagnostic, Records, read_records
+
+#: The remainder outgrew the cap the caller set, so it was handed to the reader
+#: as one line instead of being kept (`SPEC.md` §3.4). The bytes are reported,
+#: never dropped: the reader answers with a `malformed_record` carrying their
+#: text and a skipped record, and this event says how many bytes they were.
+FRAGMENT_TOO_LONG: Final = "fragment_too_long"
 
 #: The leading `line <n>` of a reader diagnostic about one line of input.
 #:
@@ -39,6 +54,55 @@ _LEADING_LINE = re.compile(r"\Aline (\d+)\b")
 #: nothing skipped. Not an absence -- the bytes are in the remainder, and
 #: `pending_bytes` is where that is visible (`SPEC.md` §1.5).
 _NOTHING_YET = Records(records=(), diagnostics=(), skipped_records=0)
+
+
+@dataclass(frozen=True, slots=True)
+class FramingEvent:
+    """One decision the framer made about bytes that a caller must know about.
+
+    Today there is one code, `FRAGMENT_TOO_LONG`, and one decision to report:
+    the caller's cap was reached (`SPEC.md` §1.5, §3.4).
+
+    A type of its own rather than `spanweave_live.Event`, which the router
+    emits, because the two layers have different facts to report and neither
+    one's fields are honest for the other. A routing event names a record's
+    arrival index, the trace id and the library's own refusal code; the framer
+    has seen no record, knows no trace, and the library refused nothing -- what
+    it has is a line and a length. Folding both into one dataclass would mean
+    four fields that are `None` wherever they are not the emitter's, which is a
+    shape neither caller can read.
+    """
+
+    code: str
+    #: The fragment's 1-based line number in the stream. The line **the framer
+    #: handed over**: once a line is cut into fragments the framer no longer
+    #: knows where that line ended, and each fragment is numbered as a line of
+    #: its own (`SPEC.md` §3.4).
+    line: int
+    #: How many bytes were handed over as that one line. The number the decision
+    #: is about, kept as a field rather than folded into `detail` so a caller can
+    #: act on it instead of parsing a sentence.
+    length: int
+    detail: str
+
+
+def _merged(first: Records, second: Records) -> Records:
+    """Two reads of one push, handed back as the one result the push owes.
+
+    A push that both completes lines and then cuts an over-cap remainder loose
+    (`SPEC.md` §3.4) is two calls to the reader, and its caller is owed one
+    `Records`. The diagnostics of a collection are ordered by the library's own
+    key (`spanweave` `SPEC.md` §5.2), so the two tuples are merged and
+    **re-sorted** rather than concatenated -- the same reason `_with_offset`
+    re-sorts after renumbering.
+    """
+    return Records(
+        records=first.records + second.records,
+        diagnostics=tuple(
+            sorted(first.diagnostics + second.diagnostics, key=lambda d: d.sort_key)
+        ),
+        skipped_records=first.skipped_records + second.skipped_records,
+    )
 
 
 def _renumbered(diagnostic: Diagnostic, offset: int) -> Diagnostic:
@@ -98,19 +162,60 @@ class Framer:
     (`CLAUDE.md`, standing rules), so a caller that wants two streams makes two
     framers.
 
-    There is **no cap** on the remainder, and that is a gap stated rather than
-    a decision made. A stream that never sends a `\\n` grows this buffer, and
-    `pending_bytes` is what makes that visible to a caller who wants to act on
-    it. A cap would be a policy -- which bytes to refuse, and what to call the
-    event -- and inventing one here is a halt point (`CONTRIBUTING.md`), so the
-    receiver reports and does not decide.
+    The remainder's cap is `max_pending_bytes`, and it is the **caller's**
+    number: `None`, the default, is no cap at all (`SPEC.md` §3.4). How many
+    bytes of an unterminated line are too many is a policy, and the receiver
+    carries no policy of its own -- a default here would be the receiver
+    inventing one. What the receiver owns is the mechanism: at the cap the
+    remainder is handed to the reader as one line rather than kept, so it comes
+    back as a `malformed_record` with its text and a skipped record, and a
+    `FramingEvent` says how long it was. Nothing is dropped (`SPEC.md` §1.5).
+
+    `max_pending_bytes` is **keyword-only**: it is a policy the caller sets, not
+    a reading order, and a positional slot would be a contract `SPEC.md` §3.1
+    never offered (the same reason `Router`'s settings are keyword-only).
     """
 
-    __slots__ = ("_lines", "_pending")
+    __slots__ = ("_counts", "_events", "_lines", "_max_pending_bytes", "_pending")
 
-    def __init__(self) -> None:
+    def __init__(self, *, max_pending_bytes: int | None = None) -> None:
         self._pending = bytearray()
         self._lines = 0
+        self._max_pending_bytes = max_pending_bytes
+        self._events: tuple[FramingEvent, ...] = ()
+        self._counts: dict[str, int] = {}
+
+    @property
+    def max_pending_bytes(self) -> int | None:
+        """The most the remainder may hold, or `None` for no cap.
+
+        Read back as the caller set it, because a caller that hands a framer to
+        another layer (R5's tail, R6's handler) is entitled to see the policy it
+        is running under.
+        """
+        return self._max_pending_bytes
+
+    @property
+    def events(self) -> tuple[FramingEvent, ...]:
+        """The events of the **most recent call**, and no further back.
+
+        Reset by every `push`, `document` and `flush`, so it is always this
+        call's answer and never a log that grows with the stream -- which is
+        `SPEC.md` §2.3 and the same choice `Router` made (§4.6). It is a
+        property rather than part of the return value because the return value
+        is `spanweave.Records` and stays that way: a wrapper carrying both would
+        be the second name for records, diagnostics and skips that §3.1 refuses.
+        `counts` is the running total.
+        """
+        return self._events
+
+    @property
+    def counts(self) -> Mapping[str, int]:
+        """How many of each event code, for the life of this framer.
+
+        Bounded by the number of codes, not by the length of the stream.
+        """
+        return dict(self._counts)
 
     @property
     def pending_bytes(self) -> int:
@@ -134,16 +239,71 @@ class Framer:
         reader's own line splitting is then given exactly the input a file
         would have given it, and the final empty piece is a blank line, which
         it ignores.
+
+        If this push leaves more than `max_pending_bytes` in the remainder, the
+        remainder is not kept: it goes to the reader as one line too, in the
+        same push, and `events` carries the `fragment_too_long` that says how
+        long it was (`SPEC.md` §3.4).
         """
+        self._events = ()
         self._pending += chunk
         end = self._pending.rfind(b"\n")
         if end < 0:
-            return _NOTHING_YET
+            return self._capped(_NOTHING_YET)
         complete = bytes(self._pending[: end + 1])
         del self._pending[: end + 1]
         offset = self._lines
         self._lines += complete.count(b"\n")
-        return _with_offset(read_records(complete), offset)
+        return self._capped(_with_offset(read_records(complete), offset))
+
+    def _capped(self, result: Records) -> Records:
+        """`result`, plus the remainder read as a line if it outgrew the cap.
+
+        The cap is the most the framer will **keep**, so it is `>` and not
+        `>=`: a remainder exactly at the cap is a remainder the caller allowed.
+        """
+        cap = self._max_pending_bytes
+        if cap is None or len(self._pending) <= cap:
+            return result
+        return _merged(result, self._cut_loose(cap))
+
+    def _cut_loose(self, cap: int) -> Records:
+        """Read the over-cap remainder as one line; report that it was.
+
+        What the reader makes of it is the reader's: a fragment of a line is
+        almost always a `malformed_record` carrying its text, which is the only
+        place those bytes survive (`SPEC.md` §1.5), and if the fragment happens
+        to be a whole record it is a record. Either way the framer is then
+        holding nothing, so the next chunk starts clean rather than inheriting a
+        buffer that can only grow -- a cap that wedged the stream it capped
+        would be worse than no cap.
+
+        The fragment is numbered as a line of its own, because the framer does
+        not know where the line it came from ended: the rest of that line
+        arrives later and is numbered as the next line (`SPEC.md` §3.4).
+        """
+        length = len(self._pending)
+        fragment = bytes(self._pending)
+        del self._pending[:]
+        offset = self._lines
+        self._lines += 1
+        self._emit(
+            FramingEvent(
+                code=FRAGMENT_TOO_LONG,
+                line=offset + 1,
+                length=length,
+                detail=(
+                    f"{length} bytes were held with no newline, which is more "
+                    f"than max_pending_bytes={cap}, so they were read as line "
+                    f"{offset + 1} of the stream rather than kept"
+                ),
+            )
+        )
+        return _with_offset(read_records(fragment), offset)
+
+    def _emit(self, event: FramingEvent) -> None:
+        self._events += (event,)
+        self._counts[event.code] = self._counts.get(event.code, 0) + 1
 
     def document(self, body: bytes) -> Records:
         """Read one whole body -- an OTLP/HTTP POST, a message off a queue.
@@ -159,7 +319,13 @@ class Framer:
         own caller is concerned. It neither reads nor clears the remainder --
         a body and a tail are different transports, and neither may eat the
         other's bytes.
+
+        `max_pending_bytes` does not apply: the cap bounds a **remainder**, and
+        a body is not one. A body arrives whole or not at all, so there is
+        nothing here for a cap to bound and capping it would be truncating an
+        export the caller handed over complete.
         """
+        self._events = ()
         return read_records(body)
 
     def flush(self) -> Records:
@@ -174,7 +340,12 @@ class Framer:
 
         An empty remainder reads nothing and reports nothing. There is no
         final line, so saying there was one would be inventing a fact.
+
+        No cap applies: `flush` reads the remainder whatever its length, because
+        that is what `flush` is for. A framer running under a cap has nothing
+        over it to flush anyway -- `push` cut it loose when it crossed.
         """
+        self._events = ()
         if not self._pending:
             return _NOTHING_YET
         remainder = bytes(self._pending)

@@ -9,12 +9,12 @@ Nothing here is frozen: pre-1.0, by `0.0.x`, deliberately.
 
 This module is the public API. Each batch adds the one name it built
 (`SPEC.md` §3 onward): R1 adds `Framer`, R2 `Router` and the types its
-decisions come back in.
+decisions come back in, R2b the framer's cap and the event it reports.
 """
 
 from __future__ import annotations
 
-from spanweave_live.framing import Framer
+from spanweave_live.framing import FRAGMENT_TOO_LONG, Framer, FramingEvent
 from spanweave_live.routing import (
     REFUSED,
     REFUSED_AT_CAP,
@@ -25,10 +25,12 @@ from spanweave_live.routing import (
 )
 
 __all__ = [
+    "FRAGMENT_TOO_LONG",
     "REFUSED",
     "REFUSED_AT_CAP",
     "Event",
     "Framer",
+    "FramingEvent",
     "Routed",
     "Router",
     "__version__",

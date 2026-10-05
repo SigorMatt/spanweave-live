@@ -244,21 +244,53 @@ than three lines in an ingest loop.
 ### 3.1 The surface
 
 ```python
+FRAGMENT_TOO_LONG = "fragment_too_long"
+
+@dataclass(frozen=True, slots=True)
+class FramingEvent:
+    code: str
+    line: int      # the fragment's 1-based line number in the stream
+    length: int    # how many bytes were handed over as that one line
+    detail: str
+
 class Framer:
+    def __init__(self, *, max_pending_bytes: int | None = None) -> None: ...
     def push(self, chunk: bytes) -> spanweave.Records: ...
     def document(self, body: bytes) -> spanweave.Records: ...
     def flush(self) -> spanweave.Records: ...
     @property
     def pending_bytes(self) -> int: ...
+    @property
+    def max_pending_bytes(self) -> int | None: ...
+    @property
+    def events(self) -> tuple[FramingEvent, ...]: ...
+    @property
+    def counts(self) -> Mapping[str, int]: ...
 ```
+
+That block is the whole public surface, declared **exactly** as the code accepts
+it — including the `*`, which is real: `max_pending_bytes` is keyword-only, for
+the reason §4.1 gives for `Router`'s settings. It is a policy the caller sets,
+not a reading order, and a positional slot would be a contract this document
+never offered (a test constructs `Framer(64)` and requires a `TypeError`).
 
 `spanweave.Records` is the return type, not a type of the receiver's own: it
 already carries exactly the three things a read produced — the records, the
 diagnostics, and `skipped_records` — and a wrapper would add a second name for
-each. One `Framer` per byte stream; the remainder and the line count are that
-stream's, so two streams are two framers. There is no lock and no concurrency
-(§1.4): a framer is a pure function of the bytes it has been handed, in the
-order it was handed them.
+each. That is also why the framer's own events are **beside** the return value
+rather than in it: `events` is the events of the most recent call, reset by
+every call, and `counts` is the running total per code, bounded by the number of
+codes rather than by the length of the stream (§4.6 made the same choice for the
+router). A `FramingEvent` is not a routing `Event` (§4.1) because the two layers
+have different facts: a routing event names a record's arrival index, a trace id
+and the library's refusal code, none of which the framer has, and a length,
+which the router has no field for. One dataclass for both would be four fields
+that are `None` wherever they are not the emitter's.
+
+One `Framer` per byte stream; the remainder, the line count, the cap and the
+counts are that stream's, so two streams are two framers. There is no lock and
+no concurrency (§1.4): a framer is a pure function of the bytes it has been
+handed, in the order it was handed them.
 
 ### 3.2 `push` — a chunk of a line-delimited stream
 
@@ -325,7 +357,7 @@ hands POST bodies to `document`, never to `push`** (§7.2).
 its caller is concerned. It neither reads nor clears the remainder — a body and
 a tail are different transports, and neither may eat the other's bytes.
 
-### 3.4 `flush` and `pending_bytes` — the remainder is reported, never dropped
+### 3.4 `flush`, `pending_bytes` and the cap — the remainder is never dropped
 
 `pending_bytes` is the remainder's length. Non-zero is the **ordinary** state of
 a growing file read at an instant: a tail that stops mid-record has not failed,
@@ -341,11 +373,51 @@ once and the framer is then holding nothing. An empty remainder reads nothing
 and reports nothing: there was no final line, and saying there was would invent
 a fact.
 
-**No cap, and that is a gap stated rather than a decision made.** A stream that
-never sends a `\n` grows the remainder without bound. `pending_bytes` is what
-makes that visible to a caller who wants to act on it; which bytes to refuse and
-what to call the event is a policy, and inventing one here is a halt point
-(`CONTRIBUTING.md`). The receiver reports; it does not decide.
+**The cap is `max_pending_bytes`, and it is the caller's number.** A stream that
+never sends a `\n` would otherwise grow the remainder without bound.
+`max_pending_bytes=None` — the **default** — is no cap, exactly as R1 shipped,
+and the default is the receiver's whole position on the question: how many bytes
+of an unterminated line are too many is a policy, and a default number here
+would be the receiver carrying a policy of its own (§1.2). `pending_bytes` is
+what makes the growth visible to a caller that would rather watch than cap.
+
+What the receiver owns is the mechanism, and it has one rule: **the cap is the
+most the framer will keep.** When a push leaves more than `max_pending_bytes` in
+the remainder, the remainder is not kept — it is handed to `read_records` as one
+line, in the same push, together with whatever complete lines that push also
+completed. Three consequences, each of them the point rather than a side effect:
+
+- The bytes are **reported, not dropped** (§1.5). A fragment of a line is a
+  `malformed_record` carrying its text, which is the only place those bytes
+  survive, and it is counted in `skipped_records`. A fragment that happens to be
+  a whole record is a record. Truncating, or discarding the remainder and
+  carrying on, are both the one thing this project does not do.
+- The framer **emits a `FramingEvent`** with code `fragment_too_long` and the
+  fragment's `length`, counted in `counts`. The `malformed_record` says the line
+  could not be read; the event says the receiver is why it was read when it was.
+  Both, because either alone is a half-truth.
+- The framer is then **holding nothing**, so the next chunk reads as an ordinary
+  chunk. A cap that wedged the stream it capped would be worse than no cap, and
+  a stream whose line never ends is reported fragment by fragment rather than
+  once: the caller's number is how often.
+
+The boundary is strict — `>`, not `>=` — because a remainder exactly at the cap
+is a remainder the caller allowed. `max_pending_bytes=0` is therefore legal and
+means every remainder is read the moment it exists.
+
+**What the cap costs, said rather than hidden.** Once a line is cut into
+fragments, the framer no longer knows where that line ended: each fragment is
+numbered as a line of its own, and the rest of the real line — when its `\n`
+finally arrives — is numbered as the line after it. So line numbers downstream
+of a `fragment_too_long` are the framer's count of what it handed over, not the
+input's count of its own lines (§3.5 is about the other case, where they agree).
+The event is what tells a reader which one they are looking at.
+
+Neither `document` nor `flush` is capped. A body is not a remainder — it arrives
+whole or not at all, so there is nothing for a cap to bound and capping it would
+truncate an export the caller handed over complete. And `flush` reads whatever is
+left whatever its length, because that is what `flush` is for; under a cap there
+is never more than the cap left for it to read.
 
 ### 3.5 Diagnostics carry the line's position in the stream
 
