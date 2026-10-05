@@ -8,6 +8,85 @@ of change is a **batch** (`WORKPLAN.md`), and each entry names the batch.
 
 ## Unreleased
 
+### R4 — the deltas go out, and nothing is concluded about them (2026-10-05)
+
+The fourth piece (`SPEC.md` §6, new). A consumer registers a callback and, after
+every **absorbed** record, is handed what changed. The receiver hands over a
+`spanweave.Delta` and the builder it came from and looks at neither: a subscriber
+narrows by **trace id** and by **how often**, which are facts about the stream,
+and by nothing else. A filter by meaning would be a rule the receiver carries
+(`SPEC.md` §1.2).
+
+Added
+
+- `spanweave_live.subscriptions`, the lower of the two layers as `completion.py`
+  is: values, the registry, the cursors, and the two pure questions "who is due?"
+  and "how much journal does this trace need?". It emits no events and imports
+  nothing from `routing.py` — calling a consumer, catching what it raises and
+  keeping the books are the router's.
+- `Subscriptions.subscribe(consumer, *, trace_id=None, every=1)` and
+  `Router(subscriptions=...)`. `trace_id=None` is every builder the router feeds,
+  the **no-trace builder included** — not §5.4's answer for completion, and
+  deliberately: completing that builder would throw the library's own account of
+  those records away, while reporting on it throws nothing away, and leaving it
+  out would mean a record was absorbed, the graph changed, and a consumer that
+  asked for everything was told nothing.
+- `Update(trace_id, version, since, delta, builder)`, with **no graph on it**:
+  materializing one per record per subscriber is the cost `SPEC.md` §2.3 is
+  about, and the builder is right there to ask. A test holds that field set, as
+  one holds `TraceState`'s, because an `Update` that grew a severity or a score
+  would be the receiver evaluating on a consumer's behalf.
+- **Per-record and `every=N` are one mechanism.** A subscriber is due when
+  `version - cursor >= every` and gets `delta(since=cursor)`, so per-record mode
+  is `every=1` — where the cursor is always `version - 1` and
+  `delta(since=version - 1)` falls out of the general rule instead of sitting
+  beside it. A delta is computed **once per distinct `since`** and shared, because
+  a `Delta` is a frozen value.
+- **Retention is the longest window any covering subscriber asked for, and no
+  more** (`SPEC.md` §6.4): `builder.retain(max(every))`, per trace, applied after
+  the fan-out and only when the window changes. A builder **nobody** subscribed
+  to is left at the library's own default rather than narrowed to 0, because
+  `Routed.builder` is public and a caller may be folding its own deltas off it.
+  This adds no unbounded growth and **bounds one that was already there**: a
+  `Builder` retains `"all"` by default, so every router since R2 has held one
+  journal entry per absorbed record.
+- `consumer_error`: a callback that raises is isolated — recorded with the trace
+  id and the version, counted, **the remaining subscribers still called**, and the
+  record still absorbed. Isolation is not suppression. Only `Exception` is caught:
+  a `KeyboardInterrupt` is not a consumer's failure to isolate.
+- `delta_unavailable`: `delta(since=...)` refused because retention no longer
+  holds that version — unreachable for a builder whose retention the router sets,
+  and reachable by a caller narrowing a `Routed.builder`'s own, which is legal.
+  The event carries the library's own code; nothing approximate is handed over.
+- `delta_unsent`: a trace completed while a subscriber's cursor was behind its
+  final version, so there is a window it could have asked for and now never can.
+  One event per such subscriber on the `Completed` — a report and **not** a
+  delivery, because flushing a final partial window would be a policy the caller
+  never asked for. Completion therefore has a fifth, conditional step
+  (`SPEC.md` §5.4).
+- `Event.version: int | None` — one more optional field on the router's `Event`,
+  for `seconds`' reason (`SPEC.md` §4.1): §6's three codes are each about a
+  version, and §1.5 is only true where the caller can match on the number.
+
+Tested
+
+- **Folding every delta a subscriber received onto its first graph gives the
+  final `graph()`, byte for byte**, at `every=1` and at `every=2`. That is
+  `spanweave` §10.6's promise read through the receiver — asserted per
+  *subscriber*, over the deltas a fan-out actually chose to send. No delta is
+  skipped by the claim: the first one is `since=0` with no graph beneath it (an
+  empty builder refuses), so the test asserts that what it adds **is** the whole
+  of the graph it produced.
+- **A raising subscriber never stalls another**: three subscribers, the middle
+  one raising, both others called with the same update, the record absorbed, and
+  the failure an event with its trace id and version. The mutation — a fan-out
+  that skips the subscriber after the raising one — fails it.
+- A refused record and a record refused at the cap fan nothing out; a subscriber
+  that raised is not re-sent to (its cursor advanced like everybody else's,
+  because a retry queue is a policy nobody asked for); the fan-out order is
+  **registration order**, which is the order the caller controls and the only one
+  stable across processes.
+
 ### R3 — completion is a policy, with the caller's clock (2026-10-05)
 
 The third piece (`SPEC.md` §5, new). Nothing in a live stream says a trace is

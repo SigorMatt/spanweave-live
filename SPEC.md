@@ -481,6 +481,7 @@ class Event:
     spanweave_code: str | None   # the library's code, where the library refused
     detail: str
     seconds: float | None = None # the duration the event is about, if any (§5.1)
+    version: int | None = None   # the version the event is about, if any (§6.1)
 
 @dataclass(frozen=True, slots=True)
 class Routed:
@@ -500,6 +501,7 @@ class Router:
         adapter: str | None = None,
         temporal: bool = True,
         completion: Completion | None = None,   # §5
+        subscriptions: Subscriptions | None = None,  # §6
     ) -> None: ...
     def route(self, record: Record) -> Routed: ...
     def tick(self) -> tuple[Completed, ...]: ...   # §5.4
@@ -534,6 +536,13 @@ is why §5 follows this `Event` rather than declaring a type of its own — and
 why §3.1's `FramingEvent` still does: a framing event has a length and *none*
 of `index`, `trace_id` or `spanweave_code`, so merging that one would be four
 fields that are `None` wherever they are not the emitter's, not one.
+
+R4 added `subscriptions` and, for the same reason `seconds` exists,
+`Event.version`: §6's three codes are each about a **version**, and §1.5 is only
+true where the caller can match on the number instead of reading it out of a
+sentence. It is `None` for every code that is not about one. R3's `released`
+still states its version in `detail` only; moving it is §5's edit to make and
+nothing in R4 needed it.
 
 `Record` is `Any` and deliberately not a JSON type of the receiver's own:
 `spanweave`'s `JsonValue` is itself `Any` and is not exported, and a second,
@@ -907,6 +916,12 @@ Completing one trace is four steps, in this order, and the events come back on
    the version released. `router.builder(trace_id)` is `None` afterwards and the
    id leaves `trace_ids` (§4.3).
 
+A router holding subscriptions (§6) has a **fifth** step after those four, and it
+is bookkeeping rather than a decision: the released trace's subscriber cursors are
+forgotten, and each subscriber whose cursor was behind the released version gets
+one `delta_unsent` on the same `Completed` (§6.5). A router without
+subscriptions has exactly the four steps above.
+
 `Event.index` on all of these is the router's arrival count at the tick — how
 many records had been routed when the tick ran. A tick is not caused by a record
 and there is no record index to report; the arrival count is the honest nearest
@@ -1026,8 +1041,267 @@ and the condition is not hidden by leaving it out: it is permanent, it is the
 library's own answer, and the caller meets it the moment it asks that builder for
 a graph. Nothing was dropped — a decision was not made, and the trace stays open.
 
-## 6 onward
+## 6. Subscriptions — the deltas go out, and nothing is concluded about them
 
-Reserved, each written by its batch: §6 subscriptions (R4), §7 ingest (R5 file
-and stdin, R6 OTLP/HTTP), §8 CLI (R7). A batch adds its section here in the same
-commit as its code, and nothing else edits them.
+A consumer registers a callback; after every **absorbed** record the router hands
+it what changed. That is the whole of this section, and the three things it is
+careful not to be follow from §1:
+
+- It is a **fan-out, not an evaluation** (§1.2). The receiver hands over a
+  `Delta` and the builder it came from. What the consumer concludes — a rule, a
+  score, a verdict, a cost — is the consumer's, and nothing here looks at the
+  delta's contents. There is no filter by meaning: a subscriber narrows by
+  **trace id** and by **how often**, which are facts about the stream, and by
+  nothing else.
+- It **enforces nothing** (§1.3). A consumer that raises does not stop the
+  record, does not stop the other consumers and does not stop the stream.
+- It is **not silent** (§1.5). A callback that raised, a delta the journal could
+  no longer produce, and a window a released builder took with it are each an
+  `Event` with a code, counted on the router.
+
+### 6.1 The surface
+
+```python
+CONSUMER_ERROR = "consumer_error"
+DELTA_UNAVAILABLE = "delta_unavailable"
+DELTA_UNSENT = "delta_unsent"
+
+@dataclass(frozen=True, slots=True)
+class Update:
+    trace_id: str | None            # None: the no-trace builder (§6.3)
+    version: int                    # the version the absorbed record produced
+    since: int                      # the window's lower end: `delta(since=...)`
+    delta: spanweave.Delta
+    builder: spanweave.Builder      # ask it for `graph()`; nothing here does
+
+Consumer = Callable[[Update], None]
+
+@dataclass(frozen=True, slots=True)
+class Subscription:
+    consumer: Consumer
+    trace_id: str | None            # None: every builder this router feeds
+    every: int                      # 1 is per-record; N is "every N versions"
+    order: int                      # registration order, 0-based (§6.2)
+
+@dataclass(frozen=True, slots=True)
+class Delivery:
+    subscription: Subscription
+    since: int
+
+class Subscriptions:
+    def subscribe(
+        self,
+        consumer: Consumer,
+        *,
+        trace_id: str | None = None,
+        every: int = 1,
+    ) -> Subscription: ...
+    @property
+    def registered(self) -> tuple[Subscription, ...]: ...
+    def covering(self, trace_id: str | None) -> tuple[Subscription, ...]: ...
+    def window(self, trace_id: str | None) -> int | None: ...
+    def seen(self, subscription: Subscription, trace_id: str | None) -> int: ...
+    def due(self, trace_id: str | None, version: int) -> tuple[Delivery, ...]: ...
+    def released(self, trace_id: str, version: int) -> tuple[Delivery, ...]: ...
+
+# in `routing.py`:
+class Router:
+    def __init__(
+        self,
+        *,
+        max_traces: int | None = None,
+        adapter: str | None = None,
+        temporal: bool = True,
+        completion: Completion | None = None,      # §5
+        subscriptions: Subscriptions | None = None,  # this section
+    ) -> None: ...
+```
+
+That block is the whole public surface, declared **exactly** as the code accepts
+it. `Event` gains one more optional field for it — `version: int | None` — for
+§4.1's reason: the three codes above are all about a **version**, and a number a
+caller can only read out of a sentence is a number it cannot match on. R3's
+`released` keeps its version in `detail`; moving it is §5's edit and nothing
+here needed it.
+
+`subscriptions` is a mutable registry rather than a frozen value, which is what
+makes it unlike `completion` (§5.1): a policy is a value the caller constructed,
+while a subscription list is something consumers join. It is handed to the router
+and the caller keeps its reference — `router.subscriptions.subscribe(...)` and
+`subs.subscribe(...)` are the same call. A router with `subscriptions=None` fans
+nothing out, computes no delta and touches no builder's retention, which is
+exactly what R2 and R3 were: **gate A is untouched by this section**.
+
+`Subscriptions` is the lower of the two layers, as `completion.py` is (§5.1): it
+holds the values, the registry, the cursors, and the two pure questions "who is
+due?" and "how much journal does this trace need?". It emits no events and
+imports nothing from `routing.py`. The router is what calls a consumer, catches
+what it raises, and keeps the books — because events are a router's to make.
+
+### 6.2 Per-record and `every=N` are one mechanism
+
+A subscription's cursor for a trace is the version it was last handed. A
+subscriber is **due** when `version - cursor >= every`, and the delta it gets is
+`delta(since=cursor)`. Per-record mode is therefore not a second code path: it is
+`every=1`, where the cursor is always `version - 1`, so `delta(since=version - 1)`
+— the per-record mode `spanweave` §10.6 names — falls out of the general rule
+rather than sitting beside it. A version moves by exactly one per absorbed
+record, so an `every=N` subscriber is delivered to at versions `N`, `2N`, … and
+each window is exactly `N` wide.
+
+**Only an absorbed record fans out.** A refused record is not absorbed and the
+version does not move (§4.4), so there is nothing that changed to report, and
+reporting `delta(since=version - 1)` anyway would hand the *previous* record's
+difference over a second time. The refusal is already an event. A record refused
+at `max_traces` (§4.5) has no builder at all.
+
+**The iteration order is registration order**, 0-based on `Subscription.order`,
+and it is the order consumers are called in, for every record, in every process.
+It is a fact the caller controls and can predict, which is the same reason §5.4
+gives for taking the caller's policy tuple in the caller's order. Every
+alternative is worse: `id()` and `hash()` are not stable across processes (§1.8),
+sorting on a callback's name or module would rank consumers by something nobody
+chose, and a `set` has no order to speak of. A consumer that must run after
+another registers after it.
+
+A delta is computed **once per distinct `since`** in a fan-out and handed to
+every subscriber due at that window. A `Delta` is a frozen value, so sharing one
+is not sharing state, and two subscribers at the same window would otherwise pay
+for the same fold twice (§2.3).
+
+**A subscriber that raised still advances.** Its cursor moves to the delivered
+version like everybody else's, and the receiver does not re-send on the next
+record. Isolation is not a retry queue: re-sending would make one consumer's
+failure change what another consumer sees, and a receiver that retried would be
+holding a policy nobody asked it for (§1.2, and §2.2's reasoning about growing a
+mechanism of our own beside the library's).
+
+### 6.3 What "all traces" includes, and why it is not §5.4's answer
+
+`trace_id=None` subscribes to **every builder the router feeds, the no-trace
+builder included**, and such an `Update` carries `trace_id=None`. That is
+deliberately *not* the answer §4.5 and §5.4 give for the cap and for completion,
+where the no-trace builder "is not a trace", and the difference is that those two
+are **destructive** and this one is not: counting it against the cap would evict
+real traces, and completing it would throw away the library's own account of the
+records that identified none (§4.3). Reporting it throws nothing away — and
+leaving it out would mean the receiver absorbed a record, its graph changed, and
+a consumer that asked for everything was told nothing, which is the silence §1.5
+exists to refuse.
+
+A subscription naming a trace id receives that trace's updates and no others.
+There is no way to subscribe to the no-trace builder *alone*: a consumer that
+wants only those reads `update.trace_id is None` itself, and inventing a sentinel
+for it would be a surface nobody has asked for.
+
+A late arrival (§5.5) opens a **new builder** whose versions start at 0, so every
+cursor for that trace is back at 0 too — this generation's deltas, as §5.5 says
+of this generation's records and silence. The first update of the new generation
+is `since=0`, exactly as the first update of the first one was.
+
+### 6.4 Retention is the hungriest subscriber's window, and no more
+
+A builder's journal is what `delta` folds, and keeping it is what costs memory
+(`spanweave` §10.8, which makes retention the caller's policy "because only the
+caller knows how far behind its consumers run"). This section is that caller, and
+it knows the answer exactly:
+`builder.retain(max(subscription.every for subscription in covering(trace_id)))`,
+applied after a fan-out. `window(trace_id)` is that number.
+
+It is the **longest window any covering subscriber asked for**, so the oldest
+`since` the journal can still answer is the oldest one that is still going to be
+asked about, and one version older than that is dropped. An `every=1` subscriber
+alone keeps one version; add an `every=50` subscriber and fifty are kept, because
+that one is going to ask for fifty.
+
+Three boundaries of that rule, each chosen rather than fallen into:
+
+- **No covering subscriber means retention is not touched at all** — not set to
+  `0`. `Routed.builder` is public, so a caller may be folding deltas off a
+  builder the router knows nothing about, and narrowing a journal it never
+  promised to narrow would break that caller silently. With
+  `subscriptions=None`, or with every subscription naming other traces, a builder
+  keeps the library's own default (`"all"`).
+- **It is per trace, not per router.** A subscriber for `t1` does not make `t2`
+  keep fifty versions, because "and no more" is half of the claim.
+- **It is applied after the fan-out**, never before, so the window a subscriber
+  is being handed right now cannot be trimmed out from under it; and it is
+  applied when the window **changes** rather than once per record, which is both
+  cheaper and the safer of the two. Retention is the router's or the caller's and
+  not both: a caller that narrows a `Routed.builder`'s journal itself has taken
+  the policy over, and a router that re-widened it every record would be
+  claiming entries that caller has already dropped — the one way this could have
+  produced a traceback rather than the `delta_unavailable` event of §6.5. A new
+  generation after a late arrival (§5.5) is a different builder with a journal of
+  its own, so the window is applied to it afresh.
+
+**What this costs, stated rather than hidden.** This section adds **no**
+unbounded growth, and bounds one that was already there: a `Builder` retains
+`"all"` by default, so every router since R2 has held one journal entry per
+absorbed record, and a trace with a subscriber on it now holds a fixed number
+instead. The cursors are bounded too — one `int` per subscription per trace the
+router **currently holds a builder for**, forgotten when the builder is released
+(§6.5), so `max_traces` bounds them. The unbounded cost this receiver does have
+is the one §5.5 names and does not pretend to have fixed: the per-trace-id book
+that outlives completion, awaiting a forgetting policy. Nothing here makes it
+worse, and nothing here depends on how it is settled.
+
+### 6.5 The three codes, and what each refuses to be silent about
+
+- **`consumer_error`** — a callback raised. The exception is caught, an `Event`
+  with the trace id and the version is recorded and counted, **the remaining
+  subscribers are called**, and the record stays absorbed. Isolation is not
+  suppression: nothing swallows it, and `detail` carries the exception's type and
+  text, because a consumer error that reached no report would be the receiver
+  deciding on somebody's behalf that it did not matter. Only `Exception` is
+  caught — a `KeyboardInterrupt` or a `SystemExit` is not a consumer's failure to
+  isolate, and catching it would make the receiver un-interruptible.
+- **`delta_unavailable`** — `builder.delta(since=...)` was refused, which is
+  `spanweave`'s `delta_unavailable` for a version retention dropped. §6.4's rule
+  makes this unreachable for a builder whose retention the router sets, so the
+  way to reach it is for a caller to narrow the retention of a `Routed.builder`
+  itself. That is a legal thing for a caller to do, and the honest answer is this
+  event — carrying the library's own code — rather than a traceback that loses
+  every other subscriber and every later record. The subscriber is not called,
+  because there is nothing to call it with; nothing approximate is offered in its
+  place, for the library's own reason.
+- **`delta_unsent`** — a trace was completed (§5.4) while a subscriber's cursor
+  was behind its final version, so there is a window that subscriber could have
+  asked for and never will: the builder is released and the journal goes with it.
+  One event per such subscriber, carrying the trace id and the version released,
+  on `Completed.events`. It is a report and not a delivery: handing out a final
+  partial window at completion would be a flush policy the caller never asked
+  for (§1.2), and an `every=50` subscriber would then get one window of 50 and
+  one of 3 with nothing saying which was which. An `every=1` subscriber is never
+  behind, so this code only ever concerns a coarser one.
+
+Completion therefore has a fifth step after §5.4's four, conditional on the
+router holding subscriptions: the released trace's cursors are forgotten, and
+each one that was behind is a `delta_unsent` on the same `Completed`.
+
+### 6.6 The claim this section is tested against
+
+**Folding every delta a subscriber received onto its first graph gives the final
+graph, byte for byte.** That is `spanweave` §10.6's own promise read through the
+receiver — the corpus asserts it per builder (`FIXTURES.md` §4) and here it is
+asserted per *subscriber*, over the deltas a fan-out actually chose to send, at
+`every=1` and at `every=N`.
+
+It is stated as "its first graph" rather than "an empty graph" because there is
+no graph at version 0 to fold onto: an empty builder refuses (`spanweave` §10.5),
+so the first update of a generation is `since=0` and has nothing beneath it. The
+first delta is therefore accounted for differently and not skipped: what it adds
+**is** the whole of the graph it produced, and the test asserts that too, so
+every delta a subscriber received is used by the claim.
+
+The second test is isolation: three subscribers, the middle one raising, and both
+others called with the same update — which is what a fan-out that stopped at the
+first failure would fail, and what a fan-out that merely logged and continued
+without an event would also fail, because the event is asserted with its trace id
+and version.
+
+## 7 onward
+
+Reserved, each written by its batch: §7 ingest (R5 file and stdin, R6
+OTLP/HTTP), §8 CLI (R7). A batch adds its section here in the same commit as its
+code, and nothing else edits them.

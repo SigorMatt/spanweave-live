@@ -10,7 +10,8 @@ Nothing here is frozen: pre-1.0, by `0.0.x`, deliberately.
 This module is the public API. Each batch adds the one name it built
 (`SPEC.md` §3 onward): R1 adds `Framer`, R2 `Router` and the types its
 decisions come back in, R2b the framer's cap and the event it reports, R3 the
-completion policies, the clock the caller supplies with them, and `Router.tick`.
+completion policies, the clock the caller supplies with them, and `Router.tick`,
+R4 `Subscriptions` and the `Update` one consumer is handed.
 """
 
 from __future__ import annotations
@@ -42,10 +43,23 @@ from spanweave_live.routing import (
     Router,
     trace_id_of,
 )
+from spanweave_live.subscriptions import (
+    CONSUMER_ERROR,
+    DELTA_UNAVAILABLE,
+    DELTA_UNSENT,
+    Consumer,
+    Delivery,
+    Subscription,
+    Subscriptions,
+    Update,
+)
 
 __all__ = [
     "CAP",
     "COMPLETED",
+    "CONSUMER_ERROR",
+    "DELTA_UNAVAILABLE",
+    "DELTA_UNSENT",
     "FRAGMENT_TOO_LONG",
     "LATE_ARRIVAL",
     "NOT_WRITTEN",
@@ -58,6 +72,8 @@ __all__ = [
     "Cap",
     "Completed",
     "Completion",
+    "Consumer",
+    "Delivery",
     "Event",
     "Framer",
     "FramingEvent",
@@ -66,7 +82,10 @@ __all__ = [
     "RootEnded",
     "Routed",
     "Router",
+    "Subscription",
+    "Subscriptions",
     "TraceState",
+    "Update",
     "__version__",
     "root_ended",
     "trace_id_of",

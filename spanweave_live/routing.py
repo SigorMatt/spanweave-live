@@ -17,6 +17,12 @@ pin. The cost of doing it properly is a second parse per record, measured at
 thread in `SPEC.md` §4.2 -- which is where the number is, and which outlives
 the plan -- not worked around.
 
+It also **hands deltas over and concludes nothing about them** (`SPEC.md` §6):
+after every absorbed record, each due subscriber is called, in registration
+order; a callback that raises is isolated into a `consumer_error` event and the
+next subscriber is still called; and a builder's journal is retained to exactly
+the longest window a subscriber asked for.
+
 Nothing here reads the clock, sleeps, opens a socket or shuffles anything. The
 clock `tick` evaluates completion against is the caller's `now`, handed to the
 `Completion` it was given (`SPEC.md` §5.2); a router without a completion policy
@@ -30,7 +36,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Final
 
-from spanweave import Builder, Graph, SpanweaveError
+from spanweave import Builder, Delta, Graph, SpanweaveError
 from spanweave.adapters import classify, get
 
 from spanweave_live.completion import (
@@ -44,6 +50,14 @@ from spanweave_live.completion import (
     TraceState,
     root_ended,
     write,
+)
+from spanweave_live.subscriptions import (
+    CONSUMER_ERROR,
+    DELTA_UNAVAILABLE,
+    DELTA_UNSENT,
+    Delivery,
+    Subscriptions,
+    Update,
 )
 
 #: One record, as `spanweave.read_records` yielded it.
@@ -90,6 +104,10 @@ class Event:
     #: rather than a sentence because `SPEC.md` §1.5 is only true if a caller
     #: can match on the number (`SPEC.md` §4.1, §5.1).
     seconds: float | None = None
+    #: The version this event is about, where it is about one: §6's three codes
+    #: each are. `None` for every code that is not. Here for `seconds`' reason
+    #: and no other (`SPEC.md` §4.1, §6.1).
+    version: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -220,12 +238,21 @@ class Router:
     #: The caller's completion policy, with the caller's clock in it, or `None`
     #: for a router that completes nothing and reads no clock (`SPEC.md` §5).
     completion: Completion | None = None
+    #: The consumers to hand deltas to, or `None` for a router that fans nothing
+    #: out, computes no delta and touches no builder's retention -- which is
+    #: exactly what R2 and R3 were, and why gate A is untouched (`SPEC.md` §6).
+    subscriptions: Subscriptions | None = None
 
     _builders: dict[str, Builder] = field(default_factory=dict, init=False)
     _no_trace: Builder | None = field(default=None, init=False)
     _counts: dict[str, int] = field(default_factory=dict, init=False)
     _index: int = field(default=0, init=False)
     _books: dict[str, _Book] = field(default_factory=dict, init=False)
+    #: The retention this router has applied to each builder it holds, so the
+    #: window is re-asserted when it *changes* and not once per record
+    #: (`SPEC.md` §6.4). Dropped with the builder, so it is bounded by the
+    #: builders held.
+    _retained: dict[str | None, int] = field(default_factory=dict, init=False)
 
     @property
     def trace_ids(self) -> tuple[str, ...]:
@@ -326,12 +353,133 @@ class Router:
                 version=builder.version,
                 events=events,
             )
+        # Only an absorbed record fans out: a refusal returned above, because
+        # the version did not move and there is nothing that changed to report
+        # (`SPEC.md` §6.2).
+        events += self._fan_out(index, trace_id, builder, version)
         return Routed(
             index=index,
             trace_id=trace_id,
             builder=builder,
             version=version,
             events=events,
+        )
+
+    def _fan_out(
+        self, index: int, trace_id: str | None, builder: Builder, version: int
+    ) -> tuple[Event, ...]:
+        """Hand this version's difference to every subscriber due for it (`§6`).
+
+        Registration order, every record, in every process (`SPEC.md` §6.2). One
+        delta per distinct `since`, shared because a `Delta` is a frozen value
+        and two subscribers at one window would otherwise pay for the same fold
+        twice (`SPEC.md` §2.3).
+
+        It raises nothing a consumer can cause: a callback that raises is an
+        event and the **next subscriber is still called** (`SPEC.md` §6.5).
+        Retention is narrowed afterwards, never before, so the window a
+        subscriber is being handed cannot be trimmed out from under it
+        (`SPEC.md` §6.4).
+        """
+        subscriptions = self.subscriptions
+        if subscriptions is None:
+            return ()
+        events: list[Event] = []
+        deltas: dict[int, Delta] = {}
+        for delivery in subscriptions.due(trace_id, version):
+            since = delivery.since
+            if since not in deltas:
+                try:
+                    deltas[since] = builder.delta(since=since)
+                except SpanweaveError as refusal:
+                    events.append(
+                        self._unavailable(index, trace_id, version, since, refusal)
+                    )
+                    continue
+            try:
+                delivery.subscription.consumer(
+                    Update(
+                        trace_id=trace_id,
+                        version=version,
+                        since=since,
+                        delta=deltas[since],
+                        builder=builder,
+                    )
+                )
+            except Exception as error:
+                # Isolation is not suppression: recorded with the trace id and
+                # the version, counted, and the fan-out continues. `Exception`
+                # and not `BaseException`: a `KeyboardInterrupt` is not a
+                # consumer's failure to isolate, and catching it would make the
+                # receiver un-interruptible (`SPEC.md` §6.5).
+                events.append(
+                    self._consumer_error(index, trace_id, version, delivery, error)
+                )
+        window = subscriptions.window(trace_id)
+        if window is not None and self._retained.get(trace_id) != window:
+            # Applied when the window *changes*, not every record. Retention is
+            # the router's or the caller's and not both: a caller that narrows a
+            # `Routed.builder`'s own journal has taken the policy over, and the
+            # router widening it back would claim entries that caller already
+            # dropped (`SPEC.md` §6.4). The library's refusal, reported above, is
+            # what such a caller gets instead.
+            builder.retain(window)
+            self._retained[trace_id] = window
+        return tuple(events)
+
+    def _unavailable(
+        self,
+        index: int,
+        trace_id: str | None,
+        version: int,
+        since: int,
+        refusal: SpanweaveError,
+    ) -> Event:
+        """The journal no longer holds `since`, so there is nothing to hand over.
+
+        Unreachable for a builder whose retention the router sets (`SPEC.md`
+        §6.4) and reachable by a caller narrowing a `Routed.builder`'s own, which
+        is legal. The event carries the library's code; nothing approximate is
+        offered in its place, for the library's own reason.
+        """
+        return self._counted(
+            Event(
+                code=DELTA_UNAVAILABLE,
+                index=index,
+                trace_id=trace_id,
+                spanweave_code=refusal.code,
+                detail=(
+                    f"the delta since version {since} of {trace_id!r} could not "
+                    f"be produced, so no subscriber due for that window was "
+                    f"called: {refusal}"
+                ),
+                version=version,
+            )
+        )
+
+    def _consumer_error(
+        self,
+        index: int,
+        trace_id: str | None,
+        version: int,
+        delivery: Delivery,
+        error: Exception,
+    ) -> Event:
+        """A callback raised. Recorded, counted, and never swallowed (`§6.5`)."""
+        return self._counted(
+            Event(
+                code=CONSUMER_ERROR,
+                index=index,
+                trace_id=trace_id,
+                spanweave_code=None,
+                detail=(
+                    f"subscriber {delivery.subscription.order} raised "
+                    f"{type(error).__name__} on the delta since version "
+                    f"{delivery.since} of {trace_id!r}: {error}. The remaining "
+                    f"subscribers were called and the record stays absorbed"
+                ),
+                version=version,
+            )
         )
 
     def tick(self) -> tuple[Completed, ...]:
@@ -429,6 +577,9 @@ class Router:
 
         version = builder.version
         del self._builders[trace_id]
+        # The next generation is a different builder with a journal of its own
+        # (`SPEC.md` §5.5), so the window is applied to it afresh.
+        self._retained.pop(trace_id, None)
         book.completed_at = now
         events.append(
             self._counted(
@@ -445,6 +596,7 @@ class Router:
                 )
             )
         )
+        events.extend(self._unsent(index, trace_id, version))
         return Completed(
             trace_id=trace_id,
             policy=policy,
@@ -453,6 +605,42 @@ class Router:
             path=path,
             events=tuple(events),
         )
+
+    def _unsent(self, index: int, trace_id: str, version: int) -> list[Event]:
+        """The fifth step, where there are subscribers: forget this trace's
+        cursors, and report every window a subscriber will now never get
+        (`SPEC.md` §5.4, §6.5).
+
+        The builder is released and its journal goes with it, so a subscriber
+        whose cursor is behind the released version has a window it could have
+        asked for and never can. One event each, in registration order. A report
+        and not a delivery: flushing a final partial window at completion would
+        be a policy the caller never asked for, and an `every=50` subscriber
+        would then get one window of 50 and one of 3 with nothing saying which
+        was which. An `every=1` subscriber is never behind.
+        """
+        subscriptions = self.subscriptions
+        if subscriptions is None:
+            return []
+        return [
+            self._counted(
+                Event(
+                    code=DELTA_UNSENT,
+                    index=index,
+                    trace_id=trace_id,
+                    spanweave_code=None,
+                    detail=(
+                        f"subscriber {delivery.subscription.order} was last "
+                        f"handed version {delivery.since} of {trace_id!r}, which "
+                        f"was released at version {version}: the journal went "
+                        f"with the builder, so that window is not available and "
+                        f"was not sent"
+                    ),
+                    version=version,
+                )
+            )
+            for delivery in subscriptions.released(trace_id, version)
+        ]
 
     def _write(
         self,
