@@ -5,7 +5,7 @@ network, the clock and the consumer (`spanweave` `OPEN_QUESTIONS.md` §19,
 decided 2026-09-29). One batch = one sub-agent = one commit = one concern.
 This file plus git is the only state; any session can resume cold from it.
 
-Last updated: 2026-10-04 (run 1 complete: R0, R1, R2 done; awaiting cold review and two decisions).
+Last updated: 2026-10-05 (run-1 cold review read and decided; run 2 ordered R2a → R2b → R3 → R4 → R5 → R2c).
 
 ---
 
@@ -128,7 +128,7 @@ test holds the two equal.
 
 TASKS.md is the item registry (one line per batch, written at series
 close); this file is execution state only and is deleted at series close
-with §3 folded into TASKS.md.
+with §3 and §4 folded into TASKS.md.
 
 ### 0.7 Watch (aux, read-only, report-then-stop)
 
@@ -147,6 +147,9 @@ commit that cannot say `plan:`, and the watcher exempts it once per series.
 | R0 | **Repository skeleton, on `main`.** `pyproject.toml` (package `spanweave_live`, CLI `spanweave-live`, Python 3.11–3.14, `spanweave` pinned as `spanweave @ git+https://github.com/SigorMatt/spanweave@e42f257b91be1bd9c7be6bcdbd31313947401288`); `uv.lock`; git submodule `corpus/` = spanweave at the same sha, read-only, used only for `fixtures/conformance/`; `tests/test_pins.py` asserting the dependency sha and the submodule sha are equal; `Makefile` with `check` (ruff, format, `mypy --strict`, pytest, gates), `conformance`, `install-check` (wheel into a throwaway venv, run from outside the repo); `.github/workflows/ci.yml` as spanweave's (`check` on 3.11–3.14; `conformance` on ubuntu and macos; submodules checked out); `CLAUDE.md` with §0.6; `CONTRIBUTING.md` with the batch bar; `SPEC.md` with §1 non-goals (no dialect, no rules, no enforcement, no own clock) and §2 the three properties the receiver designs around, quoted from spanweave `SPEC.md` §7 (no buffering across calls; dedup per call; reading is cheap, absorbing is not); `tests/gates.py` with one gate: no module under `spanweave_live/` imports `time`, `datetime`, `random`, `socket`, `threading` or `asyncio` outside the files §0.6's seams name; `README.md` one paragraph; `CHANGELOG.md`. `make check` green, CI green on `main`. Then `git switch -c receiver`; every later batch lands on `receiver`. | done (696702f) | 10 |
 | R1 | **Framing: bytes in, complete records out.** `Framer` (SPEC §3): `push(chunk: bytes) -> Records` splits on `\n`, keeps the remainder, hands only complete lines to `spanweave.read_records`; `document(body: bytes) -> Records` hands a whole OTLP-JSON body over unsplit; `flush() -> Records` reads the remainder as a final line and reports it; `pending_bytes` is the remainder's length. Diagnostics from `read_records` are re-issued per chunk with the absolute line offset added. Tests red on the parent: over every rendering of the corpus, feeding the bytes in seeded random chunk sizes (1 to whole) yields `read_records(whole)`'s records exactly; a chunk boundary inside a multi-byte character yields no `undecodable_bytes`; a truncated final line is `pending_bytes > 0` and not a `malformed_record` until `flush()`. Mutation: a framer that hands partial lines over fails the first test. | done (a4fec60) | 10 |
 | R2 | **Partition: one `Builder` per trace, and conformance gate A.** `Router` (SPEC §4): `route(record) -> Routed` finds the trace id through `spanweave.adapters.classify` and the claiming adapter's `parse`, never by a key of its own; one `Builder` per trace id, created on first sight; a record with no trace id or no claimant goes to the no-trace builder (which carries `missing_trace_id`/`unclaimed_record` as batch does); a `Builder` refusal is an event `refused` with the record index and the spanweave code, counted, and routing continues; `max_traces` is a cap — at the cap a new trace is `refused_at_cap`, counted, never dropped silently. Gate A, `tests/test_conformance.py`: for every pair of renderings from two scenarios, interleave their records by a seeded shuffle, push through `Framer` + `Router`, and assert each trace's `graph()` serializes byte for byte to `spanweave.build` of its own rendering; run it for ten seeds. Tests red on the parent; mutation: a router keyed by the record's own `trace_id` key (a dialect read) fails `tests/test_routing.py::test_a_record_no_adapter_claims_is_not_routed_by_its_trace_id_key`. ~~fails on `otlp_container`~~ — corrected by R2, see §4. | done (d762484) | 15 |
+| R2a | **The run-1 review's eight `next batch` items, closed.** Read `patches/REVIEW-2026-10-04.md` and close every `next batch` item as the file states it, one commit, tests first. Among them: the import gate is held to walking (a test asserts the gate's module set equals `rglob` of `spanweave_live/`, and a planted nested module importing `time` is caught with no gate edit); the 612-framing sweep gains renderings that carry a diagnostic and a skipped record (a corpus rendering with one line corrupted, generated from the corpus at test time, never a hand-copied fixture), so the diagnostics and `skipped_records` assertions compare non-empty sequences and a `push` reporting `skipped_records=0` fails; SPEC states the HTTPS pin for both the dependency and the submodule, held by a test; SPEC and CHANGELOG state the `py.typed` override and why; SPEC §3.3 states the `push`-vs-`document` trap in full (a whole body pushed happens to read; chunked it does not). Items the file lists that this row does not name are closed too. | todo | 8 |
+| R2b | **The remainder has a caller-set cap.** `Framer(max_pending_bytes=None)`; SPEC §3.4 rewritten from "no cap" to the policy in §3. Tests red on the parent: a stream with no `\n` past the cap yields one `malformed_record`, `skipped_records=1`, one `fragment_too_long` event with the length, and the framer continues on the next chunk; with the cap `None`, R1's behaviour is unchanged across the whole sweep. Mutation: a framer that drops the oversize remainder silently fails the `skipped_records` assertion. | awaiting R2a | 5 |
+| R2c | **Pins bumped to a spanweave that ships `py.typed`; the override deleted.** After PR #4 merges: `pyproject.toml` pin and `corpus/` submodule to the new `main` sha (the two-way pin test holds them equal); `[tool.mypy]` override for `spanweave.*` deleted, and a test asserts no `follow_untyped_imports` remains; `make check` green with `mypy --strict` analysing spanweave itself. If PR #4 is not merged when this row is reached, status `awaiting PR #4` and the run stops. | awaiting R5 | 4 |
 | R3 | **Completion is a policy with an injected clock.** `Completion` (SPEC §5): three policies, each a value — `Quiet(seconds)`, `RootEnded(grace_seconds)`, `Cap(records)` — composable as any-of; `now: Callable[[], float]` is injected, never `time.time` inside `spanweave_live/`; `Router.tick()` evaluates policies and returns the traces completed; a completed trace's final graph is materialized, optionally written with `spanweave.dump` to a directory the caller names, and its builder released; a record arriving for a completed trace opens a new builder and emits `late_arrival` with the trace id and the gap. Tests on a fake clock: each policy fires exactly when its definition says; a late arrival is an event, never silent, and never a mutation of the written graph. Mutation: a `Quiet` that fires one tick early fails. | todo | 10 |
 | R4 | **Subscription and delta fan-out.** `Subscriptions` (SPEC §6): a consumer registers a callback for one trace or all; after each absorbed record the router hands each subscriber `delta(since=version-1)` (per-record mode) or, for a subscriber that asked for `every=N`, `delta(since=last_seen)`; retention is set from the longest window any subscriber asked for; a callback that raises is isolated — recorded as `consumer_error` with the trace id and version, other subscribers still called, the record still absorbed. Tests: folding every delta a subscriber received onto its first graph equals the final `graph()`; a raising subscriber never stalls another. Mutation: a fan-out that skips the subscriber after the raising one fails. | todo | 10 |
 | R5 | **Ingest: file tail and stdin.** `tail(path, *, now, sleep, poll_seconds)` (SPEC §7.1) follows a growing file from an offset through `Framer.push`, survives truncation (restarts from 0 and emits `truncated`), and rotation (reopens by path); `stdin()` reads chunks until EOF. Both are generators of `Records` with `sleep` injected, so the test drives them on a fake clock with a file it appends to between ticks. Tests: a corpus rendering appended in random chunks is routed to the same graphs as gate A; truncation and rotation are events. | awaiting R3 | 10 |
@@ -157,17 +160,22 @@ commit that cannot say `plan:`, and the watcher exempts it once per series.
 
 ## 2. Execution order
 
-Run 1 = R0 → R1 → R2, then stop: cold review (aux), decisions. Run 2 = R3
-→ R4 → R5, then stop: cold review, decisions. Run 3 = R6 → R7 → R8 → R9, then
-a scoped review of the close and the PR. Every batch: CI green on the pushed
-tip before `done`. R0 lands on `main` because the repository is empty; R1
-onward land on `receiver`.
+Run 1 = R0 → R1 → R2, then stop: cold review (aux), decisions. Run 2 = R2a
+→ R2b → R3 → R4 → R5 → R2c, then stop: cold review (aux), decisions. Run 3
+= R6 → R7 → R8 → R9, then a scoped review of the close and the PR. Every
+batch: CI green on the pushed tip before `done`. R0 lands on `main` because
+the repository is empty; R1 onward land on `receiver`.
 
 ## 3. Decisions log
 
 | Date | Batch | Decision | By |
 |---|---|---|---|
 | 2026-10-04 | series | The receiver finds a record's trace id through spanweave's public adapter surface (`classify` + the claiming adapter's `parse`) rather than a new spanweave API; the second parse is paid for now and registered as a thread (`spanweave.trace_id_of(record)` would halve it) to be decided on measurement after R2. The clock is injected everywhere; no module under `spanweave_live/` reads it. `spanweave` is pinned by git sha, and the corpus is a submodule at the same sha. | maintainer |
+| 2026-10-05 | review run 1 | Nothing blocks. The review's eight `next batch` items are one fix batch (R2a) made by the builder from the review file; its ten threads are registered at close. The `trace_id_of` thread stays a thread: re-measured at 15.5–17.1 % of routing, it is an optimisation and gets no batch until a receiver workload makes routing the cost. | maintainer |
+| 2026-10-05 | framer cap | The framer's remainder gets a caller-set cap, `max_pending_bytes`, default `None` (unbounded, as R1 shipped). When a push would exceed it, the remainder plus the chunk's bytes up to the next `\n` are handed to the reader as one line — so they surface as `malformed_record` with `skipped_records` counted, never dropped — and the framer emits `fragment_too_long` with the length. Policy, not mechanism, so it is the caller's number (R2b). | maintainer |
+| 2026-10-05 | py.typed | spanweave gains `spanweave/py.typed` in its own one-commit PR (#4) to `main`, made by the builder, merged after its checks are fetched. The receiver then bumps both pins to the new `main` sha and deletes the `follow_untyped_imports` override (R2c), with a test that the override is gone. | maintainer |
+| 2026-10-05 | §0.6 | At series close both §3 and §4 fold into TASKS.md, not §3 alone; corrected in this commit. | maintainer |
+| 2026-10-05 | run 2 | R2a → R2b → R3 → R4 → R5 → R2c, then stop for a cold review. R2c is last so that PR #4 has merged by the time it runs; if it has not, R2c ends `awaiting PR #4` and the run stops there. | maintainer |
 
 ## 4. Resume note
 
@@ -183,8 +191,9 @@ onward land on `receiver`.
   until R2 brings gate A: it prints "NO GATE YET … It is not a pass", so a
   green `conformance` job is not evidence of anything before R2. The gate's
   seam allowlist is currently **empty** (a test holds that) — R3 and R5/R6
-  are the batches that first put a file in it. `make check` runs
-  `install-check` as a step, so CI shows six jobs, not seven.
+  are the batches that first put a file in it. `install-check` is a step of
+  the CI `check` job, not a prerequisite of `make check` (the Makefile keeps
+  it deliberately separate), so CI shows six jobs, not seven.
 - 2026-10-04 R1 (`a4fec60`, CI green on the `receiver` tip, 6/6): **`spanweave`
   ships no `py.typed`** — not in the wheel and not in the repo — so
   `mypy --strict` refuses to analyse it as soon as a receiver module imports
@@ -234,6 +243,10 @@ onward land on `receiver`.
   thread assumed. On this number the upstream API is an optimisation, not a
   necessity. **Awaiting maintainer decision** (together with the `py.typed`
   thread from R1); R3 does not depend on either.
+- 2026-10-05: run-1 cold review read and decided (§3). Nothing blocked;
+  the review's eight items become R2a, the framer cap is R2b, and
+  spanweave's missing `py.typed` is fixed upstream (PR #4) with the pin bump
+  as R2c at the end of run 2. §0.6 now folds §3 and §4 at close.
 
 ## 5. Origins
 
