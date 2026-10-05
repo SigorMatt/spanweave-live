@@ -9,6 +9,7 @@ Rule implementations live in `tests/gates.py`.
 """
 
 import ast
+from pathlib import Path
 
 import pytest
 
@@ -119,7 +120,56 @@ def test_the_package_reaches_for_no_ambient_runtime():
     assert found == [], "\n".join(str(v) for v in found)
 
 
-def test_the_gate_actually_scanned_something():
-    # A gate that silently scans zero files passes forever. This is the
-    # tripwire for that.
-    assert len(gates.package_files()) >= 2
+def test_the_gate_scans_every_module_in_the_package_and_not_a_list():
+    """The gate's inputs are the tree, held against an independent walk.
+
+    A gate that silently scans zero files passes forever; so does one that
+    scans a hand-written list of two, which is what the previous form of this
+    tripwire (`len(package_files()) >= 2`) accepted. `package_files()` was
+    mutated to `[PACKAGE_ROOT / "__init__.py", PACKAGE_ROOT / "cli.py"]`, a
+    `spanweave_live/completion.py` importing `time` and `random` was added, and
+    `make check` stayed green (`patches/REVIEW-2026-10-04.md` R0-2).
+
+    So the set is compared against an `rglob` computed here, from this file's
+    own location rather than from `gates.PACKAGE_ROOT`: the two have to agree,
+    which means every `*.py` under the package at any depth is scanned, and
+    nothing outside it is.
+    """
+    package = Path(__file__).resolve().parent.parent / "spanweave_live"
+    walked = sorted(package.rglob("*.py"))
+    assert walked, "no modules under spanweave_live/ at all"
+    assert gates.package_files() == walked
+    # Named rather than implied: the package really has subdirectories to reach
+    # once a batch adds one, and the walk above is what reaches them.
+    assert {p.name for p in walked} >= {"__init__.py", "framing.py", "routing.py"}
+
+
+def test_the_walk_reaches_a_module_nested_in_a_subpackage(tmp_path, monkeypatch):
+    """A planted nested module is caught, with no edit to the gate.
+
+    `spanweave_live/` is flat today, so the depth of the walk is not something
+    the real package can demonstrate. A synthetic one can: three levels, with
+    the ambient import at the bottom, scanned by the same `check_package` the
+    real gate runs. The allowlist is keyed by the path relative to the package
+    root, so the nested path is *not* exempt -- which is the other half of what
+    this plant shows.
+    """
+    root = tmp_path / gates.PACKAGE_ROOT.name
+    (root / "ingest" / "deep").mkdir(parents=True)
+    (root / "__init__.py").write_text("", encoding="utf-8")
+    (root / "ingest" / "__init__.py").write_text("", encoding="utf-8")
+    (root / "ingest" / "deep" / "listener.py").write_text(
+        "import time\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(gates, "PACKAGE_ROOT", root)
+
+    assert sorted(str(p.relative_to(tmp_path)) for p in gates.package_files()) == [
+        "spanweave_live/__init__.py",
+        "spanweave_live/ingest/__init__.py",
+        "spanweave_live/ingest/deep/listener.py",
+    ]
+    found = gates.check_package(gates.ALL_RULES)
+    assert [(v.rule, v.path, v.line) for v in found] == [
+        ("no-ambient-runtime", "spanweave_live/ingest/deep/listener.py", 1)
+    ]
+    assert "time" in found[0].detail

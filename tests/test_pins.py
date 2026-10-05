@@ -78,6 +78,33 @@ def test_the_dependency_pin_is_a_full_sha():
     )
 
 
+def test_the_submodule_is_cloned_over_https_too():
+    """Both halves of the pin are HTTPS, and this is the half nothing held.
+
+    CI checks the submodule out with `submodules: true`, which authenticates
+    with the Actions token over HTTPS: an SSH URL here fails at checkout, on
+    every job, with a message about a missing key rather than about a pin. The
+    dependency half is asserted above; the submodule half was asserted nowhere,
+    and a re-added SSH submodule passed `make check` and failed only at CI
+    (`patches/REVIEW-2026-10-04.md` R0-3 / P-5). `SPEC.md` §0.1 states both.
+
+    Read from `.gitmodules`, which is the file a clone reads, rather than from
+    `.git/config`, which is one machine's own.
+    """
+    configured = _git(
+        "config", "-f", ".gitmodules", "--get-regexp", r"^submodule\..*\.url$"
+    ).splitlines()
+    urls = [line.split(maxsplit=1)[1] for line in configured if line.strip()]
+    assert urls, "no submodule URL in .gitmodules at all"
+    for url in urls:
+        assert url.startswith("https://"), (
+            f"the corpus submodule must be cloned over HTTPS so CI's own "
+            f"checkout (and a stranger's clone) resolves it without a key; got "
+            f"{url!r}. Use "
+            f"https://github.com/SigorMatt/spanweave.git"
+        )
+
+
 def test_the_dependency_sha_and_the_submodule_sha_are_equal():
     requirement = _spanweave_requirement()
     found = SHA.search(requirement)

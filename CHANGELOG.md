@@ -8,6 +8,82 @@ of change is a **batch** (`WORKPLAN.md`), and each entry names the batch.
 
 ## Unreleased
 
+### R2a — the run-1 review's findings, closed (2026-10-05)
+
+A fix batch: no new piece, no new behaviour the receiver did not already have.
+It makes the documents true where they were not, and makes five tests able to
+fail where they were passing over empty sequences. Every item is from
+`patches/REVIEW-2026-10-04.md`, which is the cold review of run 1.
+
+Added
+
+- `SPEC.md` §0.1 — **the pin is one pin, and both halves of it are HTTPS**: the
+  sha-pinned dependency, the `corpus/` submodule at the same sha, `uv.lock` as
+  the third copy, and why SSH breaks CI's own submodule checkout rather than a
+  pin. `tests/test_pins.py` now holds the submodule half too, reading
+  `.gitmodules` and requiring `https://` — until now a re-added SSH submodule
+  passed `make check` and failed only at CI checkout (R0-3 / P-5).
+- `SPEC.md` §0.2 — **the one mypy override, and why it is temporary**:
+  `follow_untyped_imports` for `spanweave.*` exists because the pinned
+  `spanweave` ships no `py.typed`, and `ignore_missing_imports` was rejected
+  because it would make `Records`, `Diagnostic` and `read_records` all `Any` and
+  every annotation here vacuous. The marker is upstream in `SigorMatt/spanweave`
+  **PR #4** ("packaging: the package ships py.typed", commit `bea9d44`), open
+  and green and **not yet merged**; when it merges the pins move and this
+  override is deleted (`WORKPLAN.md` R2c). Stated in the spec and here because
+  it lived in a `pyproject.toml` comment and in the plan's resume note, and the
+  plan is deleted at series close (P-1).
+- `SPEC.md` §3.3 states the `push`-vs-`document` **trap** in full: a body that
+  happens to arrive whole reads *identically* to `document(body)`, which is
+  exactly why the same body arriving in chunks being lost to one
+  `malformed_record` per line is a trap and not a rule. The whole-arrival half
+  was in a test docstring only (P-4), and is now asserted as well.
+- `tests/test_framing.py` sweeps every line rendering in **two forms**: as
+  captured, and with one line corrupted — the corrupted form **derived from the
+  corpus bytes at test time**, never a copied fixture, so it cannot read clean
+  the day the corpus moves. The sweep's `diagnostics` and `skipped_records`
+  assertions compared two empty sequences before this, because not one of the 51
+  renderings produces a diagnostic at the pinned sha: a `push` that swallowed
+  every diagnostic passed it 51/51, and one that reported `skipped_records=0`
+  unconditionally passed the entire suite (R1-1, R1-2). 51 renderings × 2 forms
+  × 12 framings = **1224**, and one further test asserts `push`'s
+  `skipped_records == 1` directly.
+- `tests/test_framing.py` holds §3.2's "the receiver grows no dedup cache of its
+  own" as a two-part test — the same line twice in one push is one record plus
+  `duplicate_record`; the same line across two pushes is two records and no
+  diagnostic. A `self._seen` set inside `Framer` passed the whole suite and made
+  the `duplicate_record` disappear (R1-4).
+- `tests/test_gates.py` holds the import gate **to walking the tree**: the gate's
+  file set is compared against an `rglob` computed independently in the test, and
+  a planted three-level module importing `time` is caught with no edit to the
+  gate. `package_files()` mutated to a two-name list, plus a
+  `spanweave_live/completion.py` importing `time`, left `make check` green
+  before this (R0-2).
+- `tests/test_routing.py` holds the `Router` surface to what `SPEC.md` §4.1
+  declares (R2-1).
+
+Changed
+
+- `Router`'s three settings are **keyword-only** (`kw_only=True`), as §4.1's
+  signature always said; `Router(1, 'openinference', False)` used to construct.
+  §4.1 now also declares `routed`, which was public and in the prose only.
+- `SPEC.md` §4.2 carries the **measurement** instead of the premise R2
+  falsified: the second parse is 15.5–17.1 % of `trace_id_of + feed`, not the
+  "would halve it" this section claimed, so an upstream `trace_id_of` is an
+  optimisation and not a necessity. The number is in the spec rather than only
+  in the plan, and `spanweave_live/routing.py`'s citation points at §4.2 instead
+  of at a plan section that is deleted at series close (P-2).
+- `tests/test_framing.py`'s diagnostic-order fixture crosses the **9 → 10**
+  digit boundary (eight good lines, not nine), where the sorted order is the
+  reverse of the arrival order. Below ten it passed with the re-sort removed
+  (R1-3); §3.5 says why the boundary is the point.
+
+Not changed, and why
+
+- **R0-1** — `WORKPLAN.md` §4's false "`make check` runs `install-check` as a
+  step" was already corrected by the plan commit `9a2e40f`, which this batch
+  cannot edit (the plan is the orchestrator's file). Nothing was left to do.
+
 ### R2 — partition: one `Builder` per trace, and conformance gate A (2026-10-04)
 
 Added
@@ -94,6 +170,12 @@ Added
   under every seeded chunking; and both OTLP-container renderings read through
   `document` exactly as `read_records` reads them, while the same bytes pushed in
   chunks are lost to `malformed_record`s — which is why `document` exists.
+- `pyproject.toml` gained one mypy override — `follow_untyped_imports = true`
+  for `module = ["spanweave.*"]` — because the pinned `spanweave` ships no
+  `py.typed` and `mypy --strict` therefore refuses to analyse it as soon as a
+  receiver module imports it. Named here retroactively by R2a, which states the
+  override and its upstream fix in `SPEC.md` §0.2: this entry said nothing about
+  `pyproject.toml` changing at all.
 
 ### R0 — repository skeleton (2026-10-04)
 

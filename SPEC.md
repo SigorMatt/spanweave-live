@@ -33,6 +33,55 @@ R1–R7). This document begins with the two sections that constrain all of them:
 what the receiver will never do, and the three properties of the library
 underneath it that it has to be designed around.
 
+### 0.1 The pin is one pin, and both halves of it are HTTPS
+
+`spanweave` is a dependency pinned to **one commit** in `pyproject.toml`, and
+`corpus/` is a git submodule of **that same repository at that same commit**,
+read-only, which is where `fixtures/conformance/` is read from. `uv.lock`
+records the sha a third time. `tests/test_pins.py` holds all three equal,
+because a drift makes the conformance gate compare live graphs against
+expectations from a different version of the library than the one it imports,
+and the failure that produces points at the code under test instead of at the
+pin.
+
+Both halves are fetched over **HTTPS**, not SSH, and that is a requirement
+rather than a preference:
+
+- the dependency is `spanweave @ git+https://github.com/SigorMatt/spanweave@<sha>`,
+  so an unauthenticated resolve — CI's, a stranger's — works;
+- the submodule URL in `.gitmodules` is `https://github.com/SigorMatt/spanweave.git`,
+  because CI checks submodules out with the Actions token over HTTPS. An SSH
+  URL there fails at **checkout**, on every job, with a message about a missing
+  key rather than about a pin.
+
+Both are held by a test (`tests/test_pins.py`), the submodule half included:
+until R2a it was stated only in a comment in `.github/workflows/ci.yml`, so a
+re-added SSH submodule passed `make check` and failed only at CI.
+
+### 0.2 One typing override, and why it is temporary
+
+`pyproject.toml` carries exactly one mypy override:
+`follow_untyped_imports = true` for `module = ["spanweave.*"]`. It is here
+because the pinned `spanweave` ships **no `py.typed` marker**, so `mypy
+--strict` refuses to analyse it as soon as a receiver module imports it, even
+though every line of it is annotated.
+
+The two ways out are not equivalent, which is why the narrow one was chosen.
+`ignore_missing_imports` would make `Records`, `Diagnostic` and `read_records`
+all `Any`, and then every annotation in this package would type-check
+vacuously — a green gate that has stopped asking the question.
+`follow_untyped_imports` instead analyses the installed source, so the receiver
+is checked against the library's real signatures: a planted
+`x: int = read_records(b"")` still errors, as it should.
+
+The marker belongs upstream, and it is on its way there:
+`SigorMatt/spanweave` **PR #4**, *"packaging: the package ships py.typed"*
+(commit `bea9d44`), open and green at the time of writing and **not yet
+merged**. When it merges, the pins of §0.1 move to the new `main` sha and this
+override is **deleted** (`WORKPLAN.md` R2c), with a test asserting that no
+`follow_untyped_imports` remains. Until then the override is a current fact
+stated here rather than a suppression hidden in a config file.
+
 ## 1. Non-goals — permanent, not parked
 
 These are not a backlog. Each one is a thing a receiver is *tempted* to grow,
@@ -240,6 +289,12 @@ input: two identical lines in one chunk are one record and one
 records — the second of which is the `Builder`'s refusal (§4), not the framer's
 problem. The receiver grows no dedup cache of its own.
 
+Both halves of that are asserted, as each other's control: a cache inside the
+`Framer` would make the two-chunk half pass by passing nothing on, and the
+`duplicate_record` of the one-chunk half would simply disappear — a diagnostic
+lost, which is §1.5 and not only prose. No corpus rendering holds a
+byte-identical duplicate line, so the corpus sweep cannot be what holds this.
+
 ### 3.3 `document` — a whole body, handed over unsplit
 
 A JSON document is not a record until its closing brace, so a body is read in
@@ -253,6 +308,18 @@ every one becomes a `malformed_record` — loudly, which is the point, but the
 export is gone. A framer that buffered until something parsed would be the
 reader's §2.1 rule reimplemented here, differently, and it would hold a tail
 forever on the ordinary line-delimited input it was given.
+
+**Why that is a trap and not merely a rule.** The other half of it is the half
+that bites: a body that happens to arrive **whole** reads *identically* to
+`document(body)` — the same records, no diagnostic, byte for byte — because the
+reader's container detection runs per call and a whole arrival is one call. So
+`push` is not "the wrong method for bodies, which fails"; it is the wrong method
+for bodies, which **works** on every body small enough to arrive in one piece,
+and then loses a whole export the first time one does not. Both halves are
+asserted over the corpus' two document renderings
+(`tests/test_framing.py::test_a_document_pushed_in_chunks_is_lost_which_is_why_document_exists`),
+and the consequence is a standing instruction for the transport batch: **R6
+hands POST bodies to `document`, never to `push`** (§7.2).
 
 `document` carries no line offset (§3.5): the body is the whole input as far as
 its caller is concerned. It neither reads nor clears the remainder — a body and
@@ -300,7 +367,10 @@ Three rules make that precise:
 - The re-issued tuple is **re-sorted** by the library's own order
   (`spanweave` `SPEC.md` §5.2 — `(code, node_id, message)`). Renumbering changes
   the message, so a tuple sorted by the old numbers would quietly break a
-  property the caller is entitled to.
+  property the caller is entitled to. The test for it crosses the **9 → 10**
+  digit boundary on purpose: `"line 10 …"` sorts before `"line 9 …"`, so the
+  sorted tuple is the reverse of the order the lines arrived in, and a fixture
+  that stayed below ten would pass with the sort removed.
 
 The number is read off the front of the reader's message, because a
 `spanweave.Diagnostic` carries no line field. That is a limitation of this seam
@@ -365,7 +435,19 @@ class Router:
     def no_trace(self) -> spanweave.Builder: ...
     @property
     def counts(self) -> Mapping[str, int]: ...
+    @property
+    def routed(self) -> int: ...
 ```
+
+That block is the whole public surface, and it is declared **exactly** as the
+code accepts it. Two things were out of step until R2a and are named here so
+the next reader can hold the document to the code rather than the other way
+round: `routed` — how many records have been handed to `route` — is public and
+was in the prose only, and the `*` was decorative, because the dataclass also
+accepted `Router(1, 'openinference', False)` positionally. The settings are
+keyword-only now (a test constructs one positionally and requires a
+`TypeError`): they are independent knobs with no reading order, and a
+positional order would be a contract this document never offered.
 
 `Record` is `Any` and deliberately not a JSON type of the receiver's own:
 `spanweave`'s `JsonValue` is itself `Any` and is not exported, and a second,
@@ -404,12 +486,25 @@ trace id". It is **not** swallowed: the record goes to the no-trace builder,
 whose `feed` reaches the same code and raises the same refusal, and the event
 carries the library's `code` verbatim.
 
-**The cost, stated.** `classify` runs every adapter's `detect` over the record
-and `parse` then translates it a second time — the builder's own `feed` does
-both again. The second parse is paid deliberately and is registered as a thread
-(`WORKPLAN.md` §3, 2026-10-04): a `spanweave.trace_id_of(record)` upstream
-would halve it. It is **not** worked around here, because the only workaround
-is a dialect read, and §1.1 says what that costs.
+**The cost, stated, and measured.** `classify` runs every adapter's `detect`
+over the record and `parse` then translates it a second time — the builder's own
+`feed` does both again. So the question a reader asks is how much of routing
+that second parse is, and the answer is **not** "half", which is what this
+section said until R2a and what the thread that opened it assumed.
+
+Measured twice, independently, on 2000 distinct OpenInference `CHAIN` spans
+with `perf_counter` over three repeats: `trace_id_of` costs **20–24 µs** per
+record against `Builder.feed`'s **97–131 µs**, i.e. **15.5–17.1 %** of
+`trace_id_of + feed`, good to roughly ±3 points and no finer. An upstream
+`spanweave.trace_id_of(record)` would remove most of *that*, not half of
+routing: it is an **optimisation, not a necessity**, and it gets no batch until
+a receiver workload makes routing the cost rather than `feed` and
+materialization (§2.3). The thread is registered in `WORKPLAN.md` §3 while the
+series runs and in `TASKS.md` once it closes; the number above is here so the
+conclusion does not depend on either of them still existing.
+
+It is in any case **not** worked around here, because the only workaround is a
+dialect read, and §1.1 says what that costs.
 
 ### 4.3 One builder per trace, and the no-trace builder
 

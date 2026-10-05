@@ -109,6 +109,33 @@ def codes_of(graph: spanweave.Graph) -> list[str]:
 
 
 # --------------------------------------------------------------------------
+# The surface `SPEC.md` §4.1 declares is the surface the code has.
+# --------------------------------------------------------------------------
+
+
+def test_the_routers_settings_are_keyword_only_as_SPEC_declares():
+    """§4.1 declares `__init__(self, *, max_traces, adapter, temporal)`.
+
+    The `*` was a sentence nothing held: the dataclass accepted
+    `Router(1, 'openinference', False)`, so the three settings had a positional
+    order the spec never promised and a caller could come to rely on
+    (`patches/REVIEW-2026-10-04.md` R2-1). Pre-1.0, so the honest fix is the
+    cheap one -- the code is keyword-only and the declared signature is now
+    true. `routed`, likewise public and likewise undeclared, is in §4.1 too.
+    """
+    with pytest.raises(TypeError):
+        Router(1)
+
+    settings = Router(max_traces=1, adapter="openinference", temporal=False)
+    assert (settings.max_traces, settings.adapter, settings.temporal) == (
+        1,
+        "openinference",
+        False,
+    )
+    assert settings.routed == 0
+
+
+# --------------------------------------------------------------------------
 # The trace id comes from the adapter surface, never from a key (§4.2).
 # --------------------------------------------------------------------------
 

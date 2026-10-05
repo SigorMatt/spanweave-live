@@ -53,6 +53,48 @@ def rendering_id(path: Path) -> str:
     return f"{path.parent.parent.name}/{path.name}"
 
 
+# Every line rendering in the corpus reads **clean** at the pinned sha: not one
+# of the 51 produces a diagnostic or skips a record. So a sweep over the corpus
+# as captured compares two empty sequences twice, and a `push` that swallowed
+# every diagnostic, or that reported `skipped_records=0` unconditionally, would
+# pass it -- which is what `patches/REVIEW-2026-10-04.md` found (R1-1, R1-2).
+#
+# So every rendering is swept in two forms: as captured, and with one line
+# corrupted. The corrupted form is **derived from the corpus bytes**, by the
+# function below, and is never a hand-copied fixture: a second copy of a
+# rendering checked into this repo is a copy nothing holds at the pin, and it
+# would go on reading the way the corpus read on the day it was copied.
+CORRUPTED_LINE = b'{"oops'
+
+
+def corrupted(body: bytes) -> bytes:
+    """`body` with one line replaced by one that is not JSON.
+
+    Deterministic, and a function of the bytes alone: the line replaced is the
+    middle one, so the same rendering always corrupts to the same stream and
+    the corruption is never at an edge the framer treats specially. The line
+    count is unchanged, so the diagnostic the reader issues names a line in the
+    middle of the stream -- which is also where a chunk-local number would be
+    most obviously wrong (§3.5).
+    """
+    lines = body.split(b"\n")
+    assert lines[-1] == b"", "a corpus rendering is newline-terminated"
+    content = lines[:-1]
+    assert content, "a rendering holds at least one line"
+    content[len(content) // 2] = CORRUPTED_LINE
+    return b"\n".join(content) + b"\n"
+
+
+#: The two forms every line rendering is swept in. The second is what makes the
+#: sweep's `diagnostics` and `skipped_records` assertions compare something.
+FORMS = ("as captured", "one line corrupted")
+
+
+def form_of(rendering: Path, form: str) -> bytes:
+    body = rendering.read_bytes()
+    return body if form == "as captured" else corrupted(body)
+
+
 def chunked(body: bytes, seed: int) -> list[bytes]:
     """`body` cut into seeded random chunks, one byte to the whole thing."""
     rng = random.Random(seed)
@@ -107,22 +149,47 @@ def test_the_sweep_covers_every_rendering_the_corpus_holds():
 
 
 @pytest.mark.parametrize("rendering", line_renderings(), ids=rendering_id)
-def test_seeded_chunkings_of_a_rendering_read_as_the_whole_input_does(rendering):
+def test_a_corrupted_rendering_carries_a_diagnostic_and_a_skipped_record(rendering):
+    """What the second form of the sweep is for, asserted before it is used.
+
+    The sweep below compares the framer's diagnostics and its `skipped_records`
+    against the whole read's. Over the corpus as captured both sides are empty,
+    so without this form the comparison is vacuous. This test is what keeps the
+    corruption real: one `malformed_record` and exactly one skipped record, for
+    every rendering, so a corruption that stopped corrupting (a corpus whose
+    middle line is already unreadable, a `CORRUPTED_LINE` that became valid
+    JSON) is a failure here rather than a quietly empty assertion below.
+    """
+    whole = read_records(corrupted(rendering.read_bytes()))
+    assert [d.code for d in whole.diagnostics] == ["malformed_record"]
+    assert whole.skipped_records == 1
+
+
+@pytest.mark.parametrize("form", FORMS)
+@pytest.mark.parametrize("rendering", line_renderings(), ids=rendering_id)
+def test_seeded_chunkings_of_a_rendering_read_as_the_whole_input_does(rendering, form):
     """THE claim of §3: framing is invisible in the records.
 
-    For every rendering of the corpus, and for each of ten seeded chunkings
-    plus the two extremes a seed will not reliably produce -- one byte at a
-    time, and the whole input in one chunk -- the records the `Framer` hands
-    over are `read_records` of the whole input, exactly: same records, same
-    order, same count, and the same diagnostics.
+    For every rendering of the corpus, in both forms, and for each of ten
+    seeded chunkings plus the two extremes a seed will not reliably produce --
+    one byte at a time, and the whole input in one chunk -- the records the
+    `Framer` hands over are `read_records` of the whole input, exactly: same
+    records, same order, same count, the same diagnostics, and the same
+    `skipped_records`.
 
     This is the test the batch exists to pass. A framer that handed partial
     lines to the reader fails it with `malformed_record`s the whole read does
-    not have.
+    not have; a framer that swallowed a diagnostic, or that reported
+    `skipped_records=0`, fails it on the corrupted form -- and on the corrupted
+    form only, which is why the form exists.
     """
-    body = rendering.read_bytes()
+    body = form_of(rendering, form)
     whole = read_records(body)
-    assert whole.records, f"{rendering_id(rendering)} holds no records to compare"
+    if form == "as captured":
+        assert whole.records, f"{rendering_id(rendering)} holds no records to compare"
+    else:
+        # Non-empty on both counts, or this parametrization proves nothing.
+        assert whole.diagnostics and whole.skipped_records == 1
 
     chunkings: dict[str, list[bytes]] = {
         "one byte at a time": [body[i : i + 1] for i in range(len(body))],
@@ -133,9 +200,11 @@ def test_seeded_chunkings_of_a_rendering_read_as_the_whole_input_does(rendering)
 
     for label, chunks in chunkings.items():
         results = framed(chunks)
-        assert records_of(results) == whole.records, label
-        assert diagnostics_of(results) == list(whole.diagnostics), label
-        assert sum(r.skipped_records for r in results) == whole.skipped_records, label
+        assert records_of(results) == whole.records, f"{form}, {label}"
+        assert diagnostics_of(results) == list(whole.diagnostics), f"{form}, {label}"
+        assert sum(r.skipped_records for r in results) == whole.skipped_records, (
+            f"{form}, {label}"
+        )
 
 
 # --------------------------------------------------------------------------
@@ -260,6 +329,71 @@ def test_flush_reads_a_complete_final_line_that_had_no_terminator():
 
 
 # --------------------------------------------------------------------------
+# What a push did not hand over: `skipped_records`, counted per chunk.
+# --------------------------------------------------------------------------
+
+
+def test_push_reports_a_skipped_record_for_a_complete_line_it_could_not_read():
+    """`skipped_records` is a count, not a field that happens to be zero.
+
+    `SPEC.md` §1.5 and `CLAUDE.md` standing rule 5 rest on this number: a line
+    the reader could not read is a `malformed_record` **and** a skip, and the
+    skip is what the caller adds up. Asserted here on `push` directly, and not
+    only through the corpus sweep, because a `push` that returned
+    `skipped_records=0` unconditionally passed the whole suite before this test
+    existed (`patches/REVIEW-2026-10-04.md` R1-2).
+    """
+    framer = Framer()
+    result = framer.push(b'{"trace_id":"t1","span_id":"s1"}\n' + CORRUPTED_LINE + b"\n")
+
+    assert len(result.records) == 1
+    assert [d.code for d in result.diagnostics] == ["malformed_record"]
+    assert result.skipped_records == 1
+    assert framer.pending_bytes == 0
+
+    # And the next chunk's count is its own: the framer accumulates no total.
+    assert framer.push(b'{"trace_id":"t1","span_id":"s2"}\n').skipped_records == 0
+
+
+# --------------------------------------------------------------------------
+# No dedup cache of its own (`SPEC.md` §3.2, §2.2).
+# --------------------------------------------------------------------------
+
+
+def test_the_framer_grows_no_dedup_cache_of_its_own():
+    """Deduplication is the reader's, per call, and the framer adds none.
+
+    Both halves matter and they are each other's control. In **one** chunk two
+    identical lines are one call, so they are one record and one
+    `duplicate_record` -- the reader's collapse, which the framer must not
+    anticipate. Across **two** chunks they are two calls, so they are two
+    records and no diagnostic, and the second is the `Builder`'s refusal (§4),
+    not the framer's problem.
+
+    A `self._seen` set inside `Framer` would pass the second half by passing
+    nothing on: it returns one record both ways and makes the
+    `duplicate_record` disappear -- a diagnostic lost, which is standing rule 5
+    and not only spec prose. Nothing in the suite caught that before this test
+    (`patches/REVIEW-2026-10-04.md` R1-4), because no corpus rendering holds a
+    byte-identical duplicate line and every hand-authored fixture here uses
+    distinct records.
+    """
+    line = b'{"trace_id":"t1","span_id":"s1"}\n'
+
+    one_chunk = Framer().push(line + line)
+    assert len(one_chunk.records) == 1
+    assert [d.code for d in one_chunk.diagnostics] == ["duplicate_record"]
+
+    framer = Framer()
+    first, second = framer.push(line), framer.push(line)
+    assert len(first.records) == 1
+    assert len(second.records) == 1
+    assert second.records == first.records
+    assert first.diagnostics == ()
+    assert second.diagnostics == ()
+
+
+# --------------------------------------------------------------------------
 # Absolute line numbers.
 # --------------------------------------------------------------------------
 
@@ -332,11 +466,19 @@ def test_a_remainder_read_by_flush_is_numbered_as_the_final_line():
 def test_diagnostics_come_back_in_the_librarys_own_order():
     """Renumbering does not leave them unsorted (`spanweave` `SPEC.md` §5.2).
 
-    Two malformed lines in one chunk, read as lines 10 and 11 of the stream
+    Two malformed lines in one chunk, read as lines **9 and 10** of the stream
     and as lines 1 and 2 of the call -- so the tuple is sorted by the numbers
     the receiver hands over, not by the ones the reader used.
+
+    Crossing the 9 -> 10 digit boundary is the whole point of the fixture, and
+    it is why there are eight good lines and not nine. The order is by message,
+    and `"line 10 ..."` sorts **before** `"line 9 ..."`, so the sorted tuple is
+    the reverse of the order the lines arrived in: a framer that renumbered and
+    handed the tuple back unsorted fails here. With nine good lines the two
+    malformed ones are 10 and 11, whose order is the same either way, and the
+    test passed with the sort removed (`patches/REVIEW-2026-10-04.md` R1-3).
     """
-    good = stream_of_records(9)
+    good = stream_of_records(8)
     body = good + b'{"oops\n{"nope\n'
 
     framer = Framer()
@@ -347,7 +489,7 @@ def test_diagnostics_come_back_in_the_librarys_own_order():
     assert len(messages) == 2
     assert messages == sorted(messages)
     assert messages[0].startswith("line 10 ")
-    assert messages[1].startswith("line 11 ")
+    assert messages[1].startswith("line 9 ")
     # And they are the reader's own diagnostics for those lines of this stream.
     assert result.diagnostics == read_records(body).diagnostics
 
@@ -376,20 +518,33 @@ def test_document_reads_a_whole_body_exactly_as_read_records_does(rendering):
 
 @pytest.mark.parametrize("rendering", document_renderings(), ids=rendering_id)
 def test_a_document_pushed_in_chunks_is_lost_which_is_why_document_exists(rendering):
-    """Why `document` is a method and not a flag (`SPEC.md` §3).
+    """Why `document` is a method and not a flag -- the trap (`SPEC.md` §3.3).
 
     The reader's container detection is **per call** (`SPEC.md` §2.1, §2.2), so
-    a pretty-printed document survives `push` only where it happens to arrive
-    whole: push it in two chunks and each call sees a run of lines that are not
-    records, and says so with a `malformed_record` apiece. The framer does not
-    rejoin them -- a framer that buffered until something parsed would be the
-    library's own rule reimplemented here, differently, and it would hold a
-    tail forever on the ordinary input it was given.
+    both halves of this are true at once, and together they are a trap rather
+    than a rule:
 
-    `document` is immune because it never splits: the same bytes, one call.
+    - a body that happens to arrive **whole** reads exactly as `document` reads
+      it -- same records, no diagnostic -- so a caller who pushes bodies is
+      green on every body small enough to arrive in one piece;
+    - the same body pushed in **chunks** is gone: each call sees a run of lines
+      that are not records and says so with a `malformed_record` apiece.
+
+    The framer does not rejoin them. A framer that buffered until something
+    parsed would be the library's own §2.1 rule reimplemented here,
+    differently, and it would hold a tail forever on the ordinary line-delimited
+    input it was given. `document` is immune because it never splits: the same
+    bytes, one call. R6 hands POST bodies to `document`, never to `push`.
     """
     body = rendering.read_bytes()
     assert body.count(b"\n") > 1, "a pretty-printed document, not one line"
+
+    # The half that makes it a trap: whole, it reads, and it reads identically.
+    whole = read_records(body)
+    arrived_whole = framed([body])
+    assert records_of(arrived_whole) == whole.records
+    assert diagnostics_of(arrived_whole) == []
+    assert Framer().document(body) == whole
 
     chunks = chunked(body, seed=SEEDS[0])
     assert len(chunks) > 1, "a one-chunk framing would prove nothing here"
@@ -397,7 +552,7 @@ def test_a_document_pushed_in_chunks_is_lost_which_is_why_document_exists(render
     assert records_of(chunked_results) == ()
     assert {d.code for d in diagnostics_of(chunked_results)} == {"malformed_record"}
 
-    assert Framer().document(body).records == read_records(body).records
+    assert Framer().document(body).records == whole.records
 
 
 def test_document_leaves_the_line_remainder_alone():

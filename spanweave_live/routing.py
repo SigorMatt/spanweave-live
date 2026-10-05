@@ -12,8 +12,10 @@ nowhere else -- no key table, no `record["trace_id"]`, no container walk
 (`SPEC.md` §1.1, §4.2). The cheap-looking alternative works on every fixture
 anyone would write and is a second dialect reader that can disagree with the
 library about the same bytes, for reasons no fixture of the receiver's own can
-pin. The cost of doing it properly is a second parse per record; it is paid
-deliberately and registered as a thread (`WORKPLAN.md` §3), not worked around.
+pin. The cost of doing it properly is a second parse per record, measured at
+15.5-17.1% of per-record routing: it is paid deliberately and registered as a
+thread in `SPEC.md` §4.2 -- which is where the number is, and which outlives
+the plan -- not worked around.
 
 Nothing here reads the clock, sleeps, opens a socket or shuffles anything.
 """
@@ -114,13 +116,17 @@ def trace_id_of(record: Record) -> str | None:
     return next(iter(reported))
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, kw_only=True)
 class Router:
     """One `spanweave.Builder` per trace id (`SPEC.md` §4).
 
     `adapter` and `temporal` are handed to every `Builder` it makes, so a
     caller that names a dialect or turns temporal edges off gets live what
     `spanweave.build` gives it in batch. The router reads neither.
+
+    All three settings are **keyword-only**, as `SPEC.md` §4.1 declares them:
+    they are independent knobs with no reading order, and a positional order
+    here would be a contract the spec never offered.
 
     It keeps a **count** per event code and no event log: the events of one
     record ride on that record's `Routed`, and an accumulated list grows with
