@@ -5,7 +5,7 @@ network, the clock and the consumer (`spanweave` `OPEN_QUESTIONS.md` §19,
 decided 2026-09-29). One batch = one sub-agent = one commit = one concern.
 This file plus git is the only state; any session can resume cold from it.
 
-Last updated: 2026-10-05 (run 2 in progress; R2a, R2b done, R3 next).
+Last updated: 2026-10-05 (run 2 in progress; R2a, R2b, R3 done, R4 next).
 
 ---
 
@@ -150,7 +150,7 @@ commit that cannot say `plan:`, and the watcher exempts it once per series.
 | R2a | **The run-1 review's eight `next batch` items, closed.** Read `patches/REVIEW-2026-10-04.md` and close every `next batch` item as the file states it, one commit, tests first. Among them: the import gate is held to walking (a test asserts the gate's module set equals `rglob` of `spanweave_live/`, and a planted nested module importing `time` is caught with no gate edit); the 612-framing sweep gains renderings that carry a diagnostic and a skipped record (a corpus rendering with one line corrupted, generated from the corpus at test time, never a hand-copied fixture), so the diagnostics and `skipped_records` assertions compare non-empty sequences and a `push` reporting `skipped_records=0` fails; SPEC states the HTTPS pin for both the dependency and the submodule, held by a test; SPEC and CHANGELOG state the `py.typed` override and why; SPEC §3.3 states the `push`-vs-`document` trap in full (a whole body pushed happens to read; chunked it does not). Items the file lists that this row does not name are closed too. | done (7fdbff3) | 8 |
 | R2b | **The remainder has a caller-set cap.** `Framer(max_pending_bytes=None)`; SPEC §3.4 rewritten from "no cap" to the policy in §3. Tests red on the parent: a stream with no `\n` past the cap yields one `malformed_record`, `skipped_records=1`, one `fragment_too_long` event with the length, and the framer continues on the next chunk; with the cap `None`, R1's behaviour is unchanged across the whole sweep. Mutation: a framer that drops the oversize remainder silently fails the `skipped_records` assertion. | done (d152c3b) | 5 |
 | R2c | **Pins bumped to a spanweave that ships `py.typed`; the override deleted.** After PR #4 merges: `pyproject.toml` pin and `corpus/` submodule to the new `main` sha (the two-way pin test holds them equal); `[tool.mypy]` override for `spanweave.*` deleted, and a test asserts no `follow_untyped_imports` remains; `make check` green with `mypy --strict` analysing spanweave itself. If PR #4 is not merged when this row is reached, status `awaiting PR #4` and the run stops. | awaiting R5 | 4 |
-| R3 | **Completion is a policy with an injected clock.** `Completion` (SPEC §5): three policies, each a value — `Quiet(seconds)`, `RootEnded(grace_seconds)`, `Cap(records)` — composable as any-of; `now: Callable[[], float]` is injected, never `time.time` inside `spanweave_live/`; `Router.tick()` evaluates policies and returns the traces completed; a completed trace's final graph is materialized, optionally written with `spanweave.dump` to a directory the caller names, and its builder released; a record arriving for a completed trace opens a new builder and emits `late_arrival` with the trace id and the gap. Tests on a fake clock: each policy fires exactly when its definition says; a late arrival is an event, never silent, and never a mutation of the written graph. Mutation: a `Quiet` that fires one tick early fails. | todo | 10 |
+| R3 | **Completion is a policy with an injected clock.** `Completion` (SPEC §5): three policies, each a value — `Quiet(seconds)`, `RootEnded(grace_seconds)`, `Cap(records)` — composable as any-of; `now: Callable[[], float]` is injected, never `time.time` inside `spanweave_live/`; `Router.tick()` evaluates policies and returns the traces completed; a completed trace's final graph is materialized, optionally written with `spanweave.dump` to a directory the caller names, and its builder released; a record arriving for a completed trace opens a new builder and emits `late_arrival` with the trace id and the gap. Tests on a fake clock: each policy fires exactly when its definition says; a late arrival is an event, never silent, and never a mutation of the written graph. Mutation: a `Quiet` that fires one tick early fails. | done (e09af3f) | 10 |
 | R4 | **Subscription and delta fan-out.** `Subscriptions` (SPEC §6): a consumer registers a callback for one trace or all; after each absorbed record the router hands each subscriber `delta(since=version-1)` (per-record mode) or, for a subscriber that asked for `every=N`, `delta(since=last_seen)`; retention is set from the longest window any subscriber asked for; a callback that raises is isolated — recorded as `consumer_error` with the trace id and version, other subscribers still called, the record still absorbed. Tests: folding every delta a subscriber received onto its first graph equals the final `graph()`; a raising subscriber never stalls another. Mutation: a fan-out that skips the subscriber after the raising one fails. | todo | 10 |
 | R5 | **Ingest: file tail and stdin.** `tail(path, *, now, sleep, poll_seconds)` (SPEC §7.1) follows a growing file from an offset through `Framer.push`, survives truncation (restarts from 0 and emits `truncated`), and rotation (reopens by path); `stdin()` reads chunks until EOF. Both are generators of `Records` with `sleep` injected, so the test drives them on a fake clock with a file it appends to between ticks. Tests: a corpus rendering appended in random chunks is routed to the same graphs as gate A; truncation and rotation are events. | awaiting R3 | 10 |
 | R6 | **Ingest: OTLP/HTTP JSON endpoint.** (SPEC §7.2) Stdlib `http.server` only; one handler for `POST /v1/traces` with `Content-Type: application/json`, body → `Framer.document`; `Content-Encoding: gzip` accepted; anything else 415; the listener factory is injected so tests use a loopback socket on port 0. Tests: the `otlp_container` renderings posted as bodies route to the batch graph; a non-JSON body is 400 with the receiver's event, never a traceback. | awaiting R5 | 10 |
@@ -292,6 +292,39 @@ the repository is empty; R1 onward land on `receiver`.
   of a `fragment_too_long` are the framer's count, not the input's**. Any
   later batch that reports a line number to a human (R7's CLI especially)
   inherits this.
+- 2026-10-05 R3 (`e09af3f`, CI green on that sha, 6/6): completion is in as
+  three composable values on an injected clock. Tests 340 → 385; gate A
+  unchanged at ~25.5 s. Red on the code parent `d152c3b` was meaningful: the
+  parent's own 340 passed and all 45 new tests were red.
+- 2026-10-05 R3 — **the seam allowlist is still empty, and R0's prediction
+  that R3 would need the first entry was wrong.** `Completion.now` has **no
+  default**, so no module under `spanweave_live/` imports `time` at all; the
+  real clock enters at the caller, which is R7's CLI. The wrong prediction is
+  now corrected in `gates.py` and in the allowlist test's comment. R5 (`sleep`)
+  and R6 (a listener) are the next candidates for a first entry — and on this
+  evidence they should be made to prove they need one.
+- 2026-10-05 R3 — judgement the row did not settle, now in SPEC §5.6:
+  `RootEnded` completes on **at least one root and *every* root ended** (the
+  conservative reading — "any root" would complete a trace whose other
+  top-level operation is still open), and the grace runs from **the tick that
+  first saw the end**, not from the span's `ended_at`, because those are two
+  different clocks. Root = no incoming `parent` edge **and** no
+  `orphan_parent` diagnostic naming it, both read through spanweave's public
+  graph surface; no dialect read, no spanweave change, so no halt.
+- 2026-10-05 R3 — **a known unbounded cost, stated rather than invented away**
+  (SPEC §5.5): the router keeps four numbers and a flag **per trace id it ever
+  completed**, because the `late_arrival` gap and the new builder's generation
+  name need them. `max_traces` does **not** bound this. The fix is a
+  *forgetting* policy, which is a §3 decision, not a batch's to invent —
+  **awaiting maintainer decision**, and it does not block R4 or R5.
+- 2026-10-05 R3 — two smaller facts: routing's `Event` gained one optional
+  field `seconds` (`FramingEvent` stays separate, per R2b); and the
+  "not written because the library refused" branch is **unreachable through
+  the public surface** (an identified trace has a claimed record by
+  construction), kept deliberately and labelled as such in SPEC §5.4, so it
+  has no test. `README.md`'s "R1–R7 will bring…" sentence is stale a third
+  time over; **R9 owns the README** and no batch before it should patch that
+  line piecemeal.
 
 ## 5. Origins
 
