@@ -5,7 +5,7 @@ network, the clock and the consumer (`spanweave` `OPEN_QUESTIONS.md` §19,
 decided 2026-09-29). One batch = one sub-agent = one commit = one concern.
 This file plus git is the only state; any session can resume cold from it.
 
-Last updated: 2026-10-05 (run 2 in progress; R2a, R2b, R3, R4 done, R5 next).
+Last updated: 2026-10-05 (run 2 stopped after R5: R2a, R2b, R3, R4, R5 done; R2c awaiting PR #4).
 
 ---
 
@@ -149,10 +149,10 @@ commit that cannot say `plan:`, and the watcher exempts it once per series.
 | R2 | **Partition: one `Builder` per trace, and conformance gate A.** `Router` (SPEC §4): `route(record) -> Routed` finds the trace id through `spanweave.adapters.classify` and the claiming adapter's `parse`, never by a key of its own; one `Builder` per trace id, created on first sight; a record with no trace id or no claimant goes to the no-trace builder (which carries `missing_trace_id`/`unclaimed_record` as batch does); a `Builder` refusal is an event `refused` with the record index and the spanweave code, counted, and routing continues; `max_traces` is a cap — at the cap a new trace is `refused_at_cap`, counted, never dropped silently. Gate A, `tests/test_conformance.py`: for every pair of renderings from two scenarios, interleave their records by a seeded shuffle, push through `Framer` + `Router`, and assert each trace's `graph()` serializes byte for byte to `spanweave.build` of its own rendering; run it for ten seeds. Tests red on the parent; mutation: a router keyed by the record's own `trace_id` key (a dialect read) fails `tests/test_routing.py::test_a_record_no_adapter_claims_is_not_routed_by_its_trace_id_key`. ~~fails on `otlp_container`~~ — corrected by R2, see §4. | done (d762484) | 15 |
 | R2a | **The run-1 review's eight `next batch` items, closed.** Read `patches/REVIEW-2026-10-04.md` and close every `next batch` item as the file states it, one commit, tests first. Among them: the import gate is held to walking (a test asserts the gate's module set equals `rglob` of `spanweave_live/`, and a planted nested module importing `time` is caught with no gate edit); the 612-framing sweep gains renderings that carry a diagnostic and a skipped record (a corpus rendering with one line corrupted, generated from the corpus at test time, never a hand-copied fixture), so the diagnostics and `skipped_records` assertions compare non-empty sequences and a `push` reporting `skipped_records=0` fails; SPEC states the HTTPS pin for both the dependency and the submodule, held by a test; SPEC and CHANGELOG state the `py.typed` override and why; SPEC §3.3 states the `push`-vs-`document` trap in full (a whole body pushed happens to read; chunked it does not). Items the file lists that this row does not name are closed too. | done (7fdbff3) | 8 |
 | R2b | **The remainder has a caller-set cap.** `Framer(max_pending_bytes=None)`; SPEC §3.4 rewritten from "no cap" to the policy in §3. Tests red on the parent: a stream with no `\n` past the cap yields one `malformed_record`, `skipped_records=1`, one `fragment_too_long` event with the length, and the framer continues on the next chunk; with the cap `None`, R1's behaviour is unchanged across the whole sweep. Mutation: a framer that drops the oversize remainder silently fails the `skipped_records` assertion. | done (d152c3b) | 5 |
-| R2c | **Pins bumped to a spanweave that ships `py.typed`; the override deleted.** After PR #4 merges: `pyproject.toml` pin and `corpus/` submodule to the new `main` sha (the two-way pin test holds them equal); `[tool.mypy]` override for `spanweave.*` deleted, and a test asserts no `follow_untyped_imports` remains; `make check` green with `mypy --strict` analysing spanweave itself. If PR #4 is not merged when this row is reached, status `awaiting PR #4` and the run stops. | awaiting R5 | 4 |
+| R2c | **Pins bumped to a spanweave that ships `py.typed`; the override deleted.** After PR #4 merges: `pyproject.toml` pin and `corpus/` submodule to the new `main` sha (the two-way pin test holds them equal); `[tool.mypy]` override for `spanweave.*` deleted, and a test asserts no `follow_untyped_imports` remains; `make check` green with `mypy --strict` analysing spanweave itself. If PR #4 is not merged when this row is reached, status `awaiting PR #4` and the run stops. | awaiting PR #4 | 4 |
 | R3 | **Completion is a policy with an injected clock.** `Completion` (SPEC §5): three policies, each a value — `Quiet(seconds)`, `RootEnded(grace_seconds)`, `Cap(records)` — composable as any-of; `now: Callable[[], float]` is injected, never `time.time` inside `spanweave_live/`; `Router.tick()` evaluates policies and returns the traces completed; a completed trace's final graph is materialized, optionally written with `spanweave.dump` to a directory the caller names, and its builder released; a record arriving for a completed trace opens a new builder and emits `late_arrival` with the trace id and the gap. Tests on a fake clock: each policy fires exactly when its definition says; a late arrival is an event, never silent, and never a mutation of the written graph. Mutation: a `Quiet` that fires one tick early fails. | done (e09af3f) | 10 |
 | R4 | **Subscription and delta fan-out.** `Subscriptions` (SPEC §6): a consumer registers a callback for one trace or all; after each absorbed record the router hands each subscriber `delta(since=version-1)` (per-record mode) or, for a subscriber that asked for `every=N`, `delta(since=last_seen)`; retention is set from the longest window any subscriber asked for; a callback that raises is isolated — recorded as `consumer_error` with the trace id and version, other subscribers still called, the record still absorbed. Tests: folding every delta a subscriber received onto its first graph equals the final `graph()`; a raising subscriber never stalls another. Mutation: a fan-out that skips the subscriber after the raising one fails. | done (54a6009) | 10 |
-| R5 | **Ingest: file tail and stdin.** `tail(path, *, now, sleep, poll_seconds)` (SPEC §7.1) follows a growing file from an offset through `Framer.push`, survives truncation (restarts from 0 and emits `truncated`), and rotation (reopens by path); `stdin()` reads chunks until EOF. Both are generators of `Records` with `sleep` injected, so the test drives them on a fake clock with a file it appends to between ticks. Tests: a corpus rendering appended in random chunks is routed to the same graphs as gate A; truncation and rotation are events. | awaiting R3 | 10 |
+| R5 | **Ingest: file tail and stdin.** `tail(path, *, now, sleep, poll_seconds)` (SPEC §7.1) follows a growing file from an offset through `Framer.push`, survives truncation (restarts from 0 and emits `truncated`), and rotation (reopens by path); `stdin()` reads chunks until EOF. Both take `sleep` injected, so the test drives them on a fake clock with a file it appends to between ticks. ~~Both are generators of `Records`~~ — corrected by R5: `stdin()` is a generator, but `tail` returns a `Tail` object that *is* the iterator, because §3.1 forbids wrapping `Records` and a bare generator has nowhere to carry its events; see §4. Tests: a corpus rendering appended in random chunks is routed to the same graphs as gate A; truncation and rotation are events. | done (a7ade79) | 10 |
 | R6 | **Ingest: OTLP/HTTP JSON endpoint.** (SPEC §7.2) Stdlib `http.server` only; one handler for `POST /v1/traces` with `Content-Type: application/json`, body → `Framer.document`; `Content-Encoding: gzip` accepted; anything else 415; the listener factory is injected so tests use a loopback socket on port 0. Tests: the `otlp_container` renderings posted as bodies route to the batch graph; a non-JSON body is 400 with the receiver's event, never a traceback. | awaiting R5 | 10 |
 | R7 | **CLI.** `spanweave-live tail <path> --out <dir> [--quiet S] [--root-grace S] [--cap N] [--deltas]` and `spanweave-live serve --port P --out <dir>`: final graphs written as `<trace_id>.json` with `spanweave.dump`; `--deltas` writes each per-record delta document to stdout as one line; every event to stderr as one JSON line with its code; exit codes documented. Tests through `subprocess` on a corpus rendering. | awaiting R6 | 8 |
 | R8 | **Showcase: agentgolden's rules per delta.** agentgolden is `SigorMatt/agentgolden` at `aa1847f`, pinned as a dev dependency by git sha (its own `spanweave>=0.9.1,<1.0` resolves against the pinned spanweave). A consumer that, on each per-record delta, takes the trace's `graph()`, computes agentgolden's `Signature`, evaluates `examples/support_agent/rules.toml` **unchanged** with `agentgolden.rules.evaluate`, and records the first version at which each rule fails. The trace is agentgolden's own `examples/support_agent/candidates/skipped_verification.openinference.jsonl`, replayed through `Framer` + `Router`. Test: the first-failure version table is asserted exactly, and the `verify_identity → issue_refund` order rule fails at the version that absorbs the `llm.plan` span carrying the `issue_refund` request — one version before the `issue_refund` tool span arrives — which is the "when it almost happened" the memo promised; the same rules on the batch graph of the whole trace give the same final verdicts (batch and live are one model). | awaiting R7 | 12 |
@@ -352,6 +352,45 @@ the repository is empty; R1 onward land on `receiver`.
   `Event` gained one optional field `version`, following R3's `seconds`.
 - 2026-10-05 R4 — **the seam allowlist is still empty**; R4 needed no entry
   either. R5 (`sleep`) and R6 (a listener) remain the only candidates.
+- 2026-10-05 R5 (`a7ade79`, CI green on that sha, 6/6 **including macOS
+  conformance**, which matters because rotation detection is a platform fact):
+  file tail and stdin are in. Tests 410 → 444; gate A **25.22 s, unchanged**;
+  R5's own file costs 1.2 s. Red on the code parent `54a6009` was meaningful:
+  its own 410 passed there. The central test reaches gate A's own comparison
+  through a real file, importing `loaded`/`chunked`/`undigested` from
+  `tests/test_conformance.py` rather than inventing a weaker check.
+- 2026-10-05 R5 — **the seam allowlist is still `{}`, and R0 was wrong twice.**
+  `tail` takes `now` and `sleep` with no defaults, exactly as `Completion.now`
+  does, so nothing under `spanweave_live/` imports `time` or `asyncio`; R7's
+  CLI binds the real pair. `tests/gates.py` now records both wrong predictions
+  and says **R6's listener must be made to prove it needs a line**. A test
+  asserts `SEAMS == {}` and that ingest is gate-clean.
+- 2026-10-05 R5 — detection, read rather than chosen: truncation is
+  `os.fstat` of the **open handle** reporting `st_size < offset`, checked
+  before each poll's reads; rotation is `path.stat()` disagreeing with
+  `os.fstat(handle)` on `(st_dev, st_ino)`, checked **only on a poll that read
+  nothing**, so the old inode's unread bytes are handed over first. Both
+  restarts **flush the framer**, so held bytes come back as a
+  `malformed_record` and are never joined to new content. `(st_dev, st_ino)`
+  is the platform's own answer, so no policy was invented and no halt was
+  needed. Also `vanished` (once per vanishing) and `reopen_failed`.
+- 2026-10-05 R5 — three things stated instead of smoothed over: a
+  truncate-and-regrow **past** the old offset between two polls is
+  **indistinguishable from growth** (SPEC §7.1, a limitation, not a
+  heuristic); **no event for a short read**, because `read(n)` returning fewer
+  bytes is how a file says "that is all for now" and a code would fire every
+  poll; and the row's "both are generators" was wrong — corrected in §1 above.
+  `routing.Event` gained one optional field `offset`, following `seconds`
+  (R3) and `version` (R4).
+- 2026-10-05 **run 2 stops here. R2c is `awaiting PR #4`**: the upstream
+  `py.typed` PR (`SigorMatt/spanweave` #4, commit `bea9d44`) is **open,
+  mergeable, all checks green, and unmerged**, so the new `main` sha R2c must
+  pin does not exist yet. This is the §3 run-2 decision's own stated outcome,
+  not a failure. When #4 merges, R2c is `todo` and needs only the merge sha:
+  bump the `pyproject.toml` pin and the `corpus/` submodule to it (the two-way
+  pin test holds them equal), delete the `follow_untyped_imports` override
+  with a test that it is gone, and confirm `mypy --strict` analyses spanweave
+  itself. Nothing else in run 2 is blocked by it.
 
 ## 5. Origins
 
