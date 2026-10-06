@@ -303,6 +303,14 @@ class Tail:
             return (_NOTHING, False)
         self._missing = False
         if (stat.st_dev, stat.st_ino) == self._identity:
+            # The path names the file the tail holds, so any earlier reopen
+            # failure is over: the **next** failure is a different rotation and
+            # is reported again. Cleared here and not only on a successful
+            # reopen, because a path that reverted to the held inode otherwise
+            # left the flag set forever and the next genuinely distinct failure
+            # was silent -- "once per failure" read as "once per tail"
+            # (`SPEC.md` §7.1, `patches/REVIEW-2026-10-06.md` F10).
+            self._reopen_pending = False
             return (None, False)
         return self._restart_rotated()
 
@@ -418,9 +426,11 @@ def tail(
 ) -> Tail:
     """Follow a growing file: `for records in tail(path, now=..., sleep=...)`.
 
-    A `Tail`, which **is** the iterator of `spanweave.Records` -- an object
-    rather than a bare generator because the events have to ride beside the
-    yields and a generator has nowhere to put them (`SPEC.md` §7.1).
+    A `Tail`: **a single-use iterable of `spanweave.Records`, not an iterator**
+    -- `iter(t)` is a fresh generator and `next(t)` is a `TypeError`, and a
+    second iteration raises rather than resuming the first one's stream. An
+    object rather than a bare generator because the events have to ride beside
+    the yields and a generator has nowhere to put them (`SPEC.md` §3.1, §7.1).
     """
     return Tail(
         path,

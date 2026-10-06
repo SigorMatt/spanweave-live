@@ -35,6 +35,7 @@ import pytest
 import spanweave
 
 from spanweave_live import (
+    REOPEN_FAILED,
     ROTATED,
     TRUNCATED,
     VANISHED,
@@ -163,6 +164,35 @@ def rotates(path: Path, to: Path, *, wrote: bytes, then: bytes):
 def unlinks(path: Path):
     def action() -> None:
         path.unlink()
+
+    return action
+
+
+def rotates_onto_something_unopenable(path: Path, to: Path, *, wrote: bytes):
+    """A rotation whose replacement cannot be opened (`SPEC.md` §7.1).
+
+    The path is renamed away and a **directory** takes its place, so
+    `path.stat()` answers with a different `(st_dev, st_ino)` — the rotation is
+    real — and `open("rb")` on it raises `IsADirectoryError`. A directory rather
+    than a permission bit because a bit that root ignores would make the test a
+    property of who runs it.
+    """
+
+    def action() -> None:
+        with path.open("ab") as handle:
+            handle.write(wrote)
+        path.rename(to)
+        path.mkdir()
+
+    return action
+
+
+def reverts(path: Path, held: Path):
+    """The directory goes, and the file the tail still holds names the path again."""
+
+    def action() -> None:
+        path.rmdir()
+        held.rename(path)
 
     return action
 
@@ -460,6 +490,86 @@ def test_a_rotation_the_old_handle_still_owes_bytes_for_is_not_seen_yet(
 # --------------------------------------------------------------------------
 
 
+def test_a_rotation_that_cannot_be_reopened_keeps_the_handle_and_says_so(
+    tmp_path: Path,
+) -> None:
+    """`reopen_failed`: specified, exported, and until now untested.
+
+    Deleting the whole `except OSError` body left the suite green
+    (`patches/REVIEW-2026-10-06.md` F10), so this is the test that holds the
+    three things §7.1 promises about it: the replacement is opened **before**
+    the old handle is closed, so a failure leaves the tail reading what it
+    already had; the event carries the `offset` it had reached; and it is
+    reported **once per failure** rather than once per poll.
+
+    The rendering is split across the rotation on purpose: the first half is in
+    the old inode when the path stops naming it and the second half is appended
+    to that same inode afterwards. Both halves reach the graph only if the tail
+    is still reading the handle it holds, so `first.graph` is the assertion that
+    "keeps reading what it had" is true rather than merely said.
+    """
+    first = loaded(by_id(FIRST), second=False)
+    cut = len(first.data) // 2
+    file = tmp_path / "trace.jsonl"
+    held = tmp_path / "trace.jsonl.1"
+    file.write_bytes(b"")
+    clock = Clock()
+    driver = Driver(
+        clock,
+        [
+            rotates_onto_something_unopenable(file, held, wrote=first.data[:cut]),
+            appends(held, first.data[cut:]),
+        ],
+        stop_after=4,
+    )
+    framer = Framer()
+    source = tailing(file, driver, framer)
+    drain = Drain(source).run().absorb(framer)
+
+    assert source.counts == {REOPEN_FAILED: 1}, "once per failure, not once per poll"
+    (event,) = drain.flat
+    assert event.code == REOPEN_FAILED
+    assert event.offset == cut, "where in the old content the tail had read to"
+    assert event.trace_id is None and event.spanweave_code is None
+    assert "keeps reading the handle it has" in event.detail
+    assert driver.quiet >= 4, "many polls found it unopenable, and said so once"
+    assert source.offset == len(first.data), "the old handle was read to its end"
+    assert drain.graph(first.trace_id) == first.graph
+
+
+def test_a_second_distinct_reopen_failure_is_reported_again(tmp_path: Path) -> None:
+    """Once per failure is once per **rotation**, as `vanished`'s is once per
+    vanishing (`SPEC.md` §7.1).
+
+    The streak flag was cleared only on a successful reopen, so a path that
+    reverted to the file the tail still holds left it set forever and the next
+    genuinely distinct rotation failure was silent — a dropped report, which
+    §1.5 does not allow (`patches/REVIEW-2026-10-06.md` F10). Here the path is
+    rotated onto a directory, reverted to the held file, and rotated onto a
+    directory again: two rotations, two failures, two events.
+    """
+    file = tmp_path / "trace.jsonl"
+    held = tmp_path / "trace.jsonl.1"
+    file.write_bytes(b"")
+    clock = Clock()
+    driver = Driver(
+        clock,
+        [
+            rotates_onto_something_unopenable(file, held, wrote=b""),
+            reverts(file, held),
+            rotates_onto_something_unopenable(file, held, wrote=b""),
+        ],
+        stop_after=3,
+    )
+    framer = Framer()
+    source = tailing(file, driver, framer)
+    drain = Drain(source).run()
+
+    assert source.counts == {REOPEN_FAILED: 2}
+    assert [event.code for event in drain.flat] == [REOPEN_FAILED, REOPEN_FAILED]
+    assert all(event.offset == 0 for event in drain.flat)
+
+
 def test_a_vanished_path_is_one_event_and_the_open_handle_is_still_read(
     tmp_path: Path,
 ) -> None:
@@ -660,6 +770,32 @@ def test_ingest_needs_no_entry_in_the_seam_allowlist() -> None:
         == []
     )
     assert gates.SEAMS == {}, "R5 added no seam file: the caller supplies sleep"
+
+
+def test_these_tests_run_on_both_platforms_the_section_claims() -> None:
+    """Rotation and truncation are platform facts, so CI has to read them twice.
+
+    `(st_dev, st_ino)` and `os.fstat(...).st_size` are the operating system's
+    answers, not the receiver's (`SPEC.md` §7.1) — which is exactly why "the
+    code is portable" is not a claim a one-OS test run can make. Until R5a the
+    only macOS job ran `make conformance`, i.e. `tests/test_conformance.py`
+    alone, so **this file had never run on macOS** while `WORKPLAN.md` §4 cited
+    macOS for it (`patches/REVIEW-2026-10-06.md` F6, `WORKPLAN.md` §3,
+    2026-10-06). CI gains a `check` job on `macos-latest`, which runs the whole
+    suite including this file.
+
+    Asserted here rather than in a CI-shaped test file because this is the
+    section whose claim needs it, and a workflow that quietly loses the job
+    should fail the test that depends on it.
+    """
+    workflow = (
+        Path(__file__).resolve().parent.parent / ".github" / "workflows" / "ci.yml"
+    ).read_text(encoding="utf-8")
+    check = workflow[workflow.index("  check:") : workflow.index("  conformance:")]
+    assert "macos-latest" in check, (
+        "no macOS job runs `make check`, so tests/test_ingest.py runs on one OS"
+    )
+    assert "make check" in check
 
 
 def test_a_tail_is_iterated_once(tmp_path: Path) -> None:

@@ -17,11 +17,11 @@ be are `SPEC.md` §1 read in this direction:
   are each an `Event` with a code, counted.
 
 This module is the **lower** of the two layers, as `completion.py` is
-(`SPEC.md` §5.1, §6.1): values, the registry, the cursors, and the two pure
-questions "who is due?" and "how much journal does this trace need?". It emits
-no events and imports nothing from `routing.py` -- calling a consumer, catching
-what it raises and keeping the books are the router's, because events are a
-router's to make.
+(`SPEC.md` §5.1, §6.1): values, the registry, the cursors, and the three pure
+questions "who is due?", "who is behind?" and "how much journal does this trace
+need?". It emits no events and imports nothing from `routing.py` -- calling a
+consumer, catching what it raises and keeping the books are the router's,
+because events are a router's to make.
 
 No clock, no randomness, no socket: a fan-out is a function of the records
 absorbed and the order consumers registered in (`SPEC.md` §6.2).
@@ -46,10 +46,12 @@ CONSUMER_ERROR: Final = "consumer_error"
 #: which is legal, and this event is the honest answer to it (`SPEC.md` §6.5).
 DELTA_UNAVAILABLE: Final = "delta_unavailable"
 
-#: A trace was completed while a subscriber's cursor was behind its final
-#: version, so there is a window that subscriber could have asked for and now
-#: never can: the builder is released and the journal goes with it. A report,
-#: not a delivery (`SPEC.md` §6.5).
+#: A trailing window could not be handed over. A subscriber behind its trace's
+#: final version is **flushed** at completion and at an explicit
+#: `Router.flush` -- the tail of a trace is a delta, not a statistic -- so this
+#: is what is left when that delivery is impossible: `delta(since=...)` refused
+#: by a journal the caller narrowed itself (`SPEC.md` §6.4). The window is then
+#: gone with the builder, and saying so is all that is left (`SPEC.md` §6.5).
 DELTA_UNSENT: Final = "delta_unsent"
 
 
@@ -217,24 +219,46 @@ class Subscriptions:
             due.append(Delivery(subscription=subscription, since=cursor))
         return tuple(due)
 
-    def released(self, trace_id: str, version: int) -> tuple[Delivery, ...]:
-        """Forget this trace's cursors; report the ones that were behind.
+    def flush(self, trace_id: str | None, version: int) -> tuple[Delivery, ...]:
+        """Who is **behind** this version, and from where -- and advance them.
 
-        A completed trace's builder is released and its journal goes with it
-        (`SPEC.md` §5.4), so a subscriber whose cursor is behind `version` has a
-        window it could have asked for and now never can. Each is returned, in
-        registration order, for the router to report as `delta_unsent` -- a
-        report and not a delivery (`SPEC.md` §6.5).
+        `due`'s question asked at the caller's moment instead of the record's:
+        the condition is `version > cursor` rather than `version - cursor >=
+        every`, because the point of a flush is the residue a window never
+        covered. A subscriber already at `version` is not behind and gets
+        nothing, so a flush with nothing to hand over hands nothing over.
 
-        Forgetting is also what keeps the cursors bounded, and it is *correct*
-        rather than merely cheap: a late arrival opens a new builder whose
-        versions start at 0 (`SPEC.md` §5.5), so a cursor for the next
-        generation of this trace is 0 whether it was forgotten or not.
+        The cursors advance here, before the consumers are called, for `due`'s
+        reason, and that is also what makes a second flush with no record in
+        between a no-op.
+
+        It is the lower half of the trailing delta: an `every=N` subscriber
+        whose trace ends between multiples of `N` would otherwise never see the
+        tail of it, which is a dropped delta rather than a window nobody asked
+        for (`SPEC.md` §6.6, `WORKPLAN.md` §3, 2026-10-06). What to do with
+        these deliveries is the router's, because events are.
         """
         behind: list[Delivery] = []
         for subscription in self.covering(trace_id):
             key = (trace_id, subscription.order)
-            cursor = self._cursors.pop(key, 0)
-            if cursor < version:
-                behind.append(Delivery(subscription=subscription, since=cursor))
+            cursor = self._cursors.get(key, 0)
+            if cursor >= version:
+                continue
+            self._cursors[key] = version
+            behind.append(Delivery(subscription=subscription, since=cursor))
         return tuple(behind)
+
+    def forget(self, trace_id: str | None) -> None:
+        """Drop this trace's cursors: its builder has been released.
+
+        Forgetting is what keeps the cursors bounded (`SPEC.md` §6.4), and it is
+        *correct* rather than merely cheap: a late arrival opens a new builder
+        whose versions start at 0 (`SPEC.md` §5.5), so a cursor for the next
+        generation of this trace is 0 whether it was forgotten or not.
+
+        It is called **after** the trailing delta has gone out (`SPEC.md` §5.4's
+        fifth step), so a released trace leaves no cursor behind and no window
+        unsent that could have been sent.
+        """
+        for subscription in self._registered:
+            self._cursors.pop((trace_id, subscription.order), None)

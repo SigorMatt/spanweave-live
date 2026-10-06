@@ -160,6 +160,23 @@ R5 needed none for sleeping (§7.1), because a seam with no default is a seam th
 caller binds and there is then no import to exempt. R6's listener is the last
 candidate.
 
+**What the gate enforces, exactly.** Those six are the modules this paragraph
+has always named, and the run-2 review measured the gap between them and the
+sentence above them: `secrets`, `uuid`, `concurrent.futures`, `selectors`,
+`select`, `subprocess`, `sched` and every network library passed a gate
+advertised as proving the receiver has no ambient runtime, and `os` — which R5
+introduced for `fstat` — was the one such surface already open inside a module
+the gate called clean (`patches/REVIEW-2026-10-06.md` F7, F8). R5a closed the
+gap rather than narrowing the claim: the ambient rule bans those seven modules
+too, a second rule bans the network (`urllib`, `http`, `requests`, `httpx` and
+their kin — §1.3's read-only posture, and `CLAUDE.md` 9), and a third bans
+`os.times`, `os.urandom`, `os.fork`, `os.pipe` and their kin *without* banning
+`os`, which §7.1 legitimately needs for `os.fstat` and `os.PathLike`. All three
+are **static**: a dynamic `importlib.import_module("time")` escapes an AST walk,
+and that limit is stated in the rule's own docstring and held by a test rather
+than left for a reader to find. R6's `http.server` is now the first import that
+must either be injected away or earn one narrow allowlist line (§7.2).
+
 Why a gate and not a convention: completion is a timeout policy (§5), and a
 timeout policy tested against the real clock is a test that passes on a fast
 machine and flakes on a loaded one. Every such test would be rewritten until it
@@ -418,7 +435,21 @@ completed. Three consequences, each of them the point rather than a side effect:
 
 The boundary is strict — `>`, not `>=` — because a remainder exactly at the cap
 is a remainder the caller allowed. `max_pending_bytes=0` is therefore legal and
-means every remainder is read the moment it exists.
+means every remainder is read the moment it exists — and it is **tested**, which
+it was not when this paragraph first claimed it (`patches/REVIEW-2026-10-06.md`
+F9): `0` is the one cap value where the strict boundary changes the shape of the
+stream rather than one byte of it, so a stated boundary nothing held was a claim
+with nothing behind it.
+
+**A cap below zero is a `ValueError` at construction**, not a cap of `0`. The
+difference is real: `len(remainder) <= -1` is false for the *empty* remainder
+too, so a negative cap would report a `fragment_too_long` of length 0 on every
+push that ended on a line boundary, and number it as a line — which would make
+the framer's own line numbers wrong for a reason no caller asked for (the cost
+above, and §3.5's agreement). There is no reading of "the most the framer will
+keep" under which a negative number is a quantity, and nothing about the stream
+causes it, so it is refused where `Subscriptions.subscribe(every=0)` is refused
+(§6.1) and for the same reason.
 
 **What the cap costs, said rather than hidden.** Once a line is cut into
 fragments, the framer no longer knows where that line ended: each fragment is
@@ -497,6 +528,7 @@ class Event:
     detail: str
     seconds: float | None = None # the duration the event is about, if any (§5.1)
     version: int | None = None   # the version the event is about, if any (§6.1)
+    offset: int | None = None    # the byte offset it is about, if any (§7.1)
 
 @dataclass(frozen=True, slots=True)
 class Routed:
@@ -504,7 +536,7 @@ class Routed:
     trace_id: str | None         # None: no trace id, so the no-trace builder
     builder: spanweave.Builder | None  # None only when nothing absorbed it
     version: int | None          # the version the absorption produced
-    events: tuple[Event, ...]
+    events: tuple[Event, ...] = ()
 
 def trace_id_of(record: Record) -> str | None: ...
 
@@ -519,6 +551,7 @@ class Router:
         subscriptions: Subscriptions | None = None,  # §6
     ) -> None: ...
     def route(self, record: Record) -> Routed: ...
+    def flush(self, trace_id: str | None) -> tuple[Event, ...]: ...  # §6.6
     def tick(self) -> tuple[Completed, ...]: ...   # §5.4
     @property
     def trace_ids(self) -> tuple[str, ...]: ...
@@ -558,6 +591,19 @@ true where the caller can match on the number instead of reading it out of a
 sentence. It is `None` for every code that is not about one. R3's `released`
 still states its version in `detail` only; moving it is §5's edit to make and
 nothing in R4 needed it.
+
+R5 added `Event.offset` to the code and **not** to the block above, while its
+commit message and its CHANGELOG entry both said §4.1 was amended; R5a adds the
+field, and `Router.flush` with it (§6.6). "Declared exactly as the code accepts
+it" is now a **test** and not a promise: `tests/test_routing.py` parses this
+section's own fence and holds `Event` and `Routed` equal to
+`dataclasses.fields`, field by field and default by default
+(`patches/REVIEW-2026-10-06.md` F5). The test found a second drift while it was
+being written — `Routed.events` carries `= ()` in the code and carried none here
+— which is the argument for the test rather than against it: three batches in a
+row amended this block by hand and two of them got it wrong somewhere.
+`offset` is where in a file's content a tail had read to, so it is `None` for
+every code §4, §5 and §6 emit.
 
 `Record` is `Any` and deliberately not a JSON type of the receiver's own:
 `spanweave`'s `JsonValue` is itself `Any` and is not exported, and a second,
@@ -932,10 +978,20 @@ Completing one trace is four steps, in this order, and the events come back on
    id leaves `trace_ids` (§4.3).
 
 A router holding subscriptions (§6) has a **fifth** step after those four, and it
-is bookkeeping rather than a decision: the released trace's subscriber cursors are
-forgotten, and each subscriber whose cursor was behind the released version gets
-one `delta_unsent` on the same `Completed` (§6.5). A router without
-subscriptions has exactly the four steps above.
+is bookkeeping rather than a decision: each subscriber whose cursor is behind the
+released version is handed its **tail** — `delta(since=cursor)` for the records
+after the last window it got — and only then are the trace's cursors forgotten. A
+router without subscriptions has exactly the four steps above.
+
+The delivery is made from the released builder, which is still alive as a local
+although it has left `trace_ids`: `Update.builder.graph()` in such an update is
+therefore the final graph, the one `Completed.graph` carries. The ordering is
+deliberate — `released` stays the fourth event rather than moving behind a
+delivery, because the four steps are the decision and this is what follows them.
+Where the tail cannot be produced at all, because a caller narrowed that
+builder's own journal (§6.4), it is one `delta_unsent` on the same `Completed`
+instead (§6.5). This step was a *report and nothing else* until R5a, and what
+changed it is in §6.5 and §6.6.
 
 `Event.index` on all of these is the router's arrival count at the tick — how
 many records had been routed when the tick ran. A tick is not caused by a record
@@ -976,12 +1032,34 @@ one. A reader who wants the whole trace folds them, and the gap in the
 
 **What remembering a completion costs, stated rather than hidden.** The gap and
 the generation are facts about a trace whose builder is gone, so the router keeps
-a small record per trace id it has ever held — four floats, an int and a flag,
-and never a graph or a builder. Releasing therefore returns the materialization
-and the absorbed records, which is where this project's cost is (§2.3), and not
-quite everything: that record is **unbounded in the number of distinct trace ids
-a stream completes**. A receiver running for a month would hold one per trace it
-ever saw. That is said here because `max_traces` (§4.5) does *not* bound it — it
+a small record per trace id it has ever held — **five fields: four floats, two
+of them nullable, and one int** — and never a graph or a builder. (There is no
+flag: `completed_at` being `None`-or-set *is* the flag, and it is one of the four
+floats. This paragraph said "four floats, an int and a flag" until R5a, which is
+six fields for a record that has five.) Releasing therefore returns the
+materialization and the absorbed records, which is where this project's cost is
+(§2.3), and not quite everything: that record is **unbounded in the number of
+distinct trace ids a stream completes**. A receiver running for a month would
+hold one per trace it ever saw.
+
+**And it is bigger than the field list reads.** Measured four ways over the real
+`route` → advance the clock → `tick()` path, it is **≈ 220 bytes per completed
+trace id**, about 5.5× what six small fields suggest, because the dict slot, the
+key string and the float boxes dominate the payload rather than the numbers do:
+`getsizeof(_Book) = 72` + a 32-character key at `73` + an amortized dict slot at
+`38.4` + two distinct floats at `48` = **231 B** accounted for.
+
+| completed traces | retained book |
+|---|---|
+| 10^5 | ~22 MB (measured 23.3) |
+| 10^6 | ~210 MB (measured 199.8 by `tracemalloc`, 223.7 by RSS delta) |
+| 10^7 | ~2.1 GB (extrapolated) |
+
+Trace-id length moves the figure by under 10 %, so the cost is Python object
+overhead and not the id. At ten traces a second a receiver reaches 10^6 completed
+traces in **about 28 hours** (`patches/REVIEW-2026-10-06.md` §0(b), F1). The
+numbers are here rather than in the plan because a reader deciding what to do
+about this needs them, and the plan is deleted at series close. That is said here because `max_traces` (§4.5) does *not* bound it — it
 bounds builders — and because the fix is a policy for **forgetting** a completed
 trace, which is a number somebody has to choose and so is a decision rather than
 this section's to invent (§1.2, and the same reasoning R1 applied to the framer's
@@ -1117,7 +1195,8 @@ class Subscriptions:
     def window(self, trace_id: str | None) -> int | None: ...
     def seen(self, subscription: Subscription, trace_id: str | None) -> int: ...
     def due(self, trace_id: str | None, version: int) -> tuple[Delivery, ...]: ...
-    def released(self, trace_id: str, version: int) -> tuple[Delivery, ...]: ...
+    def flush(self, trace_id: str | None, version: int) -> tuple[Delivery, ...]: ...
+    def forget(self, trace_id: str | None) -> None: ...
 
 # in `routing.py`:
 class Router:
@@ -1130,6 +1209,7 @@ class Router:
         completion: Completion | None = None,      # §5
         subscriptions: Subscriptions | None = None,  # this section
     ) -> None: ...
+    def flush(self, trace_id: str | None) -> tuple[Event, ...]: ...  # §6.6
 ```
 
 That block is the whole public surface, declared **exactly** as the code accepts
@@ -1148,10 +1228,22 @@ nothing out, computes no delta and touches no builder's retention, which is
 exactly what R2 and R3 were: **gate A is untouched by this section**.
 
 `Subscriptions` is the lower of the two layers, as `completion.py` is (§5.1): it
-holds the values, the registry, the cursors, and the two pure questions "who is
-due?" and "how much journal does this trace need?". It emits no events and
-imports nothing from `routing.py`. The router is what calls a consumer, catches
-what it raises, and keeps the books — because events are a router's to make.
+holds the values, the registry, the cursors, and the three pure questions "who is
+due?", "who is behind?" and "how much journal does this trace need?". It emits no
+events and imports nothing from `routing.py`. The router is what calls a
+consumer, catches what it raises, and keeps the books — because events are a
+router's to make.
+
+`flush` and `forget` replace R4's `released`, which did both halves at once.
+They are split because R5a separated them in time: the tail goes out **while the
+released builder is still in hand**, and the cursors are dropped after it
+(§5.4's fifth step). `Subscriptions.flush` is the pure half — who is behind, and
+from where, with the cursors advanced — and `Router.flush` is the one a caller
+calls, because producing a delta needs a builder and reporting a refusal needs
+an event, and neither of those is this layer's. `WORKPLAN.md` §3's decision of
+2026-10-06 names the caller's entry point `Subscriptions.flush(trace_id)`; it is
+`Router.flush(trace_id)`, for that layering reason, and the lower half keeps the
+name on `Subscriptions`.
 
 ### 6.2 Per-record and `every=N` are one mechanism
 
@@ -1273,41 +1365,82 @@ worse, and nothing here depends on how it is settled.
   isolate, and catching it would make the receiver un-interruptible.
 - **`delta_unavailable`** — `builder.delta(since=...)` was refused, which is
   `spanweave`'s `delta_unavailable` for a version retention dropped. §6.4's rule
-  makes this unreachable for a builder whose retention the router sets, so the
-  way to reach it is for a caller to narrow the retention of a `Routed.builder`
-  itself. That is a legal thing for a caller to do, and the honest answer is this
-  event — carrying the library's own code — rather than a traceback that loses
-  every other subscriber and every later record. The subscriber is not called,
-  because there is nothing to call it with; nothing approximate is offered in its
-  place, for the library's own reason.
-- **`delta_unsent`** — a trace was completed (§5.4) while a subscriber's cursor
-  was behind its final version, so there is a window that subscriber could have
-  asked for and never will: the builder is released and the journal goes with it.
-  One event per such subscriber, carrying the trace id and the version released,
-  on `Completed.events`. It is a report and not a delivery: handing out a final
-  partial window at completion would be a flush policy the caller never asked
-  for (§1.2), and an `every=50` subscriber would then get one window of 50 and
-  one of 3 with nothing saying which was which. An `every=1` subscriber is never
-  behind, so this code only ever concerns a coarser one.
+  makes this unreachable for a builder whose retention the router sets, and there
+  are **two** ways to reach it, both legal and neither a defect. One is a caller
+  narrowing the retention of a `Routed.builder` itself. The other touches no
+  caller's retention at all: a consumer **joining a trace already in flight**
+  with a window coarser than the one the journal is currently kept at — §6.1
+  makes `Subscriptions` mutable precisely so consumers can join — because
+  retention is widened only *after* a fan-out (§6.4), so the widening arrives one
+  delivery too late for the joiner's own first window. Every later window is
+  served. In both cases the honest answer is this event — carrying the library's
+  own code — rather than a traceback that loses every other subscriber and every
+  later record. The subscriber is not called, because there is nothing to call it
+  with; nothing approximate is offered in its place, for the library's own
+  reason. (The second way was `the way to reach it` in this section until R5a,
+  which is where the sentence over-narrowed: `patches/REVIEW-2026-10-06.md` F4.)
+- **`delta_unsent`** — a subscriber's **tail could not be produced**. A trace
+  that completes (§5.4) while a subscriber's cursor is behind its final version
+  has a window that subscriber never asked for by the rule but is owed by the
+  claim, and §5.4's fifth step hands it over. This code is what is left when that
+  delivery is impossible: `delta(since=cursor)` refused, which is the narrowed-
+  retention case above read at the one moment when there is no later delivery to
+  carry it. One event per such subscriber, carrying the trace id, the version
+  released and the library's own code, on `Completed.events`. An `every=1`
+  subscriber is never behind, so this code only ever concerns a coarser one.
+
+  **It used to be the ordinary case, and that was a dropped delta.** Until R5a a
+  completing trace *reported* every trailing window and delivered none, on the
+  reasoning that a flush at completion would be a policy the caller never asked
+  for and that an `every=50` subscriber would get one window of 50 and one of 3
+  with nothing saying which was which. The second half is true and is answered by
+  `Update.since`, which says exactly how wide each window is; the first half was
+  wrong, because the consequence is that a coarse subscriber never sees the end
+  of **any** trace whose length is not a multiple of its window — §1.5's silence,
+  reached by calling a delivery a policy (`WORKPLAN.md` §3, 2026-10-06; F2).
 
 Completion therefore has a fifth step after §5.4's four, conditional on the
-router holding subscriptions: the released trace's cursors are forgotten, and
-each one that was behind is a `delta_unsent` on the same `Completed`.
+router holding subscriptions: every behind subscriber is handed its tail, and
+then the released trace's cursors are forgotten.
 
 ### 6.6 The claim this section is tested against
 
 **Folding every delta a subscriber received onto its first graph gives the final
-graph, byte for byte.** That is `spanweave` §10.6's own promise read through the
-receiver — the corpus asserts it per builder (`FIXTURES.md` §4) and here it is
-asserted per *subscriber*, over the deltas a fan-out actually chose to send, at
-`every=1` and at `every=N`.
+graph, byte for byte — after the trace completes or is flushed.** That is
+`spanweave` §10.6's own promise read through the receiver — the corpus asserts it
+per builder (`FIXTURES.md` §4) and here it is asserted per *subscriber*, over the
+deltas a fan-out actually chose to send, at `every=1` and at `every=N`.
+
+The qualification is the whole of what R5a changed, and it is a qualification
+about **when**, not about how much. At `every=1` the claim holds after every
+record and needs no flush. At `every=N` the deliveries land at versions `N`,
+`2N`, … so between multiples the subscriber is behind by up to `N - 1` records
+and the fold is short by exactly those: the claim holds **at the last delivered
+version** mid-stream, and at the final version once the tail has gone out —
+which happens on completion (§5.4) or on `Router.flush(trace_id)`, whichever the
+caller has. Both are tested, and the `every=N` fold test runs at `records=7,
+every=2` so that the final version is **not** a multiple of `N`. It ran at
+`records=6` until R5a, which made the claim true of the fixture rather than of
+the mechanism: at `records=7` the same test was red before the trailing delta
+existed (`patches/REVIEW-2026-10-06.md` §0(c), F2 —
+`CONTRIBUTING.md` forbids exactly that shape of fixture).
+
+`Router.flush(trace_id)` is the caller's half: it hands every behind subscriber
+`delta(since=cursor)` at the builder's current version, advances the cursors and
+leaves the trace open. It returns **events**, so a flush that went out cleanly
+returns `()` — a delivery is not an event (§1.5 is about what did *not* happen).
+A trace the router holds no builder for returns `()` too: nothing was absorbed,
+so no window was dropped. A second flush with no record in between delivers
+nothing, because nobody is behind any more. `trace_id=None` is the no-trace
+builder (§6.3), and asking for it does not create one.
 
 It is stated as "its first graph" rather than "an empty graph" because there is
 no graph at version 0 to fold onto: an empty builder refuses (`spanweave` §10.5),
 so the first update of a generation is `since=0` and has nothing beneath it. The
 first delta is therefore accounted for differently and not skipped: what it adds
-**is** the whole of the graph it produced, and the test asserts that too, so
-every delta a subscriber received is used by the claim.
+**is** the whole of the graph it produced, and **both** fold tests assert that —
+the `every=N` one did not until R5a, so a mutation of the `since == 0` delta
+alone left it green (F3), which is the one delta a fold cannot notice losing.
 
 The second test is isolation: three subscribers, the middle one raising, and both
 others called with the same update — which is what a fan-out that stopped at the
@@ -1377,17 +1510,27 @@ Everything after `path` is keyword-only, for §3.1's and §4.1's reason: these a
 seams and policies the caller binds, not a reading order, and a positional slot
 would be a contract this document never offered.
 
-**`tail` returns a `Tail`, and `stdin` is a generator**, which is the one place
-this section's shape is not symmetric. The asymmetry is forced and it is the
-framer's own (§3.1): the yielded value is `spanweave.Records` and stays that way,
-so a tail's events have to ride **beside** the yields — and a bare generator has
-nowhere to put them. A pipe cannot be truncated or rotated, so `stdin` has no
-events to carry and needs no object to carry them. Both are iterated **once**, and
-a second iteration of a `Tail` **raises**: the framer, the offset and the line
-count are that stream's, so an "again" would resume the first iteration while
-looking like a fresh start. One `Tail` per file, as one `Framer` per byte stream
-(§3.1). Reading one looks like this:
-`for records in tail(path, now=…, sleep=…, poll_seconds=…)`.
+**`tail` returns a `Tail` — a single-use iterable, not an iterator — and
+`stdin` is a generator**, which is the one place this section's shape is not
+symmetric. A `Tail` declares `__iter__` and nothing else: `iter(t)` is a fresh
+generator rather than `t`, and `next(t)` is a `TypeError`. R5 said it "**is** the
+iterator" in four places and that is simply false of the object it shipped
+(`patches/REVIEW-2026-10-06.md` §0(d), T10) — a precision defect inside a
+correction, which is the one place a project that strikes through its own
+premises cannot afford one. The documented usage was never affected.
+
+The asymmetry is **chosen**, not forced, and the reason is the framer's own
+(§3.1): the yielded value is `spanweave.Records` and stays that way, so a tail's
+events have to ride **beside** the yields — and a bare generator has nowhere to
+put them. ("Forced" overclaims by one notch: a caller-supplied event sink would
+have let `tail` stay a generator, and this section is careful elsewhere to say
+which facts are read and which are chosen, so it says so here too.) A pipe
+cannot be truncated or rotated, so `stdin` has no events to carry and needs no
+object to carry them. Both are iterated **once**, and a second iteration of a
+`Tail` **raises**: the framer, the offset and the line count are that stream's,
+so an "again" would resume the first iteration while looking like a fresh start.
+One `Tail` per file, as one `Framer` per byte stream (§3.1). Reading one looks
+like this: `for records in tail(path, now=…, sleep=…, poll_seconds=…)`.
 
 **One yield per read, including a read that completed no line.** "Nothing
 arrived" and "nothing was completed" are different answers, and
@@ -1460,7 +1603,16 @@ R4 added `version` — is where in that content it had read to.
   could not be opened. The replacement is opened **before** the old handle is
   closed, so the tail keeps following what it already had rather than following
   nothing, and the next poll tries again. Reported once per failure, for
-  `vanished`'s reason.
+  `vanished`'s reason — and "once per failure" means **once per rotation that
+  could not be reopened**, not once per tail: the streak flag is cleared both by
+  a successful reopen and by a poll that finds the path naming the file the tail
+  still holds, so a path that reverts and is then rotated away again reports a
+  second time. Until R5a it was cleared only on a successful reopen, which made
+  that second failure silent (`patches/REVIEW-2026-10-06.md` F10) — and silent
+  is the one thing §1.5 does not allow. The whole code was also **untested**
+  until R5a: deleting its `except OSError` body left the suite green, so
+  `tests/test_ingest.py` now holds the event with its offset, that the old
+  handle is still read afterwards, and the once-per-rotation rule.
 
 **`(st_dev, st_ino)` is read, not chosen.** "The same file" is the operating
 system's own answer, which is a platform fact of the kind this document may
@@ -1529,6 +1681,17 @@ graphs must come out exactly, which is what a tail that treated truncation as
 growth cannot do, because it would read at an offset the new content never had.
 The named mutation for this section is that one: `truncated` never fires, and the
 test fails on the missing event, on the second trace's graph, and on the offset.
+
+**And it is tested on two operating systems**, because `os.fstat(...).st_size`
+and `(st_dev, st_ino)` are the platform's answers and not the receiver's: a
+claim about what the platform says cannot be proved by asking one platform. CI
+runs `make check` — the whole suite, this file included — on `ubuntu-latest`
+across 3.11–3.14 and on `macos-latest` on 3.12. That macOS job is R5a's: before
+it the only macOS job ran `make conformance`, which is
+`tests/test_conformance.py` alone, so this file had **never run on macOS** while
+the series cited macOS coverage for it (`patches/REVIEW-2026-10-06.md` §0(d),
+F6; `WORKPLAN.md` §3, 2026-10-06). A test in this file asserts the job is still
+in the workflow, so the claim and the thing that proves it fail together.
 
 ### 7.2 The OTLP/HTTP endpoint
 

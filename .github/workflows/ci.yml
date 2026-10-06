@@ -11,14 +11,27 @@ on:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-latest]
         # Held equal to the `Programming Language :: Python` classifiers in
         # pyproject.toml. A receiver that sits between someone's exporter and
         # someone's consumer must not narrow either one's runtime.
         python-version: ["3.11", "3.12", "3.13", "3.14"]
+        # One macOS job running the WHOLE suite, added by R5a. Until then the
+        # only macOS job ran `make conformance` -- `tests/test_conformance.py`
+        # alone -- so `tests/test_ingest.py` had never run on macOS while the
+        # series cited macOS for it (`patches/REVIEW-2026-10-06.md` F6,
+        # `WORKPLAN.md` §3, 2026-10-06). Truncation is `os.fstat(...).st_size`
+        # and rotation is `(st_dev, st_ino)`: the operating system's own
+        # answers (`SPEC.md` §7.1), so "the code is portable" is not a claim
+        # one OS can make. One interpreter, not four, because what is being
+        # proved is the platform and not the language version.
+        include:
+          - os: macos-latest
+            python-version: "3.12"
     steps:
       - uses: actions/checkout@v6
         with:

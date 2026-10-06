@@ -32,7 +32,7 @@ never reads one at all.
 from __future__ import annotations
 
 import pathlib
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Final
 
@@ -391,17 +391,63 @@ class Router:
         subscriptions = self.subscriptions
         if subscriptions is None:
             return ()
+        events = self._hand_over(
+            index,
+            trace_id,
+            builder,
+            version,
+            subscriptions.due(trace_id, version),
+            on_refusal=lambda since, refusal: self._unavailable(
+                index, trace_id, version, since, refusal
+            ),
+        )
+        window = subscriptions.window(trace_id)
+        if window is not None and self._retained.get(trace_id) != window:
+            # Applied when the window *changes*, not every record. Retention is
+            # the router's or the caller's and not both: a caller that narrows a
+            # `Routed.builder`'s own journal has taken the policy over, and the
+            # router widening it back would claim entries that caller already
+            # dropped (`SPEC.md` §6.4). The library's refusal, reported above, is
+            # what such a caller gets instead.
+            builder.retain(window)
+            self._retained[trace_id] = window
+        return tuple(events)
+
+    def _hand_over(
+        self,
+        index: int,
+        trace_id: str | None,
+        builder: Builder,
+        version: int,
+        deliveries: tuple[Delivery, ...],
+        *,
+        on_refusal: Callable[[int, SpanweaveError], Event],
+    ) -> list[Event]:
+        """Call these subscribers with this version's difference (`§6.2`).
+
+        The one delivery path, used by the per-record fan-out and by the
+        trailing flush of §5.4's fifth step: "per-record and `every=N` are one
+        mechanism" (`SPEC.md` §6.2) is only true if the tail of a trace goes out
+        through the same code as the rest of it.
+
+        One delta per distinct `since`, shared because a `Delta` is a frozen
+        value and two subscribers at one window would otherwise pay for the same
+        fold twice (`SPEC.md` §2.3). It raises nothing a consumer can cause: a
+        callback that raises is an event and the **next subscriber is still
+        called** (`SPEC.md` §6.5). `on_refusal` is what a window the journal can
+        no longer produce is reported as, which is the one thing the two callers
+        do not share: mid-stream it is `delta_unavailable` and there will be a
+        later delivery, and at a flush it is `delta_unsent` and there will not.
+        """
         events: list[Event] = []
         deltas: dict[int, Delta] = {}
-        for delivery in subscriptions.due(trace_id, version):
+        for delivery in deliveries:
             since = delivery.since
             if since not in deltas:
                 try:
                     deltas[since] = builder.delta(since=since)
                 except SpanweaveError as refusal:
-                    events.append(
-                        self._unavailable(index, trace_id, version, since, refusal)
-                    )
+                    events.append(on_refusal(since, refusal))
                     continue
             try:
                 delivery.subscription.consumer(
@@ -422,17 +468,7 @@ class Router:
                 events.append(
                     self._consumer_error(index, trace_id, version, delivery, error)
                 )
-        window = subscriptions.window(trace_id)
-        if window is not None and self._retained.get(trace_id) != window:
-            # Applied when the window *changes*, not every record. Retention is
-            # the router's or the caller's and not both: a caller that narrows a
-            # `Routed.builder`'s own journal has taken the policy over, and the
-            # router widening it back would claim entries that caller already
-            # dropped (`SPEC.md` §6.4). The library's refusal, reported above, is
-            # what such a caller gets instead.
-            builder.retain(window)
-            self._retained[trace_id] = window
-        return tuple(events)
+        return events
 
     def _unavailable(
         self,
@@ -445,9 +481,12 @@ class Router:
         """The journal no longer holds `since`, so there is nothing to hand over.
 
         Unreachable for a builder whose retention the router sets (`SPEC.md`
-        §6.4) and reachable by a caller narrowing a `Routed.builder`'s own, which
-        is legal. The event carries the library's code; nothing approximate is
-        offered in its place, for the library's own reason.
+        §6.4) and reachable two ways that are both legal: a caller narrowing a
+        `Routed.builder`'s own retention, and a consumer joining a trace already
+        in flight with a window wider than the one the journal is kept at, since
+        retention is widened only after a fan-out. The event carries the
+        library's code; nothing approximate is offered in its place, for the
+        library's own reason.
         """
         return self._counted(
             Event(
@@ -461,6 +500,46 @@ class Router:
                     f"called: {refusal}"
                 ),
                 version=version,
+            )
+        )
+
+    def flush(self, trace_id: str | None) -> tuple[Event, ...]:
+        """Hand every subscriber behind this trace its tail, now (`SPEC.md` §6.6).
+
+        The caller's explicit half of the trailing delta. An `every=N`
+        subscriber is delivered to at versions `N`, `2N`, … so the records after
+        the last multiple are a residue no window covers; a caller that knows
+        the stream has gone quiet, or that is about to stop, asks for it here.
+        Completion (`SPEC.md` §5.4, fifth step) asks for the same thing on the
+        caller's policy instead.
+
+        It returns **events**, which for a flush that went out cleanly is `()`:
+        a delivery is not an event (`SPEC.md` §1.5 is about what *did not*
+        happen). A trace this router holds no builder for has nothing to flush
+        and is `()` too -- nothing was absorbed, so no window was dropped -- and
+        a router with no subscriptions has nobody to flush to. `trace_id=None`
+        is the no-trace builder (`SPEC.md` §6.3), and asking for it does not
+        make one.
+
+        The cursors are **not** forgotten: the trace goes on, and the next
+        record continues from the version flushed. Only a release forgets them.
+        """
+        subscriptions = self.subscriptions
+        if subscriptions is None:
+            return ()
+        builder = self._no_trace if trace_id is None else self._builders.get(trace_id)
+        if builder is None:
+            return ()
+        return tuple(
+            self._hand_over(
+                self._index,
+                trace_id,
+                builder,
+                builder.version,
+                subscriptions.flush(trace_id, builder.version),
+                on_refusal=lambda since, refusal: self._unsent(
+                    self._index, trace_id, builder.version, since, refusal
+                ),
             )
         )
 
@@ -603,7 +682,7 @@ class Router:
                 )
             )
         )
-        events.extend(self._unsent(index, trace_id, version))
+        events.extend(self._trailing(index, trace_id, builder, version))
         return Completed(
             trace_id=trace_id,
             policy=policy,
@@ -613,41 +692,77 @@ class Router:
             events=tuple(events),
         )
 
-    def _unsent(self, index: int, trace_id: str, version: int) -> list[Event]:
-        """The fifth step, where there are subscribers: forget this trace's
-        cursors, and report every window a subscriber will now never get
-        (`SPEC.md` §5.4, §6.5).
+    def _trailing(
+        self, index: int, trace_id: str, builder: Builder, version: int
+    ) -> list[Event]:
+        """The fifth step, where there are subscribers: hand over every tail,
+        then forget this trace's cursors (`SPEC.md` §5.4, §6.5, §6.6).
 
-        The builder is released and its journal goes with it, so a subscriber
-        whose cursor is behind the released version has a window it could have
-        asked for and never can. One event each, in registration order. A report
-        and not a delivery: flushing a final partial window at completion would
-        be a policy the caller never asked for, and an `every=50` subscriber
-        would then get one window of 50 and one of 3 with nothing saying which
-        was which. An `every=1` subscriber is never behind.
+        A subscriber whose cursor is behind the released version has a window
+        nothing is ever going to deliver otherwise, because the journal goes
+        with the builder. Until the run-2 review that was a `delta_unsent`
+        *report* and nothing more, on the reasoning that flushing a final
+        partial window would be a policy the caller never asked for; the
+        measurement that changed it is that an `every=N` subscriber then never
+        sees the end of any trace whose length is not a multiple of `N`, which
+        is a **dropped delta** and not a policy (`WORKPLAN.md` §3, 2026-10-06).
+        So it goes out, through the same `_hand_over` the per-record fan-out
+        uses, and `delta_unsent` is kept for the one case where the window
+        cannot be produced at all.
+
+        The builder has already left `self._builders` by the time this runs --
+        the local is the released builder, and `Update.builder.graph()` is
+        therefore the final graph. That ordering is deliberate: §5.4's four
+        steps are the decision and this is bookkeeping after them, so `released`
+        stays the fourth event rather than moving behind a delivery.
         """
         subscriptions = self.subscriptions
         if subscriptions is None:
             return []
-        return [
-            self._counted(
-                Event(
-                    code=DELTA_UNSENT,
-                    index=index,
-                    trace_id=trace_id,
-                    spanweave_code=None,
-                    detail=(
-                        f"subscriber {delivery.subscription.order} was last "
-                        f"handed version {delivery.since} of {trace_id!r}, which "
-                        f"was released at version {version}: the journal went "
-                        f"with the builder, so that window is not available and "
-                        f"was not sent"
-                    ),
-                    version=version,
-                )
+        events = self._hand_over(
+            index,
+            trace_id,
+            builder,
+            version,
+            subscriptions.flush(trace_id, version),
+            on_refusal=lambda since, refusal: self._unsent(
+                index, trace_id, version, since, refusal
+            ),
+        )
+        subscriptions.forget(trace_id)
+        return events
+
+    def _unsent(
+        self,
+        index: int,
+        trace_id: str | None,
+        version: int,
+        since: int,
+        refusal: SpanweaveError,
+    ) -> Event:
+        """A tail that could not be handed over, and there is no second chance.
+
+        The journal no longer holds `since` -- a caller that narrowed a
+        `Routed.builder`'s own retention has taken that policy over (`SPEC.md`
+        §6.4) -- so the window is lost with the builder. `delta_unavailable`
+        would be the wrong code for it: that one says "not this time", and this
+        one says "not ever" (`SPEC.md` §6.5).
+        """
+        return self._counted(
+            Event(
+                code=DELTA_UNSENT,
+                index=index,
+                trace_id=trace_id,
+                spanweave_code=refusal.code,
+                detail=(
+                    f"the window since version {since} of {trace_id!r} was a "
+                    f"subscriber's tail at version {version} and could not be "
+                    f"produced, so it was not sent and there is no later "
+                    f"delivery to carry it: {refusal}"
+                ),
+                version=version,
             )
-            for delivery in subscriptions.released(trace_id, version)
-        ]
+        )
 
     def _write(
         self,

@@ -3,11 +3,20 @@
 The load-bearing claims of this file:
 
 - **Folding every delta a subscriber received onto its first graph gives the
-  final `graph()`, byte for byte** — at `every=1` and at `every=N`. That is
-  `spanweave` §10.6's promise read through the receiver: the corpus asserts it
-  per *builder*, and here it is asserted per *subscriber*, over the deltas a
+  final `graph()`, byte for byte** — at `every=1` after every record, and at
+  `every=N` after the trace completes or is flushed. That is `spanweave`
+  §10.6's promise read through the receiver: the corpus asserts it per
+  *builder*, and here it is asserted per *subscriber*, over the deltas a
   fan-out actually chose to send. If this fails, the receiver is handing
-  consumers a story that does not add up to the graph it holds.
+  consumers a story that does not add up to the graph it holds. The `every=N`
+  fold runs at `records=7, every=2` — **not** a multiple of `N` — because at
+  `records=6` it was true of the fixture rather than of the mechanism
+  (`patches/REVIEW-2026-10-06.md` §0(c)).
+- **A coarse subscriber is handed the tail of its trace**, at completion and at
+  `Router.flush`, instead of being told about it. The window it never asked for
+  by the rule is one it is owed by the claim above, and reporting it as
+  `delta_unsent` while delivering nothing was a dropped delta (`SPEC.md` §6.5,
+  §6.6).
 - **A raising subscriber never stalls another**, the record is still absorbed,
   and the failure is an `Event` with its code, the trace id and the version. A
   fan-out that stopped at the first failure is the mutation this file exists to
@@ -197,28 +206,114 @@ def test_folding_every_delta_a_per_record_subscriber_got_gives_the_final_graph()
 
 
 def test_folding_every_delta_an_every_n_subscriber_got_gives_the_final_graph():
-    """The same claim at `every=2`, where each window is two versions wide.
+    """The same claim at `every=2`, at a record count that is **not** a multiple
+    of `N` — and therefore only after a flush (`SPEC.md` §6.6).
 
-    The windows are the ones the fan-out chose, not ones the test picked: the
-    deliveries land at versions 2, 4 and 6, and each `since` is the previous
-    delivery's version (`SPEC.md` §6.2).
+    Seven records and `every=2`: the fan-out delivers at versions 2, 4 and 6,
+    and version 7 is a residue no window covers. Without the trailing delta the
+    fold is short by exactly that record, which is the state the run-2 review
+    found this test hiding behind `records=6` (`patches/REVIEW-2026-10-06.md`
+    §0(c), F2): the claim was true of the fixture rather than of the mechanism.
+    So the count is odd on purpose, and `flush` is what makes the fold add up.
+
+    The first delta is used by the claim too, as §6.6 says it is: what it adds
+    **is** the whole of the graph it produced, asserted here as the `every=1`
+    test asserts it (F3) — a mutation of the `since == 0` delta alone must not
+    leave this test green.
     """
     subscriptions = Subscriptions()
     collector = Collector()
     subscriptions.subscribe(collector, every=2)
     router = Router(subscriptions=subscriptions)
 
-    route_all(router, trace_of(6))
+    route_all(router, trace_of(7))
 
     assert [update.version for update in collector.updates] == [2, 4, 6]
     assert [update.since for update in collector.updates] == [0, 2, 4]
 
+    assert router.flush("t1") == (), "a trailing delta is a delivery, not an event"
+
+    assert [update.version for update in collector.updates] == [2, 4, 6, 7]
+    assert [update.since for update in collector.updates] == [0, 2, 4, 6]
+
+    first = collector.updates[0]
     opening = collector.first_graph
     assert opening is not None
+    assert sorted(node.id for node in first.delta.nodes_added) == sorted(
+        node.id for node in opening.nodes()
+    )
+    assert sorted(edge.identity for edge in first.delta.edges_added) == sorted(
+        edge.identity for edge in opening.edges()
+    )
+    assert first.delta.nodes_removed == () and first.delta.edges_removed == ()
+
     folded = opening
     for update in collector.updates[1:]:
         folded = update.delta.fold(folded)
     assert spanweave.dumps(folded) == spanweave.dumps(final_graph(router))
+
+
+def test_a_flush_hands_over_the_tail_once_and_then_has_nothing_to_hand():
+    """`flush` is idempotent in the only sense that matters: the cursor moved.
+
+    A second flush with no record in between delivers nothing, because the
+    subscriber is no longer behind — the same rule `due` follows, read at the
+    caller's moment instead of the record's (`SPEC.md` §6.2, §6.6).
+    """
+    subscriptions = Subscriptions()
+    collector = Collector()
+    subscriptions.subscribe(collector, every=5)
+    router = Router(subscriptions=subscriptions)
+
+    route_all(router, trace_of(3))
+    assert collector.updates == []
+
+    assert router.flush("t1") == ()
+    assert [(update.since, update.version) for update in collector.updates] == [(0, 3)]
+
+    assert router.flush("t1") == ()
+    assert len(collector.updates) == 1, "nothing changed, so nothing was due"
+
+    router.route(openinference("s9", parent="s0"))
+    assert router.flush("t1") == ()
+    assert [(update.since, update.version) for update in collector.updates] == [
+        (0, 3),
+        (3, 4),
+    ]
+
+
+def test_a_per_record_subscriber_has_no_tail_to_flush():
+    """`every=1` is never behind, so a flush is a no-op for it (`SPEC.md` §6.6)."""
+    subscriptions = Subscriptions()
+    collector = Collector()
+    subscriptions.subscribe(collector)
+    router = Router(subscriptions=subscriptions)
+
+    route_all(router, trace_of(4))
+    assert len(collector.updates) == 4
+
+    assert router.flush("t1") == ()
+    assert len(collector.updates) == 4
+
+
+def test_a_flush_of_a_trace_the_router_holds_no_builder_for_is_nothing():
+    """Not an event: nothing was absorbed, so no window was dropped (§6.6)."""
+    subscriptions = Subscriptions()
+    collector = Collector()
+    subscriptions.subscribe(collector, every=2)
+    router = Router(subscriptions=subscriptions)
+
+    assert router.flush("never-seen") == ()
+    assert router.flush(None) == (), "the no-trace builder was never made"
+    assert collector.updates == []
+    assert router.counts == {}
+
+
+def test_a_router_without_subscriptions_flushes_nothing():
+    router = Router()
+    route_all(router, trace_of(3))
+    assert router.flush("t1") == ()
+    assert router.counts == {}
 
 
 def test_two_subscribers_at_one_window_are_handed_the_same_delta_object():
@@ -535,18 +630,67 @@ def test_a_caller_that_narrows_a_builders_retention_gets_an_event_not_a_tracebac
     assert routed.version == 2
 
 
+def test_a_consumer_joining_mid_stream_with_a_coarser_window_is_the_other_way():
+    """The second way to `delta_unavailable`, which touches no caller's
+    retention (`SPEC.md` §6.5, `patches/REVIEW-2026-10-06.md` F4).
+
+    §6.1 makes `Subscriptions` mutable on purpose — "something consumers join" —
+    so a consumer may join a trace already in flight and ask for a window
+    *wider* than the one the journal is currently kept at. The first such window
+    is the one that cannot be produced: retention is widened **after** a
+    fan-out (§6.4), so the widening arrives one delivery too late for the
+    joiner's own first window. The behaviour is the right one and it is this
+    event: one code, the other subscriber untouched, no traceback, and every
+    later window served.
+    """
+    subscriptions = Subscriptions()
+    fine, coarse = Collector(), Collector()
+    subscriptions.subscribe(fine)
+    router = Router(subscriptions=subscriptions)
+
+    route_all(router, trace_of(5))
+    assert subscriptions.window("t1") == 1
+
+    subscriptions.subscribe(coarse, every=4)
+    routed = router.route(openinference("s5", parent="s0"))
+
+    unavailable = [event for event in routed.events if event.code == DELTA_UNAVAILABLE]
+    assert len(unavailable) == 1
+    assert unavailable[0].spanweave_code == "delta_unavailable"
+    assert unavailable[0].version == 6
+    assert coarse.updates == [], "nothing approximate was handed over"
+    assert [update.version for update in fine.updates] == [1, 2, 3, 4, 5, 6]
+
+    # Widened afterwards, so the joiner's next window is served and no later
+    # record repeats the refusal.
+    assert subscriptions.window("t1") == 4
+    route_all(
+        router,
+        [openinference(f"s{index}", parent="s0") for index in range(6, 11)],
+    )
+    assert [(update.since, update.version) for update in coarse.updates] == [(6, 10)]
+    assert router.counts[DELTA_UNAVAILABLE] == 1
+
+
 # --------------------------------------------------------------------------
 # A released builder takes its journal with it (§6.5).
 # --------------------------------------------------------------------------
 
 
-def test_a_window_a_completion_took_with_it_is_an_event_on_the_completed():
-    """`delta_unsent`: a report, not a delivery (`SPEC.md` §6.5).
+def test_a_completing_trace_hands_the_tail_over_before_it_releases():
+    """The trailing delta, at completion (`SPEC.md` §5.4 step five, §6.5, §6.6).
 
-    The `every=4` subscriber was last handed version 4; the trace completed at
-    version 6, so versions 5 and 6 are a window it could have asked for and now
-    never can. Flushing it at completion would be a policy the caller never
-    asked for; saying nothing would be the silence §1.5 refuses.
+    The `every=4` subscriber was last handed version 4 and the trace completes
+    at version 6, so versions 5 and 6 are its tail. Until the run-2 review they
+    were a `delta_unsent` *report* and nothing else, which meant a coarse
+    subscriber silently never saw the end of any trace whose length was not a
+    multiple of its window — a dropped delta, which §1.5 does not allow
+    (`WORKPLAN.md` §3, 2026-10-06). It is handed over instead, and the report
+    is kept for the one case where it cannot be.
+
+    The builder has already left `trace_ids` when this delivery is made, and
+    `update.builder` is that released builder: its `graph()` is the final graph,
+    which is the one `Completed.graph` carries.
     """
     subscriptions = Subscriptions()
     coarse, per_record = Collector(), Collector()
@@ -561,10 +705,58 @@ def test_a_window_a_completion_took_with_it_is_an_event_on_the_completed():
     completed = router.tick()
 
     assert len(completed) == 1
+    assert not [event for event in completed[0].events if event.code == DELTA_UNSENT]
+    assert DELTA_UNSENT not in router.counts
+    assert [(update.since, update.version) for update in coarse.updates] == [
+        (0, 4),
+        (4, 6),
+    ]
+    assert [update.version for update in per_record.updates] == [1, 2, 3, 4, 5, 6]
+
+    tail = coarse.updates[-1]
+    assert router.builder("t1") is None, "the tail is handed over at release"
+    graph = completed[0].graph
+    assert graph is not None
+    assert spanweave.dumps(tail.builder.graph()) == spanweave.dumps(graph)
+
+    opening = coarse.first_graph
+    assert opening is not None
+    folded = opening
+    for update in coarse.updates[1:]:
+        folded = update.delta.fold(folded)
+    assert spanweave.dumps(folded) == spanweave.dumps(graph), (
+        "the deltas a coarse subscriber got do not add up to the completed graph"
+    )
+
+
+def test_a_trailing_window_the_journal_cannot_produce_is_still_delta_unsent():
+    """The one case the flush cannot serve, and it is not silent (§6.5).
+
+    A caller that narrowed a `Routed.builder`'s own journal (§6.4) has taken
+    retention over, so the tail is a window the library refuses to produce.
+    `delta_unsent` is then what it was before the trailing delta existed — a
+    report, carrying the library's own code, on the same `Completed`.
+    """
+    subscriptions = Subscriptions()
+    coarse = Collector()
+    subscriptions.subscribe(coarse, every=4)
+    router = Router(
+        completion=Completion(policies=(Cap(6),), now=lambda: 1_000.0),
+        subscriptions=subscriptions,
+    )
+
+    route_all(router, trace_of(6))
+    builder = router.builder("t1")
+    assert builder is not None
+    builder.retain(1)
+    completed = router.tick()
+
+    assert len(completed) == 1
     unsent = [event for event in completed[0].events if event.code == DELTA_UNSENT]
-    assert len(unsent) == 1, "the per-record subscriber was never behind"
+    assert len(unsent) == 1
     assert unsent[0].trace_id == "t1"
     assert unsent[0].version == 6
+    assert unsent[0].spanweave_code == "delta_unavailable"
     assert "4" in unsent[0].detail
     assert router.counts[DELTA_UNSENT] == 1
     assert [update.version for update in coarse.updates] == [4]

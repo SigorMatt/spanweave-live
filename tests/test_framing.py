@@ -646,6 +646,55 @@ def test_the_cap_is_a_keyword_the_caller_sets_and_defaults_to_no_cap():
         Framer(CAP)  # type: ignore[misc]
 
 
+def test_a_cap_of_zero_reads_every_remainder_the_moment_it_exists():
+    """§3.4's stated boundary, which nothing held (`REVIEW-2026-10-06.md` F9).
+
+    `0` is legal — the spec and the CHANGELOG both say so — and it is the one
+    cap value where `>` and `>=` differ in their *consequence* rather than by a
+    byte: at `0` every remainder is over the cap, so a push that completes no
+    line hands its bytes to the reader immediately rather than keeping them.
+    The framer is then holding nothing, and the next chunk is a line of its own
+    rather than the tail of that one.
+    """
+    framer = Framer(max_pending_bytes=0)
+    assert framer.max_pending_bytes == 0
+
+    result = framer.push(b"ab")
+
+    assert result.records == ()
+    assert [d.code for d in result.diagnostics] == ["malformed_record"]
+    assert [d.source for d in result.diagnostics] == ["ab"]
+    assert result.skipped_records == 1
+    (event,) = framer.events
+    assert (event.code, event.line, event.length) == (FRAGMENT_TOO_LONG, 1, 2)
+    assert framer.pending_bytes == 0
+
+    # And an empty remainder is not a fragment: a complete line leaves nothing
+    # behind, so there is nothing for the cap to be about and no event.
+    framer = Framer(max_pending_bytes=0)
+    assert framer.push(GOOD_LINE).skipped_records == 0
+    assert framer.events == ()
+    assert framer.counts == {}
+
+
+@pytest.mark.parametrize("cap", [-1, -64])
+def test_a_negative_cap_is_refused_rather_than_read_as_zero(cap):
+    """A cap below zero is a `ValueError` at construction (`SPEC.md` §3.4).
+
+    The run-2 review recorded it as "spec-silent and behaves as `0`"; it does
+    not. `len(pending) <= -1` is false for the **empty** remainder too, so a
+    negative cap reports a `fragment_too_long` of length 0 on every push that
+    ends on a line boundary and burns a line number doing it — which would make
+    the framer's own line numbers wrong for a reason no caller asked for
+    (§3.4's cost, §3.5's agreement). There is no reading of "the most the
+    framer will keep" under which a negative number is a quantity, so it is
+    refused where `Subscriptions.subscribe(every=0)` is refused and for the
+    same reason: nothing about the stream caused it.
+    """
+    with pytest.raises(ValueError, match="max_pending_bytes"):
+        Framer(max_pending_bytes=cap)
+
+
 def test_the_cap_is_the_most_the_framer_will_keep_so_the_boundary_is_strict():
     """A remainder exactly at the cap is one the caller allowed.
 

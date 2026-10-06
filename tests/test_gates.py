@@ -31,6 +31,58 @@ PLANTED_AMBIENT = [
     ("import asyncio", "asyncio"),
     ("from asyncio import sleep", "asyncio"),
     ("import asyncio.subprocess", "asyncio"),
+    # The modules the run-2 review verified were *not* caught while the gate
+    # was advertised as proving "no module reads a clock"
+    # (`patches/REVIEW-2026-10-06.md` F7). Each is the same ambient runtime
+    # under another name: `secrets` and `uuid` are unseeded randomness
+    # (`CLAUDE.md` 8), and the last five are concurrency or a child process
+    # that no fixture can pin (`CLAUDE.md` 4).
+    ("import secrets", "secrets"),
+    ("from secrets import token_hex", "secrets"),
+    ("import uuid", "uuid"),
+    ("from uuid import uuid4", "uuid"),
+    ("import concurrent.futures", "concurrent.futures"),
+    ("from concurrent.futures import ThreadPoolExecutor", "concurrent.futures"),
+    ("import selectors", "selectors"),
+    ("import select", "select"),
+    ("import subprocess", "subprocess"),
+    ("from subprocess import run", "subprocess"),
+    ("import sched", "sched"),
+]
+
+# The network, which this package does not reach for and had nothing stopping
+# it reaching for: `socket` was banned, so the direct form was caught and every
+# library that opens a connection for you was not (F8). The parent `spanweave`
+# repository has had this gate since its own R0 (`CLAUDE.md` there, "No network
+# imports in core"); R6 opens an HTTP endpoint, which is exactly when a
+# receiver grows the import that makes "read-only toward the observed system"
+# (`CLAUDE.md` 9) a sentence rather than a fact.
+PLANTED_NETWORK = [
+    ("import urllib.request", "urllib"),
+    ("from urllib.request import urlopen", "urllib"),
+    ("import http.client", "http"),
+    ("from http.client import HTTPConnection", "http"),
+    ("import http.server", "http"),
+    ("import socketserver", "socketserver"),
+    ("import requests", "requests"),
+    ("import httpx", "httpx"),
+    ("import ftplib", "ftplib"),
+    ("import smtplib", "smtplib"),
+    ("import ssl", "ssl"),
+]
+
+# `os` is the one ambient module the package really imports -- R5 needs
+# `os.fstat` and `os.PathLike` (`SPEC.md` §7.1) -- so banning the module would
+# ban the one use the spec requires. What is banned is the handful of names on
+# it that *are* the clock, randomness or a child process: the review found this
+# surface open inside a module the gate called clean (F7).
+PLANTED_AMBIENT_OS = [
+    ("import os\nos.urandom(8)", "urandom"),
+    ("import os\nos.times()", "times"),
+    ("import os\nos.fork()", "fork"),
+    ("import os\nos.pipe()", "pipe"),
+    ("import os\nos.system('date')", "system"),
+    ("from os import urandom", "urandom"),
 ]
 
 
@@ -39,6 +91,46 @@ def test_gate_fails_on_a_planted_violation(source, expected):
     found = gates.check_source("spanweave_live/planted.py", source, gates.ALL_RULES)
     assert [v.rule for v in found] == ["no-ambient-runtime"]
     assert expected in found[0].detail
+
+
+@pytest.mark.parametrize(("source", "expected"), PLANTED_NETWORK)
+def test_gate_fails_on_a_planted_network_import(source, expected):
+    found = gates.check_source("spanweave_live/planted.py", source, gates.ALL_RULES)
+    assert [v.rule for v in found] == ["no-network"]
+    assert expected in found[0].detail
+
+
+@pytest.mark.parametrize(("source", "expected"), PLANTED_AMBIENT_OS)
+def test_gate_fails_on_a_planted_ambient_use_of_os(source, expected):
+    found = gates.check_source("spanweave_live/planted.py", source, gates.ALL_RULES)
+    assert [v.rule for v in found] == ["no-ambient-os"]
+    assert expected in found[0].detail
+
+
+def test_the_os_the_package_really_needs_is_not_banned():
+    """`os.fstat` and `os.PathLike` are what `tail` is built on (§7.1).
+
+    The rule names attributes, not the module, because a module ban would have
+    to be a seam entry for the one file that legitimately reads a file's
+    identity -- and a seam entry would then exempt every other `os.` name in
+    that same file, which is the opposite of narrow.
+    """
+    source = "import os\n\n\ndef identity(handle):\n    return os.fstat(handle)\n"
+    assert gates.check_source("spanweave_live/ingest.py", source, gates.ALL_RULES) == []
+
+
+def test_the_gate_states_what_it_does_not_catch():
+    """A dynamic import escapes an AST walk, and the gate says so rather than
+    being advertised as more than it is (`patches/REVIEW-2026-10-06.md` T11).
+
+    Recorded as a test so the limit is not a comment someone deletes: if the
+    rule is ever broadened to flag `importlib.import_module("time")`, this is
+    the assertion that has to change in the same commit as the broadening.
+    """
+    escapes = 'import importlib\nimportlib.import_module("time").time()\n'
+    found = gates.check_source("spanweave_live/sneaky.py", escapes, gates.ALL_RULES)
+    assert found == []
+    assert "static" in gates.no_ambient_runtime.__doc__
 
 
 def test_the_gate_reports_where_the_import_is():
@@ -95,6 +187,26 @@ def test_a_seam_allows_only_the_module_it_names():
     )
     assert [v.line for v in found] == [2]
     assert "socket" in found[0].detail
+
+
+def test_a_seam_may_hold_the_network_module_it_names():
+    """One allowlist for both rules, which is what R6 will ask of it.
+
+    `SPEC.md` §7.2 says the OTLP endpoint is stdlib `http.server` and that the
+    listener factory is injected. If that batch finds it cannot inject the
+    import away -- as R3 and R5 each could -- the narrow answer is one file and
+    one module here, and the mechanism has to exist before the batch needs it.
+    """
+    seams = {"listener.py": frozenset({"http.server"})}
+    source = "import http.server\nimport urllib.request"
+    found = gates.no_network(
+        "spanweave_live/listener.py",
+        source,
+        ast.parse(source),
+        seams=seams,
+    )
+    assert [v.line for v in found] == [2]
+    assert "urllib" in found[0].detail
 
 
 def test_a_seam_exempts_only_the_file_it_names():

@@ -179,6 +179,22 @@ class Framer:
     __slots__ = ("_counts", "_events", "_lines", "_max_pending_bytes", "_pending")
 
     def __init__(self, *, max_pending_bytes: int | None = None) -> None:
+        if max_pending_bytes is not None and max_pending_bytes < 0:
+            # `0` is legal and means every remainder is read the moment it
+            # exists; a negative number is not a quantity of bytes at all.
+            # Refused at construction rather than read as `0`, because
+            # `len(pending) <= -1` is false for the **empty** remainder too, so
+            # a negative cap would report a `fragment_too_long` of length 0 on
+            # every push that ended on a line boundary and burn a line number
+            # doing it -- which would make the framer's own line numbers wrong
+            # for a reason no caller asked for (`SPEC.md` §3.4, §3.5). Nothing
+            # about the stream causes it, so it is a `ValueError` and not an
+            # event, as `Subscriptions.subscribe(every=0)` is.
+            raise ValueError(
+                f"max_pending_bytes is the most the framer will keep and is at "
+                f"least 0 (0 reads every remainder at once, `SPEC.md` §3.4); "
+                f"{max_pending_bytes!r} is not"
+            )
         self._pending = bytearray()
         self._lines = 0
         self._max_pending_bytes = max_pending_bytes

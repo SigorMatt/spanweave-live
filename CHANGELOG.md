@@ -8,6 +8,83 @@ of change is a **batch** (`WORKPLAN.md`), and each entry names the batch.
 
 ## Unreleased
 
+### R5a — the run-2 review's `next batch` items, closed (2026-10-06)
+
+One commit for the twelve findings `patches/REVIEW-2026-10-06.md` marks
+`next batch`. Three of them were behaviour, three were a gate, one was CI, and
+the rest were documents that claimed more than the code did. The two that are
+the orchestrator's file (`WORKPLAN.md` F11, F12) are not touched here.
+
+Changed
+
+- **A subscriber with `every=N` now receives its tail.** A completing trace
+  hands every behind subscriber `delta(since=cursor)` before it forgets the
+  cursors (`SPEC.md` §5.4's fifth step), and `Router.flush(trace_id)` is the
+  caller's way to ask for the same thing mid-stream. It was a `delta_unsent`
+  *report* and nothing else, which meant a coarse subscriber silently never saw
+  the end of any trace whose length was not a multiple of its window — a dropped
+  delta, not a policy the caller had not asked for (`WORKPLAN.md` §3,
+  2026-10-06; F2). `delta_unsent` is kept for the one case where the tail cannot
+  be produced at all, and it now carries the library's own code.
+- **`SPEC.md` §6.6's fold claim is restated** as holding at the last delivered
+  version mid-stream and at the final version **after completion or flush**, and
+  the `every=N` fold test runs at `records=7, every=2` — a count that is *not* a
+  multiple of `N`. At `records=6` the claim was true of the fixture rather than
+  of the mechanism (F2), and that test is red on the parent at 7.
+- **`Subscriptions.released` is now `flush` + `forget`**, split because the two
+  halves happen at different moments: the tail goes out while the released
+  builder is still in hand, and the cursors are dropped after it.
+- **`Framer(max_pending_bytes=0)` is tested** — the boundary §3.4 stated and
+  nothing held (F9) — and a **negative** cap is now a `ValueError` rather than
+  "behaves as `0`": `len(remainder) <= -1` is false for the empty remainder too,
+  so it reported a `fragment_too_long` of length 0 on every push that ended on a
+  line boundary and burned a line number doing it.
+- **`reopen_failed`'s "once per failure" means once per rotation.** The streak
+  flag is cleared by a poll that finds the path naming the file the tail still
+  holds, as well as by a successful reopen, so a path that reverts and is then
+  rotated away again reports a second time instead of nothing. It was also
+  entirely untested — deleting its `except OSError` body left the suite green
+  (F10) — and now has the event, its offset, and the old handle still being read
+  after the failure.
+- **The invariant gate enforces what it is advertised as proving.**
+  `no_ambient_runtime` also bans `secrets`, `uuid`, `concurrent.futures`,
+  `selectors`, `select`, `subprocess` and `sched` (F7); a new `no_network` rule
+  bans `urllib`, `http`, `requests`, `httpx` and their kin, which this
+  repository had nothing stopping, unlike its parent (F8); and a new
+  `no_ambient_os` rule bans `os.times`, `os.urandom`, `os.fork`, `os.pipe` and
+  their kin without banning `os`, which `SPEC.md` §7.1's tail needs for
+  `os.fstat`. All three are **static**, which the rule's docstring and a test
+  now say out loud: a dynamic `importlib.import_module("time")` escapes an AST
+  walk. The seam allowlist is still empty, and R6's `http.server` is the first
+  import that must be injected away or earn one narrow line in it.
+- **CI gains `check (macos-latest, 3.12)`**, running `make check` — the whole
+  suite. The only macOS job ran `make conformance`, i.e.
+  `tests/test_conformance.py` alone, so `tests/test_ingest.py` had **never run
+  on macOS** while the series cited macOS for rotation and truncation being
+  platform facts (F6). Seven jobs now, not six. A test in `tests/test_ingest.py`
+  holds the job in the workflow, so the claim and its evidence fail together.
+- **A `Tail` is a single-use iterable, not an iterator.** Four places said it
+  "**is** the iterator" and the object has no `__next__`: `iter(t) is not t` and
+  `next(t)` raises (T10). The §3.1 reason is unchanged and is why the object
+  exists — the yielded value is `spanweave.Records` and a bare generator has
+  nowhere to carry a tail's events — but that asymmetry is **chosen**, not
+  "forced": a caller-supplied event sink would have let `tail` stay a generator.
+- **`SPEC.md` §4.1 declares `Event.offset`**, which R5 added to the code while
+  its commit message and CHANGELOG entry both said §4.1 was amended (F5). "The
+  block is declared exactly as the code accepts it" is now a test that parses
+  this section's own fence — and it caught a second drift immediately:
+  `Routed.events` carries `= ()` in the code and carried no default in the spec.
+- **`SPEC.md` §5.5 counts `_Book` correctly** — five fields, not six: there is
+  no flag, because `completed_at` being `None`-or-set *is* the flag and is one
+  of the four floats (F1). The measured cost is in the section now too: **≈ 220
+  B per completed trace id**, ~22 MB at 10^5 and ~210 MB at 10^6, which is about
+  5.5× what the field list reads like and is the number the forgetting decision
+  is made against.
+- **`SPEC.md` §6.5 names both ways to `delta_unavailable`.** The second one
+  touches no caller's retention: a consumer joining a trace already in flight
+  with a window coarser than the journal is kept at, since retention is widened
+  only after a fan-out (F4). The behaviour was already right and is now fixtured.
+
 ### R2c — the pins move to a typed spanweave, and the override goes (2026-10-06)
 
 A batch with no new behaviour in it: it makes a fact true that two documents and
@@ -64,8 +141,10 @@ back what the framer said. It looks inside no chunk and routes nothing.
 Added
 
 - `spanweave_live.ingest`, with `tail(path, *, now, sleep, poll_seconds, …)` and
-  `stdin(stream=None, …)`. `tail` returns a `Tail`, which **is** the iterator of
-  `spanweave.Records`; `stdin` is a generator. The asymmetry is the framer's own
+  `stdin(stream=None, …)`. `tail` returns a `Tail`, a **single-use iterable of
+  `spanweave.Records`, not an iterator** (corrected in R5a: it has no
+  `__next__`, and this entry said "is the iterator"); `stdin` is a generator.
+  The asymmetry is the framer's own
   (`SPEC.md` §3.1): the yielded value is `spanweave.Records` and stays that way,
   so a tail's events ride **beside** the yields and a bare generator has nowhere
   to put them — and a pipe, which cannot be truncated or rotated, has no events

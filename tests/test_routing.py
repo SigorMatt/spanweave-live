@@ -21,8 +21,10 @@ the records handed to it, in the order they were handed over.
 
 from __future__ import annotations
 
+import ast
 import dataclasses
 import json
+import pathlib
 
 import pytest
 import spanweave
@@ -30,7 +32,9 @@ import spanweave
 from spanweave_live import (
     REFUSED,
     REFUSED_AT_CAP,
+    Event,
     Framer,
+    Routed,
     Router,
     trace_id_of,
 )
@@ -133,6 +137,57 @@ def test_the_routers_settings_are_keyword_only_as_SPEC_declares():
         False,
     )
     assert settings.routed == 0
+
+
+def declared_fields(section: str, name: str) -> list[tuple[str, bool]]:
+    """The fields of one dataclass as `SPEC.md` declares it, in order.
+
+    The spec's own text, parsed rather than grepped: the `python` fence under
+    the named section is a module, so `ast` says what is declared in it and a
+    sentence in the prose cannot be mistaken for a field. Each field comes back
+    as `(name, has_default)`.
+    """
+    spec = (pathlib.Path(__file__).resolve().parent.parent / "SPEC.md").read_text(
+        encoding="utf-8"
+    )
+    heading = f"### {section} "
+    start = spec.index(heading)
+    end = spec.index("\n### ", start + 1)
+    block = spec[start:end]
+    fence = block.index("```python") + len("```python")
+    source = block[fence : block.index("```", fence)]
+    for node in ast.parse(source).body:
+        if isinstance(node, ast.ClassDef) and node.name == name:
+            return [
+                (field.target.id, field.value is not None)
+                for field in node.body
+                if isinstance(field, ast.AnnAssign)
+                and isinstance(field.target, ast.Name)
+            ]
+    raise AssertionError(f"SPEC.md {section} declares no `class {name}`")
+
+
+@pytest.mark.parametrize("name", ["Event", "Routed"])
+def test_the_event_block_in_SPEC_is_the_dataclass_the_code_has(name):
+    """§4.1 says it is declared **exactly** as the code accepts it. Held.
+
+    R3 added `seconds` to that block with a paragraph and R4 added `version`
+    with a paragraph; R5 added `Event.offset` to the code, cited §4.1 in its
+    commit message and its CHANGELOG entry, and **did not add the field** —
+    which nothing caught, because the only test on the block asserted the
+    dataclass's own field order against itself
+    (`patches/REVIEW-2026-10-06.md` F5). This is the cheap test that would have.
+
+    Fields in declared order, with which of them carry a default, because an
+    optional field moved in front of a required one is a signature change a
+    name-set comparison would miss.
+    """
+    declared = declared_fields("4.1", name)
+    actual = [
+        (field.name, field.default is not dataclasses.MISSING)
+        for field in dataclasses.fields({"Event": Event, "Routed": Routed}[name])
+    ]
+    assert declared == actual
 
 
 # --------------------------------------------------------------------------
