@@ -5,7 +5,7 @@ network, the clock and the consumer (`spanweave` `OPEN_QUESTIONS.md` §19,
 decided 2026-09-29). One batch = one sub-agent = one commit = one concern.
 This file plus git is the only state; any session can resume cold from it.
 
-Last updated: 2026-10-06 (run 3 under way: R2c, R5a, R3a, R6, R7 done; R8 → R9 remain).
+Last updated: 2026-10-06 (run 3 under way: R2c, R5a, R3a, R6, R7, R8 done; R9 closes the series).
 
 ---
 
@@ -157,8 +157,8 @@ commit that cannot say `plan:`, and the watcher exempts it once per series.
 | R3a | **Completed trace ids are forgotten by the caller's bound.** `Router(max_completed=None)`; SPEC §5.5 rewritten from "unbounded" to the policy in §3. Tests on the fake clock, red on the parent: with `max_completed=2` and three completions the oldest is evicted at the next tick with one `forgotten` event carrying its id and completion tick; a record for the forgotten id opens generation 1 and emits no `late_arrival`; a record for a remembered id still emits `late_arrival` with the gap; with `None` nothing is ever forgotten across the whole suite. Measure the book after eviction (the review's ~220 B/id method) and put the number in the body. Mutation: an eviction that emits no `forgotten` fails. ~~evicted at the next tick~~ — evicted **in the tick whose completion pushes the book past the bound**, because a tick that completes nothing has no `Completed` to carry the event; settled by R3a, see §4. | done (baa32cb) | 6 |
 | R6 | **Ingest: OTLP/HTTP JSON endpoint.** (SPEC §7.2) Stdlib `http.server` only; one handler for `POST /v1/traces` with `Content-Type: application/json`, body → `Framer.document`; `Content-Encoding: gzip` accepted; anything else 415; the listener factory is injected so tests use a loopback socket on port 0. Tests: the `otlp_container` renderings posted as bodies route to the batch graph; a non-JSON body is 400 with the receiver's event, never a traceback. | done (8ae7a5d) | 10 |
 | R7 | **CLI.** `spanweave-live tail <path> --out <dir> [--quiet S] [--root-grace S] [--cap N] [--deltas]` and `spanweave-live serve --port P --out <dir>`: final graphs written as `<trace_id>.json` with `spanweave.dump`; `--deltas` writes each per-record delta document to stdout as one line; every event to stderr as one JSON line with its code; exit codes documented. Tests through `subprocess` on a corpus rendering. | done (d21859d) | 8 |
-| R8 | **Showcase: agentgolden's rules per delta.** agentgolden is `SigorMatt/agentgolden` at `aa1847f`, pinned as a dev dependency by git sha (its own `spanweave>=0.9.1,<1.0` resolves against the pinned spanweave). A consumer that, on each per-record delta, takes the trace's `graph()`, computes agentgolden's `Signature`, evaluates `examples/support_agent/rules.toml` **unchanged** with `agentgolden.rules.evaluate`, and records the first version at which each rule fails. The trace is agentgolden's own `examples/support_agent/candidates/skipped_verification.openinference.jsonl`, replayed through `Framer` + `Router`. Test: the first-failure version table is asserted exactly, and the `verify_identity → issue_refund` order rule fails at the version that absorbs the `llm.plan` span carrying the `issue_refund` request — one version before the `issue_refund` tool span arrives — which is the "when it almost happened" the memo promised; the same rules on the batch graph of the whole trace give the same final verdicts (batch and live are one model). | todo | 12 |
-| R9 | **The receiver series closes.** `TASKS.md` registry R0–R9 with shas; ~~§3 folded~~ **§3 and §4 both folded** (the §0.6 correction of `9a2e40f` had never reached this row — the one an agent executes; R5a/F12); `reviews/` holds every review byte-for-byte with sha256 and every finding dispositioned; WORKPLAN.md deleted; README covers the CLI and the API; PR `receiver` → `main`. No `plan:` commit follows. | awaiting R8 | 8 |
+| R8 | **Showcase: agentgolden's rules per delta.** agentgolden is `SigorMatt/agentgolden` at `aa1847f`, pinned as a dev dependency by git sha (its own `spanweave>=0.9.1,<1.0` resolves against the pinned spanweave). A consumer that, on each per-record delta, takes the trace's `graph()`, computes agentgolden's `Signature`, evaluates `examples/support_agent/rules.toml` **unchanged** with `agentgolden.rules.evaluate`, and records the first version at which each rule fails. The trace is agentgolden's own `examples/support_agent/candidates/skipped_verification.openinference.jsonl`, replayed through `Framer` + `Router`. Test: the first-failure version table is asserted exactly, and ~~the `verify_identity → issue_refund` order rule fails at the version that absorbs the `llm.plan` span carrying the `issue_refund` request — one version before the `issue_refund` tool span arrives — which is the "when it almost happened" the memo promised~~ — **false, and corrected by R8**: the order rule reads tool *nodes*, and a requested call with no span is an `unpaired_call` diagnostic rather than a node, so at that version the rule is a **vacuous pass** and it first fails at 6, when the tool span itself arrives. The memo's "when it almost happened" is real but is a **different rule**: `trajectory.all_calls_fulfilled` fails at 2 and 5 and passes at every other version **including the last**, so it is visible only per delta and never in the batch graph. See §4. The same rules on the batch graph of the whole trace give the same final verdicts (batch and live are one model). | done (c3dcab0) | 12 |
+| R9 | **The receiver series closes.** `TASKS.md` registry R0–R9 with shas; ~~§3 folded~~ **§3 and §4 both folded** (the §0.6 correction of `9a2e40f` had never reached this row — the one an agent executes; R5a/F12); `reviews/` holds every review byte-for-byte with sha256 and every finding dispositioned; WORKPLAN.md deleted; README covers the CLI and the API; PR `receiver` → `main`. No `plan:` commit follows. | todo | 8 |
 
 ## 2. Execution order
 
@@ -582,6 +582,47 @@ onward land on `receiver`.
 - 2026-10-06 R7 — `make install-check` now runs a **command**, piping a corpus
   record to the installed console script from outside the repo, so the gate that
   proves what ships finally exercises the thing a user types.
+- 2026-10-06 R8 (`c3dcab0`, CI green on that sha, 7/7): the showcase is in, and
+  **the row's central claim was false** — corrected in §1 above. Tests 628 → 651.
+  Red on the code parent `d21859d`: `tests/test_showcase.py` alone is a
+  collection error there (`No module named 'agentgolden'`), and with the new
+  pins/gates files carried over, **4 failed / 635 passed**.
+- 2026-10-06 R8 — **the actual first-failure table** (7 versions, 19 rules, 4 ever
+  fail): `tools.required:verify_identity` **1**, `tools.required:issue_refund`
+  **1**, `trajectory.all_calls_fulfilled` **2**, `order:verify_identity <
+  issue_refund` **6**. Why the row was wrong: agentgolden's `OrderRule` reads
+  `Signature.tool_calls`, which are tool **nodes**, and spanweave's `NodeKind` is
+  closed — so a call requested by an `llm.plan` span with no tool span is an
+  `unpaired_call` **diagnostic**, not a node. At version 5 the order rule has
+  nothing to order and passes vacuously. This is a **model fact, not a bug**, and
+  it is the closed-enum invariant doing exactly what it promises; the row assumed
+  a graph shape the model does not produce.
+- 2026-10-06 R8 — **the memo's promise survives, in a better rule than the one
+  the row named.** `trajectory.all_calls_fulfilled` fails at version 2, passes,
+  fails again at 5, and **passes at the last version** — so it is a verdict that
+  exists only in the live stream and is **invisible in the batch graph of the same
+  trace**. That is a sharper demonstration of why a receiver is worth having than
+  the order rule would have been, because the order rule's final verdict is the
+  same either way. R9's `TASKS.md` entry for R8 should claim this, not the
+  original sentence.
+- 2026-10-06 R8 — the honesty checks held. `rules.toml` and the trace are
+  **untouched**, and a test compares both byte-for-byte against the pinned
+  submodule's committed blobs, so "unchanged" is asserted rather than asserted
+  *about*. **Nothing semantic landed under `spanweave_live/`**: zero package
+  changes, a new gate `no-consumer-rules` with 4 planted violations watched
+  failing, and a pin test holding the runtime dependencies to exactly
+  `["spanweave"]`. The mutation (evaluate only the final graph) took **6 of 12**
+  tests down and flattened the table to "everything at version 7 with
+  `all_calls_fulfilled` gone" — which is precisely the showcase's own point
+  failing when the per-delta loop is removed.
+- 2026-10-06 R8 — **two facts for whoever moves the spanweave pin next.**
+  agentgolden's `spanweave>=0.9.1,<1.0` does resolve against the pinned
+  spanweave, but it meets the **lower** bound exactly (0.9.1), so a future
+  spanweave **1.0** pin breaks the showcase; `tests/test_pins.py` now asserts the
+  resolution rather than trusting it. And agentgolden had to come in as a
+  **`showcase/` submodule**, not just a wheel, because its wheel ships no
+  `examples/` — `showcase/` is excluded from the sdist and the wheel ships no
+  rule engine.
 ## 5. Origins
 
 | ID | Origin |
