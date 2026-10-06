@@ -6,7 +6,7 @@ What this file asserts, and what it refuses to assert:
   fail on this trace, and the version each one first failed at is a fact about
   the trace and the rules file — not a range, not a subset. A table asserted
   loosely would pass for a consumer that evaluated the final graph seven times.
-- **The `WORKPLAN.md` R8 premise is false, and this file says so rather than
+- **The `TASKS.md` R8 premise is false, and this file says so rather than
   bending to it.** The row (and `spanweave` `OPEN_QUESTIONS.md` §19, which it
   comes from) predicts that the `verify_identity → issue_refund` **order** rule
   fails at the version absorbing the `llm.plan` span that carries the
@@ -90,7 +90,7 @@ def test_the_rules_file_and_the_trace_are_the_pinned_submodule_s_own_bytes():
     Compared against the submodule's committed blobs rather than against a
     copy in this repository: a copy would be a second thing to keep at the pin
     (`CLAUDE.md`), and a rules file edited to make a verdict come out right
-    would void the demonstration entirely (`WORKPLAN.md` R8).
+    would void the demonstration entirely (`TASKS.md` R8).
     """
     for path in (showcase.RULES, showcase.TRACE):
         committed = subprocess.run(
@@ -164,7 +164,7 @@ def test_the_llm_plan_span_carrying_the_request_lands_one_version_early(
 def test_the_order_rule_fails_at_the_tool_span_and_not_one_version_before(
     run: showcase.Replay,
 ):
-    """`WORKPLAN.md` R8's premise, falsified in the direction it is wrong.
+    """`TASKS.md` R8's premise, falsified in the direction it is wrong.
 
     At version 5 the order rule is a *vacuous pass*: `tool_calls` is empty
     because a requested call that has not run is a diagnostic and not a node,

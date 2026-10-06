@@ -57,7 +57,7 @@ def rendering_id(path: Path) -> str:
 # of the 51 produces a diagnostic or skips a record. So a sweep over the corpus
 # as captured compares two empty sequences twice, and a `push` that swallowed
 # every diagnostic, or that reported `skipped_records=0` unconditionally, would
-# pass it -- which is what `patches/REVIEW-2026-10-04.md` found (R1-1, R1-2).
+# pass it -- which is what `reviews/2026-10-04-run1.md` found (R1-1, R1-2).
 #
 # So every rendering is swept in two forms: as captured, and with one line
 # corrupted. The corrupted form is **derived from the corpus bytes**, by the
@@ -388,7 +388,7 @@ def test_push_reports_a_skipped_record_for_a_complete_line_it_could_not_read():
     skip is what the caller adds up. Asserted here on `push` directly, and not
     only through the corpus sweep, because a `push` that returned
     `skipped_records=0` unconditionally passed the whole suite before this test
-    existed (`patches/REVIEW-2026-10-04.md` R1-2).
+    existed (`reviews/2026-10-04-run1.md` R1-2).
     """
     framer = Framer()
     result = framer.push(b'{"trace_id":"t1","span_id":"s1"}\n' + CORRUPTED_LINE + b"\n")
@@ -421,7 +421,7 @@ def test_the_framer_grows_no_dedup_cache_of_its_own():
     nothing on: it returns one record both ways and makes the
     `duplicate_record` disappear -- a diagnostic lost, which is standing rule 5
     and not only spec prose. Nothing in the suite caught that before this test
-    (`patches/REVIEW-2026-10-04.md` R1-4), because no corpus rendering holds a
+    (`reviews/2026-10-04-run1.md` R1-4), because no corpus rendering holds a
     byte-identical duplicate line and every hand-authored fixture here uses
     distinct records.
     """
@@ -523,7 +523,7 @@ def test_diagnostics_come_back_in_the_librarys_own_order():
     the reverse of the order the lines arrived in: a framer that renumbered and
     handed the tuple back unsorted fails here. With nine good lines the two
     malformed ones are 10 and 11, whose order is the same either way, and the
-    test passed with the sort removed (`patches/REVIEW-2026-10-04.md` R1-3).
+    test passed with the sort removed (`reviews/2026-10-04-run1.md` R1-3).
     """
     good = stream_of_records(8)
     body = good + b'{"oops\n{"nope\n'

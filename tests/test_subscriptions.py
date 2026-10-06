@@ -11,7 +11,7 @@ The load-bearing claims of this file:
   consumers a story that does not add up to the graph it holds. The `every=N`
   fold runs at `records=7, every=2` — **not** a multiple of `N` — because at
   `records=6` it was true of the fixture rather than of the mechanism
-  (`patches/REVIEW-2026-10-06.md` §0(c)).
+  (`reviews/2026-10-06-run2.md` §0(c)).
 - **A coarse subscriber is handed the tail of its trace**, at completion and at
   `Router.flush`, instead of being told about it. The window it never asked for
   by the rule is one it is owed by the claim above, and reporting it as
@@ -212,7 +212,7 @@ def test_folding_every_delta_an_every_n_subscriber_got_gives_the_final_graph():
     Seven records and `every=2`: the fan-out delivers at versions 2, 4 and 6,
     and version 7 is a residue no window covers. Without the trailing delta the
     fold is short by exactly that record, which is the state the run-2 review
-    found this test hiding behind `records=6` (`patches/REVIEW-2026-10-06.md`
+    found this test hiding behind `records=6` (`reviews/2026-10-06-run2.md`
     §0(c), F2): the claim was true of the fixture rather than of the mechanism.
     So the count is odd on purpose, and `flush` is what makes the fold add up.
 
@@ -632,7 +632,7 @@ def test_a_caller_that_narrows_a_builders_retention_gets_an_event_not_a_tracebac
 
 def test_a_consumer_joining_mid_stream_with_a_coarser_window_is_the_other_way():
     """The second way to `delta_unavailable`, which touches no caller's
-    retention (`SPEC.md` §6.5, `patches/REVIEW-2026-10-06.md` F4).
+    retention (`SPEC.md` §6.5, `reviews/2026-10-06-run2.md` F4).
 
     §6.1 makes `Subscriptions` mutable on purpose — "something consumers join" —
     so a consumer may join a trace already in flight and ask for a window
@@ -685,7 +685,7 @@ def test_a_completing_trace_hands_the_tail_over_before_it_releases():
     were a `delta_unsent` *report* and nothing else, which meant a coarse
     subscriber silently never saw the end of any trace whose length was not a
     multiple of its window — a dropped delta, which §1.5 does not allow
-    (`WORKPLAN.md` §3, 2026-10-06). It is handed over instead, and the report
+    (`TASKS.md`, 2026-10-06). It is handed over instead, and the report
     is kept for the one case where it cannot be.
 
     The builder has already left `trace_ids` when this delivery is made, and

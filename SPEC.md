@@ -29,7 +29,7 @@ its batch lands:
 | 8 | CLI | What does a person type? |
 | 9 | The showcase | What does a consumer do with all this, and what does live buy over batch? |
 
-Sections 3 onward are written by the batch that builds them (`WORKPLAN.md`
+Sections 3 onward are written by the batch that builds them (`TASKS.md`,
 R1–R8). §9 is the odd one: it specifies a **test**, not a piece of the
 receiver, because the showcase adds no library behaviour and the reason it adds
 none is itself a claim worth stating (§9.1). This document begins with the two sections that constrain all of them:
@@ -177,7 +177,7 @@ sentence above them: `secrets`, `uuid`, `concurrent.futures`, `selectors`,
 `select`, `subprocess`, `sched` and every network library passed a gate
 advertised as proving the receiver has no ambient runtime, and `os` — which R5
 introduced for `fstat` — was the one such surface already open inside a module
-the gate called clean (`patches/REVIEW-2026-10-06.md` F7, F8). R5a closed the
+the gate called clean (`reviews/2026-10-06-run2.md` F7, F8). R5a closed the
 gap rather than narrowing the claim: the ambient rule bans those seven modules
 too, a second rule bans the network (`urllib`, `http`, `requests`, `httpx` and
 their kin — §1.3's read-only posture, and `CLAUDE.md` 9), and a third bans
@@ -450,7 +450,7 @@ completed. Three consequences, each of them the point rather than a side effect:
 The boundary is strict — `>`, not `>=` — because a remainder exactly at the cap
 is a remainder the caller allowed. `max_pending_bytes=0` is therefore legal and
 means every remainder is read the moment it exists — and it is **tested**, which
-it was not when this paragraph first claimed it (`patches/REVIEW-2026-10-06.md`
+it was not when this paragraph first claimed it (`reviews/2026-10-06-run2.md`
 F9): `0` is the one cap value where the strict boundary changes the shape of the
 stream rather than one byte of it, so a stated boundary nothing held was a claim
 with nothing behind it.
@@ -614,7 +614,7 @@ field, and `Router.flush` with it (§6.6). "Declared exactly as the code accepts
 it" is now a **test** and not a promise: `tests/test_routing.py` parses this
 section's own fence and holds `Event` and `Routed` equal to
 `dataclasses.fields`, field by field and default by default
-(`patches/REVIEW-2026-10-06.md` F5). The test found a second drift while it was
+(`reviews/2026-10-06-run2.md` F5). The test found a second drift while it was
 being written — `Routed.events` carries `= ()` in the code and carried none here
 — which is the argument for the test rather than against it: three batches in a
 row amended this block by hand and two of them got it wrong somewhere.
@@ -682,9 +682,10 @@ record against `Builder.feed`'s **97–131 µs**, i.e. **15.5–17.1 %** of
 `spanweave.trace_id_of(record)` would remove most of *that*, not half of
 routing: it is an **optimisation, not a necessity**, and it gets no batch until
 a receiver workload makes routing the cost rather than `feed` and
-materialization (§2.3). The thread is registered in `WORKPLAN.md` §3 while the
-series runs and in `TASKS.md` once it closes; the number above is here so the
-conclusion does not depend on either of them still existing.
+materialization (§2.3). The thread is registered in `TASKS.md` (it was in the
+series' execution state while the series ran, and that file was deleted at its
+close); the number above is here so the conclusion does not depend on either of
+them still existing.
 
 It is in any case **not** worked around here, because the only workaround is a
 dialect read, and §1.1 says what that costs.
@@ -1093,7 +1094,7 @@ key string and the float boxes dominate the payload rather than the numbers do:
 
 Trace-id length moves the figure by under 10 %, so the cost is Python object
 overhead and not the id. At ten traces a second a receiver reaches 10^6 completed
-traces in **about 28 hours** (`patches/REVIEW-2026-10-06.md` §0(b), F1). The
+traces in **about 28 hours** (`reviews/2026-10-06-run2.md` §0(b), F1). The
 numbers are here rather than in the plan because a reader deciding what to do
 about this needs them, and the plan is deleted at series close. `max_traces`
 (§4.5) bounds none of it — it bounds builders. The figures were measured before
@@ -1109,8 +1110,8 @@ new silence it did not ask for. `max_completed=N` bounds the book at `N`
 - It is a **count, not a time.** Memory is what the bound is for, and bytes are
   counted in ids and not in seconds: a horizon of ten minutes bounds nothing at
   all on a stream that completes ten thousand traces a minute, and the number a
-  caller can reason about from `~220 B` is how many it will keep. (`WORKPLAN.md`
-  §3, 2026-10-06.)
+  caller can reason about from `~220 B` is how many it will keep. (`TASKS.md`,
+  *Decisions taken*, 2026-10-06.)
 - It bounds the **completed** entries only. A book whose builder the router still
   holds is that open trace's own state — `Quiet` and the generation's file name
   are read off it — and it is already bounded by the builders held (§4.5).
@@ -1353,7 +1354,7 @@ released builder is still in hand**, and the cursors are dropped after it
 (§5.4's fifth step). `Subscriptions.flush` is the pure half — who is behind, and
 from where, with the cursors advanced — and `Router.flush` is the one a caller
 calls, because producing a delta needs a builder and reporting a refusal needs
-an event, and neither of those is this layer's. `WORKPLAN.md` §3's decision of
+an event, and neither of those is this layer's. `TASKS.md`'s decision of
 2026-10-06 names the caller's entry point `Subscriptions.flush(trace_id)`; it is
 `Router.flush(trace_id)`, for that layering reason, and the lower half keeps the
 name on `Subscriptions`.
@@ -1491,7 +1492,7 @@ worse, and nothing here depends on how it is settled.
   later record. The subscriber is not called, because there is nothing to call it
   with; nothing approximate is offered in its place, for the library's own
   reason. (The second way was `the way to reach it` in this section until R5a,
-  which is where the sentence over-narrowed: `patches/REVIEW-2026-10-06.md` F4.)
+  which is where the sentence over-narrowed: `reviews/2026-10-06-run2.md` F4.)
 - **`delta_unsent`** — a subscriber's **tail could not be produced**. A trace
   that completes (§5.4) while a subscriber's cursor is behind its final version
   has a window that subscriber never asked for by the rule but is owed by the
@@ -1510,7 +1511,7 @@ worse, and nothing here depends on how it is settled.
   `Update.since`, which says exactly how wide each window is; the first half was
   wrong, because the consequence is that a coarse subscriber never sees the end
   of **any** trace whose length is not a multiple of its window — §1.5's silence,
-  reached by calling a delivery a policy (`WORKPLAN.md` §3, 2026-10-06; F2).
+  reached by calling a delivery a policy (`TASKS.md`, *Decisions taken*, 2026-10-06; F2).
 
 Completion therefore has a fifth step after §5.4's four, conditional on the
 router holding subscriptions: every behind subscriber is handed its tail, and
@@ -1535,7 +1536,7 @@ caller has. Both are tested, and the `every=N` fold test runs at `records=7,
 every=2` so that the final version is **not** a multiple of `N`. It ran at
 `records=6` until R5a, which made the claim true of the fixture rather than of
 the mechanism: at `records=7` the same test was red before the trailing delta
-existed (`patches/REVIEW-2026-10-06.md` §0(c), F2 —
+existed (`reviews/2026-10-06-run2.md` §0(c), F2 —
 `CONTRIBUTING.md` forbids exactly that shape of fixture).
 
 `Router.flush(trace_id)` is the caller's half: it hands every behind subscriber
@@ -1629,7 +1630,7 @@ would be a contract this document never offered.
 symmetric. A `Tail` declares `__iter__` and nothing else: `iter(t)` is a fresh
 generator rather than `t`, and `next(t)` is a `TypeError`. R5 said it "**is** the
 iterator" in four places and that is simply false of the object it shipped
-(`patches/REVIEW-2026-10-06.md` §0(d), T10) — a precision defect inside a
+(`reviews/2026-10-06-run2.md` §0(d), T10) — a precision defect inside a
 correction, which is the one place a project that strikes through its own
 premises cannot afford one. The documented usage was never affected.
 
@@ -1722,7 +1723,7 @@ R4 added `version` — is where in that content it had read to.
   a successful reopen and by a poll that finds the path naming the file the tail
   still holds, so a path that reverts and is then rotated away again reports a
   second time. Until R5a it was cleared only on a successful reopen, which made
-  that second failure silent (`patches/REVIEW-2026-10-06.md` F10) — and silent
+  that second failure silent (`reviews/2026-10-06-run2.md` F10) — and silent
   is the one thing §1.5 does not allow. The whole code was also **untested**
   until R5a: deleting its `except OSError` body left the suite green, so
   `tests/test_ingest.py` now holds the event with its offset, that the old
@@ -1803,8 +1804,8 @@ runs `make check` — the whole suite, this file included — on `ubuntu-latest`
 across 3.11–3.14 and on `macos-latest` on 3.12. That macOS job is R5a's: before
 it the only macOS job ran `make conformance`, which is
 `tests/test_conformance.py` alone, so this file had **never run on macOS** while
-the series cited macOS coverage for it (`patches/REVIEW-2026-10-06.md` §0(d),
-F6; `WORKPLAN.md` §3, 2026-10-06). A test in this file asserts the job is still
+the series cited macOS coverage for it (`reviews/2026-10-06-run2.md` §0(d),
+F6; `TASKS.md`, *Decisions taken*, 2026-10-06). A test in this file asserts the job is still
 in the workflow, so the claim and the thing that proves it fail together.
 
 ### 7.2 The OTLP/HTTP endpoint
@@ -2356,7 +2357,7 @@ evaluated on every per-record delta, with the first version at which each rule
 failed recorded as it goes.
 
 It is specified here because its claims are precise and falsifiable, and
-because one of them — the one `WORKPLAN.md` R8 and `spanweave`
+because one of them — the one `TASKS.md` R8 and `spanweave`
 `OPEN_QUESTIONS.md` §19 both predicted — turned out to be **false**. A showcase
 that quietly matched itself to the prediction would be the worst artefact this
 repository could ship, so the prediction, the measurement and the difference
@@ -2425,7 +2426,7 @@ version each first failed at is the table this section is tested against:
 
 The other fifteen pass at every version.
 
-**What was predicted.** `WORKPLAN.md` R8, from `OPEN_QUESTIONS.md` §19: the
+**What was predicted.** `TASKS.md` R8, from `OPEN_QUESTIONS.md` §19: the
 `verify_identity → issue_refund` **order** rule fails "at the version that
 absorbs the `llm.plan` span carrying the `issue_refund` request — one version
 before the `issue_refund` tool span arrives". The mechanism offered was a

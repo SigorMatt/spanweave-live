@@ -235,7 +235,7 @@ class Subscriptions:
         It is the lower half of the trailing delta: an `every=N` subscriber
         whose trace ends between multiples of `N` would otherwise never see the
         tail of it, which is a dropped delta rather than a window nobody asked
-        for (`SPEC.md` §6.6, `WORKPLAN.md` §3, 2026-10-06). What to do with
+        for (`SPEC.md` §6.6, `TASKS.md`, 2026-10-06). What to do with
         these deliveries is the router's, because events are.
         """
         behind: list[Delivery] = []

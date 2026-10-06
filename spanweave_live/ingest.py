@@ -309,7 +309,7 @@ class Tail:
             # reopen, because a path that reverted to the held inode otherwise
             # left the flag set forever and the next genuinely distinct failure
             # was silent -- "once per failure" read as "once per tail"
-            # (`SPEC.md` §7.1, `patches/REVIEW-2026-10-06.md` F10).
+            # (`SPEC.md` §7.1, `reviews/2026-10-06-run2.md` F10).
             self._reopen_pending = False
             return (None, False)
         return self._restart_rotated()

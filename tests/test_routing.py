@@ -123,7 +123,7 @@ def test_the_routers_settings_are_keyword_only_as_SPEC_declares():
     The `*` was a sentence nothing held: the dataclass accepted
     `Router(1, 'openinference', False)`, so the three settings had a positional
     order the spec never promised and a caller could come to rely on
-    (`patches/REVIEW-2026-10-04.md` R2-1). Pre-1.0, so the honest fix is the
+    (`reviews/2026-10-04-run1.md` R2-1). Pre-1.0, so the honest fix is the
     cheap one -- the code is keyword-only and the declared signature is now
     true. `routed`, likewise public and likewise undeclared, is in §4.1 too.
     """
@@ -186,7 +186,7 @@ def test_the_event_block_in_SPEC_is_the_dataclass_the_code_has(name):
     commit message and its CHANGELOG entry, and **did not add the field** —
     which nothing caught, because the only test on the block asserted the
     dataclass's own field order against itself
-    (`patches/REVIEW-2026-10-06.md` F5). This is the cheap test that would have.
+    (`reviews/2026-10-06-run2.md` F5). This is the cheap test that would have.
 
     Fields in declared order, with which of them carry a default, because an
     optional field moved in front of a required one is a signature change a

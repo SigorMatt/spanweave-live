@@ -19,7 +19,7 @@ drift between the two would evaluate one commit's rules over another commit's
 trace, and the first-failure table would move with no commit to explain it.
 The resolution itself is asserted too: `agentgolden` requires
 `spanweave>=0.9.1,<1.0`, and that the *pinned* spanweave satisfies it is a
-fact this file measures rather than a sentence `WORKPLAN.md` R8 asserts.
+fact this file measures rather than a sentence `TASKS.md` R8 asserts.
 """
 
 import importlib.metadata
@@ -117,7 +117,7 @@ def test_every_submodule_is_cloned_over_https_too():
     every job, with a message about a missing key rather than about a pin. The
     dependency half is asserted above; the submodule half was asserted nowhere,
     and a re-added SSH submodule passed `make check` and failed only at CI
-    (`patches/REVIEW-2026-10-04.md` R0-3 / P-5). `SPEC.md` §0.1 states both.
+    (`reviews/2026-10-04-run1.md` R0-3 / P-5). `SPEC.md` §0.1 states both.
 
     Read from `.gitmodules`, which is the file a clone reads, rather than from
     `.git/config`, which is one machine's own.
@@ -230,7 +230,7 @@ def test_the_lockfile_pins_the_showcase_sha_too():
 
 
 def test_the_showcase_dependency_resolves_against_the_pinned_spanweave():
-    """`WORKPLAN.md` R8's parenthetical, measured instead of assumed.
+    """`TASKS.md` R8's parenthetical, measured instead of assumed.
 
     The row says agentgolden's own `spanweave>=0.9.1,<1.0` "resolves against
     the pinned spanweave". It does -- the pinned commit is `0.9.1` -- and the

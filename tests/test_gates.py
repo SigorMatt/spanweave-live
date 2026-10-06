@@ -33,7 +33,7 @@ PLANTED_AMBIENT = [
     ("import asyncio.subprocess", "asyncio"),
     # The modules the run-2 review verified were *not* caught while the gate
     # was advertised as proving "no module reads a clock"
-    # (`patches/REVIEW-2026-10-06.md` F7). Each is the same ambient runtime
+    # (`reviews/2026-10-06-run2.md` F7). Each is the same ambient runtime
     # under another name: `secrets` and `uuid` are unseeded randomness
     # (`CLAUDE.md` 8), and the last five are concurrency or a child process
     # that no fixture can pin (`CLAUDE.md` 4).
@@ -152,7 +152,7 @@ def test_the_os_the_package_really_needs_is_not_banned():
 
 def test_the_gate_states_what_it_does_not_catch():
     """A dynamic import escapes an AST walk, and the gate says so rather than
-    being advertised as more than it is (`patches/REVIEW-2026-10-06.md` T11).
+    being advertised as more than it is (`reviews/2026-10-06-run2.md` T11).
 
     Recorded as a test so the limit is not a comment someone deletes: if the
     rule is ever broadened to flag `importlib.import_module("time")`, this is
@@ -295,7 +295,7 @@ def test_the_gate_scans_every_module_in_the_package_and_not_a_list():
     tripwire (`len(package_files()) >= 2`) accepted. `package_files()` was
     mutated to `[PACKAGE_ROOT / "__init__.py", PACKAGE_ROOT / "cli.py"]`, a
     `spanweave_live/completion.py` importing `time` and `random` was added, and
-    `make check` stayed green (`patches/REVIEW-2026-10-04.md` R0-2).
+    `make check` stayed green (`reviews/2026-10-04-run1.md` R0-2).
 
     So the set is compared against an `rglob` computed here, from this file's
     own location rather than from `gates.PACKAGE_ROOT`: the two have to agree,

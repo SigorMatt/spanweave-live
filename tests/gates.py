@@ -8,7 +8,7 @@ module names as a seam.
 
 R5a added two more rules and widened the first, because the run-2 review
 measured the difference between what the gate was advertised as proving and
-what it enforced (`patches/REVIEW-2026-10-06.md` F7, F8):
+what it enforced (`reviews/2026-10-06-run2.md` F7, F8):
 
 - **no-ambient-runtime** also bans `secrets`, `uuid`, `concurrent.futures`,
   `selectors`, `select`, `subprocess` and `sched`: the same clock, randomness
@@ -77,7 +77,7 @@ PACKAGE_ROOT = pathlib.Path(__file__).resolve().parent.parent / "spanweave_live"
 # The first six are the ones `CLAUDE.md` standing rule 4 names. The rest were
 # added by R5a, because the run-2 review verified that the gate was advertised
 # as proving "no module reads a clock" while every one of these passed it
-# (`patches/REVIEW-2026-10-06.md` F7):
+# (`reviews/2026-10-06-run2.md` F7):
 #
 # `secrets`/`uuid`   -- unseeded randomness under another name (CLAUDE.md 8);
 #                       `uuid.uuid4()` is the obvious one.
@@ -110,7 +110,7 @@ AMBIENT_MODULES = (
 #
 # The parent `spanweave` repository has had this gate since its own R0 and this
 # one did not, which the run-2 review found by planting `import urllib.request`
-# under the package and watching it pass (`patches/REVIEW-2026-10-06.md` F8).
+# under the package and watching it pass (`reviews/2026-10-06-run2.md` F8).
 #
 # `http` is here and `SPEC.md` §7.2's endpoint is `http.server`: that is
 # deliberate. R6 either injected the listener so the import lives in the caller,
@@ -322,7 +322,7 @@ def no_ambient_runtime(
 
     "Static" is the whole of the claim and is said out loud:
     `importlib.import_module("time")` and `__import__("time")` are an AST walk's
-    blind spot and pass this rule (`patches/REVIEW-2026-10-06.md` T11). Nothing
+    blind spot and pass this rule (`reviews/2026-10-06-run2.md` T11). Nothing
     in the package imports `importlib`, and either form is conspicuous in
     review, so the honest answer is to state the limit rather than to advertise
     the gate as more than it enforces.
@@ -410,7 +410,7 @@ def no_ambient_os(
     The module itself is not banned because `SPEC.md` §7.1's tail is built on
     `os.fstat` and `os.PathLike`. This is the narrower rule that keeps the one
     legitimate use from carrying `os.urandom`, `os.times` and `os.pipe` in with
-    it (`patches/REVIEW-2026-10-06.md` F7).
+    it (`reviews/2026-10-06-run2.md` F7).
     """
     allowed = (SEAMS if seams is None else seams).get(_seam_key(path), frozenset())
     if "os" in allowed:

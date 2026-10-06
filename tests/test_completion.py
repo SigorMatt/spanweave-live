@@ -755,7 +755,7 @@ def test_a_third_generation_is_written_beside_the_first_two(tmp_path):
 
 # --------------------------------------------------------------------------
 # The book is bounded by the caller's `max_completed`, and forgetting is an
-# event (`SPEC.md` §5.5, `WORKPLAN.md` §3's decision of 2026-10-06).
+# event (`SPEC.md` §5.5, `TASKS.md`'s decision of 2026-10-06).
 # --------------------------------------------------------------------------
 
 

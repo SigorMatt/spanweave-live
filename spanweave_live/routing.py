@@ -732,7 +732,7 @@ class Router:
         partial window would be a policy the caller never asked for; the
         measurement that changed it is that an `every=N` subscriber then never
         sees the end of any trace whose length is not a multiple of `N`, which
-        is a **dropped delta** and not a policy (`WORKPLAN.md` §3, 2026-10-06).
+        is a **dropped delta** and not a policy (`TASKS.md`, 2026-10-06).
         So it goes out, through the same `_hand_over` the per-record fan-out
         uses, and `delta_unsent` is kept for the one case where the window
         cannot be produced at all.

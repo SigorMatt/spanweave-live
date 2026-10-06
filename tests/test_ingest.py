@@ -496,7 +496,7 @@ def test_a_rotation_that_cannot_be_reopened_keeps_the_handle_and_says_so(
     """`reopen_failed`: specified, exported, and until now untested.
 
     Deleting the whole `except OSError` body left the suite green
-    (`patches/REVIEW-2026-10-06.md` F10), so this is the test that holds the
+    (`reviews/2026-10-06-run2.md` F10), so this is the test that holds the
     three things §7.1 promises about it: the replacement is opened **before**
     the old handle is closed, so a failure leaves the tail reading what it
     already had; the event carries the `offset` it had reached; and it is
@@ -544,7 +544,7 @@ def test_a_second_distinct_reopen_failure_is_reported_again(tmp_path: Path) -> N
     The streak flag was cleared only on a successful reopen, so a path that
     reverted to the file the tail still holds left it set forever and the next
     genuinely distinct rotation failure was silent — a dropped report, which
-    §1.5 does not allow (`patches/REVIEW-2026-10-06.md` F10). Here the path is
+    §1.5 does not allow (`reviews/2026-10-06-run2.md` F10). Here the path is
     rotated onto a directory, reverted to the held file, and rotated onto a
     directory again: two rotations, two failures, two events.
     """
@@ -788,8 +788,8 @@ def test_these_tests_run_on_both_platforms_the_section_claims() -> None:
     answers, not the receiver's (`SPEC.md` §7.1) — which is exactly why "the
     code is portable" is not a claim a one-OS test run can make. Until R5a the
     only macOS job ran `make conformance`, i.e. `tests/test_conformance.py`
-    alone, so **this file had never run on macOS** while `WORKPLAN.md` §4 cited
-    macOS for it (`patches/REVIEW-2026-10-06.md` F6, `WORKPLAN.md` §3,
+    alone, so **this file had never run on macOS** while the series' own notes
+    cited macOS for it (`reviews/2026-10-06-run2.md` F6; `TASKS.md`, R5 and
     2026-10-06). CI gains a `check` job on `macos-latest`, which runs the whole
     suite including this file.
 

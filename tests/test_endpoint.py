@@ -181,7 +181,7 @@ def posting() -> Any:
 def test_the_blocks_in_SPEC_are_the_dataclasses_the_code_has(name):
     """§7.2 says the block is declared exactly as the code accepts it. Held.
 
-    The same test §4.1 earned the hard way (`patches/REVIEW-2026-10-06.md` F5),
+    The same test §4.1 earned the hard way (`reviews/2026-10-06-run2.md` F5),
     applied to this section's three dataclasses from the day they exist rather
     than after three batches amended a fence by hand.
     """

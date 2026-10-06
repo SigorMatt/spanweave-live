@@ -8,6 +8,82 @@ of change is a **batch** (`WORKPLAN.md`), and each entry names the batch.
 
 ## Unreleased
 
+### R9 — the receiver series closes, and its execution state is deleted (2026-10-06)
+
+No change under `spanweave_live/` except two re-pointed citations. This is the
+close: the series' plan is deleted, everything in it that a later reader needs
+is folded into tracked files, and the README finally describes what the library
+does rather than what it is going to do.
+
+Added
+
+- **`TASKS.md`**, the item registry: one line per batch for R0–R9 with the
+  commit that closed it, the series' **decisions log** (thirteen rows, the
+  deleted plan's §3) and its **resume note** (the deleted plan's §4) folded in
+  per batch, the disposition of every finding of both reviews, and the origins
+  table. The fold is both sections and not one, which was itself a review
+  finding (**F12**): the decision to fold both had been taken on 2026-10-05 and
+  reached the plan's §0.6 and §3 but never the R9 row that an agent executes.
+  Where a measurement already lives in `SPEC.md` — the `trace_id_of` share of
+  routing (§4.2), the per-id cost of the completed-trace book (§5.5) — the
+  registry points at the spec instead of copying the number, because two copies
+  of a number drift.
+- **`reviews/`**, which makes the two cold reviews tracked content for the first
+  time. `reviews/2026-10-04-run1.md` and `reviews/2026-10-06-run2.md` are
+  **byte-identical** to the `patches/REVIEW-<date>.md` files they were written
+  as — `patches/` is `.gitignore`d, so until now every citation of a review in
+  `SPEC.md`, `tests/` and `.github/` pointed at a file a stranger's checkout
+  does not contain. Their sha256 are recorded in `TASKS.md`; the copies are
+  unedited and keep their own errors, including run 2's header miscounting its
+  own body (eight `next batch` findings claimed, twelve listed — twelve is
+  right) and run 1's withdrawal of one of its own clean lines.
+- **`tests/install_check.py` audits the sdist**, not only the wheel. The sdist's
+  `include` is an allowlist, so `reviews/` is absent from it by default — which
+  is correct and is now asserted rather than assumed, together with `corpus/`
+  and `showcase/` being absent and `TASKS.md` being present. The wheel's
+  forbidden list gains `showcase/` and `reviews/` and drops `WORKPLAN.md`, which
+  this commit makes vacuous.
+- **`CONTRIBUTING.md` asks for the resolved parent sha** in the commit body, not
+  the sha the author started from (thread **T7**): one commit in this series
+  claimed a parent two commits back and was right only by luck. The deleted
+  plan's batch brief was the other home for that line, so this is where it
+  lives now.
+
+Changed
+
+- **`README.md` rewritten.** It now documents the CLI — both commands, the
+  policy and bound flags, the exit codes, and the two traps a user meets before
+  anything else (`--max-completed` can overwrite a written graph; line numbers
+  after a `fragment_too_long` are the framer's) — and the API, as a runnable
+  example plus one row per piece with the `SPEC.md` section that specifies it.
+  Its old closing sentence ("`Framer`, `Router`, … arrive in R1–R7") had been
+  stale since R3 and was left alone on purpose: the plan assigned the README to
+  this batch so that no batch would patch that line piecemeal while it was
+  still partly true.
+- **Every live citation of the deleted plan re-pointed** at `TASKS.md`:
+  `SPEC.md` (eight sites), `spanweave_live/routing.py`,
+  `spanweave_live/subscriptions.py`, six test modules,
+  `.github/workflows/ci.yml` and `CONTRIBUTING.md`. The **plan** citations in
+  this file are deliberately left as they stand: each sits inside a dated batch
+  entry, so it records what was true when that batch landed, and
+  `git show b500342:WORKPLAN.md` resolves it.
+- **Every citation of `patches/REVIEW-<date>.md` re-pointed** at its
+  `reviews/` archive, in this file too, because there the bytes are identical
+  and the archive is tracked: a citation that resolves from a clean checkout
+  beats one that names the path it was written at.
+
+Removed
+
+- **`WORKPLAN.md`.** It was the series' execution state — the operating
+  protocol, the batch rows with their acceptance criteria, the decisions log and
+  the resume note — and it was written to be deleted at close so that nobody
+  looking for what this project *is* has two places to look. Its own §0.6 said
+  so from the first commit. The file is still readable at
+  `git show b500342:WORKPLAN.md`, and `TASKS.md` carries what outlives it.
+- The series-close commit is also the one plan commit in the series that
+  **cannot** say `plan:`, as the plan's §0.7 stated in advance: a `plan:` commit
+  deleting the plan would have nothing left to be the plan of.
+
 ### R8 — the showcase: agentgolden's rules per delta, and a premise corrected (2026-10-06)
 
 No change under `spanweave_live/`. The receiver already had everything a live
@@ -302,7 +378,7 @@ Added
 
 ### R5a — the run-2 review's `next batch` items, closed (2026-10-06)
 
-One commit for the twelve findings `patches/REVIEW-2026-10-06.md` marks
+One commit for the twelve findings `reviews/2026-10-06-run2.md` marks
 `next batch`. Three of them were behaviour, three were a gate, one was CI, and
 the rest were documents that claimed more than the code did. The two that are
 the orchestrator's file (`WORKPLAN.md` F11, F12) are not touched here.
@@ -711,7 +787,7 @@ Added
 A fix batch: no new piece, no new behaviour the receiver did not already have.
 It makes the documents true where they were not, and makes five tests able to
 fail where they were passing over empty sequences. Every item is from
-`patches/REVIEW-2026-10-04.md`, which is the cold review of run 1.
+`reviews/2026-10-04-run1.md`, which is the cold review of run 1.
 
 Added
 
