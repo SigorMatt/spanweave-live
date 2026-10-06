@@ -5,7 +5,7 @@ network, the clock and the consumer (`spanweave` `OPEN_QUESTIONS.md` §19,
 decided 2026-09-29). One batch = one sub-agent = one commit = one concern.
 This file plus git is the only state; any session can resume cold from it.
 
-Last updated: 2026-10-06 (run 3 under way: R2c, R5a done; R3a → R6 → R7 → R8 → R9 remain).
+Last updated: 2026-10-06 (run 3 under way: R2c, R5a, R3a done; R6 → R7 → R8 → R9 remain).
 
 ---
 
@@ -154,8 +154,8 @@ commit that cannot say `plan:`, and the watcher exempts it once per series.
 | R4 | **Subscription and delta fan-out.** `Subscriptions` (SPEC §6): a consumer registers a callback for one trace or all; after each absorbed record the router hands each subscriber `delta(since=version-1)` (per-record mode) or, for a subscriber that asked for `every=N`, `delta(since=last_seen)`; retention is set from the longest window any subscriber asked for; a callback that raises is isolated — recorded as `consumer_error` with the trace id and version, other subscribers still called, the record still absorbed. Tests: folding every delta a subscriber received onto its first graph equals the final `graph()`; a raising subscriber never stalls another. Mutation: a fan-out that skips the subscriber after the raising one fails. | done (54a6009) | 10 |
 | R5 | **Ingest: file tail and stdin.** `tail(path, *, now, sleep, poll_seconds)` (SPEC §7.1) follows a growing file from an offset through `Framer.push`, survives truncation (restarts from 0 and emits `truncated`), and rotation (reopens by path); `stdin()` reads chunks until EOF. Both take `sleep` injected, so the test drives them on a fake clock with a file it appends to between ticks. ~~Both are generators of `Records`~~ — corrected by R5: `stdin()` is a generator, but `tail` returns a `Tail`, a single-use iterable that carries its events, because §3.1 forbids wrapping `Records` and a bare generator has nowhere to carry its events; see §4. Tests: a corpus rendering appended in random chunks is routed to the same graphs as gate A; truncation and rotation are events. | done (a7ade79) | 10 |
 | R5a | **The run-2 review's twelve `next batch` items, closed.** Read `patches/REVIEW-2026-10-06.md` and close every `next batch` item as the file states it, one commit, tests first, mutation shown. Among them: the `every=N` trailing delta on completion and on `flush` (§3), with the fold test at `records=7, every=2` red on the parent; `check (macos-latest, 3.12)` added to CI, and the run on that job printed in the body; the four `Tail` sentences corrected to "a single-use iterable, not an iterator", with the SPEC §3.1 reason kept; items the file lists that this row does not name are closed too. | done (c1e6946) | 8 |
-| R3a | **Completed trace ids are forgotten by the caller's bound.** `Router(max_completed=None)`; SPEC §5.5 rewritten from "unbounded" to the policy in §3. Tests on the fake clock, red on the parent: with `max_completed=2` and three completions the oldest is evicted at the next tick with one `forgotten` event carrying its id and completion tick; a record for the forgotten id opens generation 1 and emits no `late_arrival`; a record for a remembered id still emits `late_arrival` with the gap; with `None` nothing is ever forgotten across the whole suite. Measure the book after eviction (the review's ~220 B/id method) and put the number in the body. Mutation: an eviction that emits no `forgotten` fails. | todo | 6 |
-| R6 | **Ingest: OTLP/HTTP JSON endpoint.** (SPEC §7.2) Stdlib `http.server` only; one handler for `POST /v1/traces` with `Content-Type: application/json`, body → `Framer.document`; `Content-Encoding: gzip` accepted; anything else 415; the listener factory is injected so tests use a loopback socket on port 0. Tests: the `otlp_container` renderings posted as bodies route to the batch graph; a non-JSON body is 400 with the receiver's event, never a traceback. | awaiting R5 | 10 |
+| R3a | **Completed trace ids are forgotten by the caller's bound.** `Router(max_completed=None)`; SPEC §5.5 rewritten from "unbounded" to the policy in §3. Tests on the fake clock, red on the parent: with `max_completed=2` and three completions the oldest is evicted at the next tick with one `forgotten` event carrying its id and completion tick; a record for the forgotten id opens generation 1 and emits no `late_arrival`; a record for a remembered id still emits `late_arrival` with the gap; with `None` nothing is ever forgotten across the whole suite. Measure the book after eviction (the review's ~220 B/id method) and put the number in the body. Mutation: an eviction that emits no `forgotten` fails. ~~evicted at the next tick~~ — evicted **in the tick whose completion pushes the book past the bound**, because a tick that completes nothing has no `Completed` to carry the event; settled by R3a, see §4. | done (baa32cb) | 6 |
+| R6 | **Ingest: OTLP/HTTP JSON endpoint.** (SPEC §7.2) Stdlib `http.server` only; one handler for `POST /v1/traces` with `Content-Type: application/json`, body → `Framer.document`; `Content-Encoding: gzip` accepted; anything else 415; the listener factory is injected so tests use a loopback socket on port 0. Tests: the `otlp_container` renderings posted as bodies route to the batch graph; a non-JSON body is 400 with the receiver's event, never a traceback. | todo | 10 |
 | R7 | **CLI.** `spanweave-live tail <path> --out <dir> [--quiet S] [--root-grace S] [--cap N] [--deltas]` and `spanweave-live serve --port P --out <dir>`: final graphs written as `<trace_id>.json` with `spanweave.dump`; `--deltas` writes each per-record delta document to stdout as one line; every event to stderr as one JSON line with its code; exit codes documented. Tests through `subprocess` on a corpus rendering. | awaiting R6 | 8 |
 | R8 | **Showcase: agentgolden's rules per delta.** agentgolden is `SigorMatt/agentgolden` at `aa1847f`, pinned as a dev dependency by git sha (its own `spanweave>=0.9.1,<1.0` resolves against the pinned spanweave). A consumer that, on each per-record delta, takes the trace's `graph()`, computes agentgolden's `Signature`, evaluates `examples/support_agent/rules.toml` **unchanged** with `agentgolden.rules.evaluate`, and records the first version at which each rule fails. The trace is agentgolden's own `examples/support_agent/candidates/skipped_verification.openinference.jsonl`, replayed through `Framer` + `Router`. Test: the first-failure version table is asserted exactly, and the `verify_identity → issue_refund` order rule fails at the version that absorbs the `llm.plan` span carrying the `issue_refund` request — one version before the `issue_refund` tool span arrives — which is the "when it almost happened" the memo promised; the same rules on the batch graph of the whole trace give the same final verdicts (batch and live are one model). | awaiting R7 | 12 |
 | R9 | **The receiver series closes.** `TASKS.md` registry R0–R9 with shas; ~~§3 folded~~ **§3 and §4 both folded** (the §0.6 correction of `9a2e40f` had never reached this row — the one an agent executes; R5a/F12); `reviews/` holds every review byte-for-byte with sha256 and every finding dispositioned; WORKPLAN.md deleted; README covers the CLI and the API; PR `receiver` → `main`. No `plan:` commit follows. | awaiting R8 | 8 |
@@ -467,6 +467,39 @@ onward land on `receiver`.
   folded" while §0.6 and §3 had said "§3 and §4" since `9a2e40f`, which left the
   corrected decision in the two places nobody reads at close and out of the one
   instruction an agent executes.
+- 2026-10-06 R3a (`baa32cb`, CI green on that sha, 7/7): the series' **only
+  unbounded cost is now bounded** — `Router(max_completed=None)` forgets the
+  oldest-completed trace ids past the caller's count, one `forgotten` event per
+  id. Tests 492 → 503. Red on the code parent `c1e6946`: **11 failures**. Two of
+  the eleven new items pass there and are guards rather than new behaviour (that
+  `max_completed` appears in no other test file, and the `len(_books) -
+  len(_builders)` identity, which already held) — worth knowing so the 9 is not
+  read as 11.
+- 2026-10-06 R3a — **the measurement, so the policy's number is a number**
+  (SPEC §5.5 carries the table): per-id cost is unchanged by the bound at
+  **~221 B/id**, and the bound simply stops the growth. 10^5 completions at
+  `max_completed=1000` hold 1,000 ids for 221,036 B with **RSS delta 0**;
+  unbounded, the same 10^5 is 20.7 MB and 10^6 is 230.5 MB — which is R3's
+  ~210 MB estimate confirmed rather than assumed.
+- 2026-10-06 R3a — **the decision's "at the next tick" was underspecified and is
+  settled above.** Eviction happens in the tick whose completion pushes the book
+  past the bound, and the `forgotten` rides on that `Completed`: a tick that
+  completes nothing has no `Completed` to carry an event, and the alternative was
+  changing `tick()`'s return type, which the decision does not state. Argued in
+  SPEC §5.5 and in `_forget`'s docstring, not just chosen.
+- 2026-10-06 R3a — **a consequence R7 inherits, and it is a file-overwrite.**
+  Forgetting an id loses its generation, so a later record for a forgotten id
+  writes `<trace_id>.json` **over** the file the earlier completion wrote. SPEC
+  §5.5's "the file already written is not rewritten" now holds **only while the
+  completion is remembered**. Stated in SPEC and pinned by a byte comparison in
+  the test. It follows from the decided policy rather than being invented, so R3a
+  did not halt — but **R7's `--out <dir>` is the first caller that can lose a
+  graph this way**, and R7 should say so where a human reads it.
+- 2026-10-06 R3a — routing's `Event` gained one optional field **`at`** (the
+  completion tick), following `seconds` (R3), `version` (R4) and `offset` (R5);
+  SPEC §4.1 says why it is `at` and not `seconds`. R5a's SPEC-block test did its
+  job: §4.1 had to be edited in the same commit or the test failed, which is
+  exactly the drift R5a set it to catch.
 ## 5. Origins
 
 | ID | Origin |
