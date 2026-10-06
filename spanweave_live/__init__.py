@@ -16,6 +16,15 @@ ingests -- `tail` and `stdin` -- and the codes for what happens to a file that
 is not growth, R3a the code a router emits when the caller's bound on the
 completed-trace book makes it forget one, and R6 the OTLP/HTTP endpoint and the
 two codes it refuses with.
+
+**R7 adds nothing here**, which is the shape of that batch rather than an
+omission: the CLI (`SPEC.md` §8) is a *caller* of everything above, and its one
+public name is the `spanweave-live` console script. Its two internal modules are
+deliberately absent from this API -- `spanweave_live.cli` is an entry point, and
+`spanweave_live.real` is the thirty lines that bind the real `time.monotonic`,
+the real `time.sleep` and a real `HTTPServer` at one process's edge. Exporting
+`real` would publish a clock this library is built not to own (§1.4): a caller
+that wants the real one imports `time` in its own code, where it is visible.
 """
 
 from __future__ import annotations

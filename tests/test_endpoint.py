@@ -716,8 +716,9 @@ def test_the_endpoint_needs_no_entry_in_the_seam_allowlist() -> None:
     needed, as it predicted R3's clock and R5's sleep. All three were wrong, and
     for the same reason: the handler's base class and the listener factory are
     parameters with **no defaults**, so no module under `spanweave_live/`
-    imports `http`, `socketserver` or `socket` (`SPEC.md` §1.4, §7.2). R7's CLI
-    is where `import http.server` finally appears.
+    imports `http`, `socketserver` or `socket` (`SPEC.md` §1.4, §7.2). R7 is
+    where `import http.server` finally appears, in `spanweave_live/real.py` --
+    and this file is still unexempted, which is what the second assertion says.
     """
     source = gates.PACKAGE_ROOT / "endpoint.py"
     assert source.exists()
@@ -729,7 +730,11 @@ def test_the_endpoint_needs_no_entry_in_the_seam_allowlist() -> None:
         )
         == []
     )
-    assert gates.SEAMS == {}, "R6 added no seam file: the caller supplies the socket"
+    assert "endpoint.py" not in gates.SEAMS, (
+        "R6 added no seam entry: the caller supplies the socket. R7's "
+        "`real.py` is the allowlist's one entry and this file is not it "
+        "(SPEC.md 8.2)"
+    )
 
 
 def test_the_endpoint_events_are_routings_event_and_carry_no_new_field() -> None:

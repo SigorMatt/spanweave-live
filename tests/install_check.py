@@ -114,6 +114,33 @@ def check_installed(wheel: Path) -> None:
         print(f"  console script says   : {version.stdout.strip()}")
         assert facts["spanweave_live_version"] in version.stdout
 
+        # And it runs a **command**, not just `--version` (R7, `SPEC.md` §8):
+        # one corpus record piped to `tail -`, from outside the repo, and the
+        # graph has to land as `<trace_id>.json`. `--version` proves the console
+        # script exists; this proves the thing a human runs works in what ships.
+        record = (
+            REPO
+            / "corpus"
+            / "fixtures"
+            / "conformance"
+            / "single_tool_call"
+            / "dialects"
+            / "openinference.jsonl"
+        ).read_bytes()
+        out = Path(tmp) / "graphs"
+        tailed = subprocess.run(
+            [str(script), "tail", "-", "--out", str(out)],
+            cwd=outside,
+            input=record,
+            capture_output=True,
+        )
+        if tailed.returncode != 0:
+            sys.stderr.write(tailed.stderr.decode())
+            raise SystemExit(f"FAILED ({tailed.returncode}): the shipped `tail`")
+        written = sorted(path.name for path in out.iterdir())
+        print(f"  shipped tail wrote    : {written}")
+        assert written == ["t1.json"], written
+
 
 def main() -> int:
     print("install-check: building what ships")

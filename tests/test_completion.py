@@ -169,16 +169,23 @@ def test_now_has_no_default_because_no_module_here_holds_a_clock():
         Completion(policies=(Quiet(1.0),))  # type: ignore[call-arg]
 
 
-def test_the_seam_allowlist_is_still_empty_after_this_batch():
+def test_the_seam_allowlist_does_not_name_this_batchs_module():
     """R3 is the batch that was expected to need a seam, and it did not.
 
-    `tests/test_gates.py` asserts the allowlist is empty; this asserts the same
-    thing from the side that could have changed it, so the fact is stated where
-    a reader of §5 is looking.
+    `tests/test_gates.py` holds the allowlist's whole contents; this asserts the
+    half of it that is §5's, from the side that could have changed it, so the
+    fact is stated where a reader of §5 is looking. `Completion.now` has no
+    default, so `completion.py` imports no clock and needs no entry -- and the
+    one entry the allowlist does have, R7's `real.py`, is what hands `now` the
+    real `time.monotonic` from outside the package (`SPEC.md` §5.2, §8.2).
+
+    This test asserted `SEAMS == {}` until R7, which was true of every batch
+    before the one that *is* a caller.
     """
     from tests import gates
 
-    assert dict(gates.SEAMS) == {}
+    assert "completion.py" not in gates.SEAMS
+    assert dict(gates.SEAMS) == {"real.py": frozenset({"time", "http.server"})}
 
 
 def test_a_router_without_a_completion_policy_completes_nothing():
@@ -1026,7 +1033,17 @@ def test_no_other_test_in_the_suite_sets_a_bound():
         for path in here.parent.glob("*.py")
         if path != here and "max_completed" in path.read_text(encoding="utf-8")
     )
-    assert elsewhere == []
+    # R7's `tests/test_cli.py` is the one exception and it is named here rather
+    # than quietly allowed: `--max-completed` is how this batch's own
+    # consequence -- a forgotten id writing its graph OVER the earlier file --
+    # is proved from the outside (`SPEC.md` §8.5). It sets the bound in the
+    # processes it runs, never in a router of this suite's, which is what the
+    # second assertion holds: so every router the rest of the suite builds,
+    # gate A's included, still has the default and forgets nothing.
+    assert elsewhere == ["test_cli.py"]
+    assert "max_completed=" not in (here.parent / "test_cli.py").read_text(
+        encoding="utf-8"
+    )
 
 
 # --------------------------------------------------------------------------

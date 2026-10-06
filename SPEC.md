@@ -155,11 +155,14 @@ and fake in every test.
 No module under `spanweave_live/` imports `time`, `datetime`, `random`,
 `socket`, `threading` or `asyncio`, except a seam file named in the allowlist in
 `tests/gates.py`, and the gate fails the build when one does. The allowlist was
-empty at R0 and is **still empty**: R3 needed no entry for the clock (§5.2),
-R5 needed none for sleeping (§7.1) and R6 needed none for listening (§7.2),
-because a seam with no default is a seam the caller binds and there is then no
-import to exempt. All three candidates R0 named have now declined the entry,
-and nothing is left that was predicted to want one.
+empty at R0 and has **exactly one entry**, added by R7:
+`{"real.py": {"time", "http.server"}}` (§8.2). R3 needed no entry for the clock
+(§5.2), R5 none for sleeping (§7.1) and R6 none for listening (§7.2), because a
+seam with no default is a seam the caller binds and there is then no import to
+exempt — so all three candidates R0 named declined it, and the batch that could
+not decline it is the one that *is* a caller. A process has to read a real clock
+and bind a real socket once, at its edge, and §8.2 is why that edge is fifty
+lines in a file of its own rather than a line in the CLI.
 
 **What the gate enforces, exactly.** Those six are the modules this paragraph
 has always named, and the run-2 review measured the gap between them and the
@@ -178,7 +181,8 @@ and that limit is stated in the rule's own docstring and held by a test rather
 than left for a reader to find. R6's `http.server` was the first import that
 had to either be injected away or earn one narrow allowlist line, and it was
 injected away: the handler's base class and the listener factory are two
-parameters with no defaults, so the import lives in R7's CLI (§7.2).
+parameters with no defaults, so the import lives in R7's
+`spanweave_live/real.py` (§7.2, §8.2) — the one file the allowlist names.
 
 Why a gate and not a convention: completion is a timeout policy (§5), and a
 timeout policy tested against the real clock is a test that passes on a fast
@@ -899,7 +903,8 @@ allowlist in `tests/gates.py` is still empty after this batch, which was the
 design goal rather than an accident: a module holding `time.monotonic` as a
 default would have earned an allowlist entry, and `now` with no default costs
 the caller one argument and costs the test suite nothing. R7's CLI is where the
-real clock is bound.
+real clock is bound, in `spanweave_live/real.py` — the allowlist's one entry
+(§8.2).
 
 Three rules make the reading deterministic:
 
@@ -1561,7 +1566,8 @@ hands back what the framer said about them.
 §7.1 is the two sources that are files, and is R5's. §7.2 is the OTLP/HTTP
 endpoint and is R6's; §8 is the CLI (R7), which is where the real
 `time.monotonic`, the real `time.sleep`, the real listener and the one
-`import http.server` are finally bound.
+`import http.server` are finally bound — all four in `spanweave_live/real.py`,
+the single file the seam allowlist names (§8.2).
 
 ### 7.1 `tail` and `stdin` — a growing file, and a pipe
 
@@ -1654,7 +1660,7 @@ what is in it. A caller that wants only new bytes passes the file's current size
 follows forever. It is the caller's because "stop after this long" is a policy
 (§1.2) and because a test needs a stop that is not a timeout.
 
-#### The clock and the sleeping are the caller's, and the allowlist stays empty
+#### The clock and the sleeping are the caller's, and the allowlist stayed empty
 
 `now` and `sleep` have **no defaults**, exactly as `Completion.now` has none
 (§5.2). So **no module under `spanweave_live/` imports `time`, and the seam
@@ -1663,7 +1669,7 @@ batch R0 expected to need the first entry for `sleep`, and it does not, for the
 same reason R3 did not need one for the clock: a parameter with no default costs
 the caller one argument and costs the test suite nothing, while a module holding
 `time.sleep` as a default would have to be exempted from the gate forever. R7's
-CLI binds the real pair.
+CLI binds the real pair, in `spanweave_live/real.py` (§8.2).
 
 What that buys is the only kind of tail test worth having. The file is written
 **when the tail sleeps**, in the test's own scripted order, so "it read the bytes
@@ -1974,9 +1980,10 @@ is two things, not one, and both are injected with **no default**:
 So **the seam allowlist in `tests/gates.py` is still `{}` after this batch**, as
 it was after R3 (`now`), R4 and R5 (`sleep`). R0 predicted that R6's listener
 would need the first entry, and that is the third wrong prediction of the same
-kind: the pattern all three share is a parameter with no default. R7's CLI is
-where `import http.server` finally appears, beside the real `time.monotonic`
-and `time.sleep`.
+kind: the pattern all three share is a parameter with no default. R7 is where
+`import http.server` finally appears, beside the real `time.monotonic` and
+`time.sleep`, in the one file the allowlist names (§8.2) — and `endpoint.py`
+itself is still unexempted.
 
 `handler_class(base, endpoint)` is the one place the shape is not a plain
 callable seam, and it is positional-only (`/`) because the two arguments are the
@@ -2038,7 +2045,295 @@ bytes would have been green, which is why `spellings()` has three entries and
 why one test in that file asserts, at the framer and with no socket in it, that
 the three really do differ.
 
-## 8 onward
+## 8. The CLI — the one place the real world is bound
 
-Reserved: §8 CLI (R7). A batch adds its section here in the same commit as its
-code, and nothing else edits them.
+Everything above this section is a library somebody drives. This is the
+somebody: two commands, a set of flags that are nothing but the policies §3
+through §7 already defined, and the **one module in this package that imports
+`time` and `http.server`**. So §8 carries the project's first seam-allowlist
+entry, and the reason it is here rather than anywhere else is that a process has
+to read a real clock and bind a real socket exactly once, at its edge.
+
+The CLI invents no mechanism. Every flag sets a value an earlier section
+declared, the files it writes are §5.4's writes, the lines on stdout are §6's
+deltas, and the lines on stderr are §1.5's events. What is new is only what a
+process needs and a library does not: where the bytes come from, when to stop,
+and what to exit with.
+
+### 8.1 The surface
+
+```text
+spanweave-live tail <path> --out <dir>
+    [--quiet S] [--root-grace S] [--cap N]
+    [--max-traces N] [--max-completed N] [--max-pending-bytes N]
+    [--deltas] [--poll-seconds S] [--once]
+
+spanweave-live serve --port P --out <dir>
+    [--host H] [--requests N]
+    [--quiet S] [--root-grace S] [--cap N]
+    [--max-traces N] [--max-completed N] [--max-pending-bytes N]
+    [--deltas]
+```
+
+That block is the whole surface, and a test parses it out of this file and holds
+it against the parser flag by flag, in both directions, exactly as
+`tests/test_routing.py` holds §4.1's dataclasses to their declaration (R5a, F5).
+A flag added to the code and not to this block fails, and so does one added here
+and not built.
+
+`<path>` is a file to follow, or `-` for stdin. Everything else is a knob some
+section above already argued for:
+
+| flag | what it sets | where it is defined |
+|---|---|---|
+| `--out <dir>` | `Completion(out_dir=...)` | §5.4 |
+| `--quiet S` | `Quiet(S)` | §5.3 |
+| `--root-grace S` | `RootEnded(S)` | §5.3 |
+| `--cap N` | `Cap(N)` | §5.3 |
+| `--max-traces N` | `Router(max_traces=N)` | §4.5 |
+| `--max-completed N` | `Router(max_completed=N)` | §5.5 |
+| `--max-pending-bytes N` | `Framer(max_pending_bytes=N)` | §3.4 |
+| `--deltas` | one `Subscriptions.subscribe(…, trace_id=None, every=1)` | §6.1 |
+| `--poll-seconds S` | `tail(…, poll_seconds=S)` | §7.1 |
+| `--once` | `tail(…, until=…)` | §7.1 |
+| `--host H`, `--port P` | the listener's address | §7.2 |
+| `--requests N` | `serve(…, until=…)` | §7.2 |
+
+**The policies compose in the order that table lists them** — `--quiet`, then
+`--root-grace`, then `--cap` — because §5.4's any-of is "the first policy in the
+caller's tuple that fires" and a command line has no tuple order of its own.
+Picking an order is unavoidable; hiding which one it is would not be. A caller
+who needs another order has the API.
+
+`--out` is **required** and there is no flag that turns writing off. A caller
+that wants live graphs and no files has `Completion(out_dir=None)` (§5.1); a CLI
+whose default was "compute and discard" would be a receiver that looks like it
+is working and leaves nothing behind.
+
+### 8.2 One module binds the real world, and it is the allowlist's one entry
+
+`spanweave_live/real.py` holds four names and nothing else:
+
+```python
+monotonic: Callable[[], float]                      # time.monotonic
+sleep: Callable[[float], None]                      # time.sleep
+HTTP_HANDLER_BASE: type[Any]                        # BaseHTTPRequestHandler
+def http_listener(address: tuple[str, int], handler: type[Any], /) -> Any: ...
+```
+
+and `tests/gates.py`'s allowlist names that file, with exactly the two modules
+it may import:
+
+```python
+SEAMS = {"real.py": frozenset({"time", "http.server"})}
+```
+
+That is the project's **first** allowlist entry, after three batches that were
+each predicted to need one and each declined it — R3's clock (§5.2), R5's
+`sleep` (§7.1) and R6's listener (§7.2) — because each turned out to be a
+parameter with no default. R7 cannot be the fourth: `Completion.now`,
+`tail`'s `now` and `sleep`, and `serve`'s listener factory are those
+parameters, and **somebody has to hand them the real thing**. A process that
+read its clock from its caller would have no caller. The entry is therefore not
+a weakening of the three refusals; it is the place all three were deferring to,
+and §1.4, §5.2, §7.1 and §7.2 each name it.
+
+Two choices keep it narrow rather than convenient:
+
+- **It is a file of its own, not the CLI.** An allowlist entry exempts a whole
+  file, so the exempted file is fifty-odd lines that do nothing but hand back the
+  real thing. `cli.py` — the several hundred lines where a stray
+  `time.monotonic()` could actually hide — stays under the gate unexempted, as
+  does every other module in the package.
+- **It names `http.server`, not `http`.** The allowlist matches a module or
+  anything under it, so `http` would have exempted `http.client` and
+  `http.cookies` with it. One file, two names, and both names are written down
+  here.
+
+`real.py` is deliberately **not** exported from `spanweave_live/__init__.py`.
+The public API is what that file exports (`CLAUDE.md`), and these four names are
+not API: they are what one process binds at its edge. A library caller that
+wants the real clock imports `time` in its own code, where it is visible.
+
+### 8.3 Events go to stderr, one JSON line each
+
+Every event the receiver makes while the CLI runs is written to **stderr** as
+one JSON object on one line, with sorted keys, ASCII-escaped — so that a line is
+one line whatever a trace payload held — and flushed as it is written. stdout
+carries deltas and nothing else (§8.4), so a consumer pipes the two apart
+without parsing either.
+
+Every line carries `code` — the event's code, always — and `layer`, which says
+what said it: `ingest`, `framer`, `reader`, `endpoint`, `router` or `cli`. Then
+the fields of the thing reported, with a field that is `None` **left out**
+rather than written as `null`: `seconds` absent and `seconds: null` would be the
+same fact in two spellings, and §4.1 put those fields on `Event` so a caller
+could match on them.
+
+- **`router`** and **`endpoint`** lines are a routing `Event` (§4.1): `index`,
+  `detail`, and whichever of `trace_id`, `spanweave_code`, `seconds`,
+  `version`, `offset` and `at` that code is about.
+- **`ingest`** lines are the same `Event`, from §7.1's tail.
+- **`framer`** lines are a `FramingEvent` (§3.1), with one renaming: its `line`
+  field is written as **`framer_line`**. That is §3.4's and §7.1's consequence
+  made unmissable at the one place a human reads it. Once a line has been cut by
+  `--max-pending-bytes`, each fragment is numbered as a line, so the number is
+  the framer's count of lines **handed over** and not the input's count of lines
+  written; a key spelled `line` would have been read as the second. The same
+  divergence runs through the `line N …` that opens a reader diagnostic's
+  message (§3.5), which cannot be renamed because it is inside the library's
+  text — so the first `fragment_too_long` of a run is followed by one `cli` line
+  of code `line_numbers_diverged` that says the numbers after it are the
+  framer's. One per run and not one per fragment, for §4.6's reason.
+- **`reader`** lines are a `spanweave.Diagnostic` under its own field names
+  (`code`, `message`, `level`, and `node_id` and `source` where it has them),
+  the library's text verbatim, because a diagnostic's message is the only place
+  a skipped line's bytes survive (§1.5).
+- **`cli`** lines are the seven things the process says about itself:
+
+| `cli` code | when | its own keys |
+|---|---|---|
+| `listening` | `serve` bound its socket | `host`, `port` |
+| `start_failed` | the path would not open, or the socket would not bind | `detail` |
+| `line_numbers_diverged` | the run's first `fragment_too_long` | `detail` |
+| `may_overwrite` | the run's first `forgotten`, with `--out` set (§8.5) | `detail`, `trace_id` |
+| `pending` | the run stopped holding bytes it did not flush | `pending_bytes` |
+| `interrupted` | `SIGINT` | `detail` |
+| `finished` | the last line of every run that started | `routed`, `exit`, `counts` |
+
+`listening` carries the **bound** port, which is what makes `--port 0` usable
+and what makes this section's tests deterministic: the kernel chooses, the CLI
+says which, and no test hard-codes a port (§7.2).
+
+`finished` is the only aggregate and there is one of it: `counts` is the
+router's count per code (§4.6), bounded by the number of codes, and `routed` is
+how many records were routed. A line per record summarizing the stream is the
+accumulation §4.6 refuses.
+
+### 8.4 `--deltas` writes stdout, one delta document per line
+
+With `--deltas` the CLI registers one subscriber — `trace_id=None`, `every=1`,
+so every builder this router feeds and every absorbed record (§6.1, §6.3) —
+whose whole body is `spanweave.delta_dumps(update.delta)` written to stdout.
+Those are the library's own canonical bytes, which already end in one `\n` and
+hold no other, so "one document per line" is a property of `spanweave`'s
+encoder rather than of a second encoder here (`spanweave` §5.2). Nothing is
+wrapped around it: a line **is** the delta document, and the trace it is about
+is `trace_id_after` inside it.
+
+Without `--deltas` the router has no `Subscriptions` at all: it computes no
+delta and sets no retention, which is what §6.1 says `subscriptions=None` is,
+and is why the CLI's default path is the one gate A exercises.
+
+If stdout cannot be written — a closed pipe — the write raises **inside a
+consumer**, which is §6.5's `consumer_error`: counted, reported on stderr, and
+the run continues and still writes its graphs. The CLI's own output is handled
+exactly like a stranger's callback, deliberately, and §8.6 is where that shows
+up in the exit code.
+
+### 8.5 One tick per yield, one final tick, and `<trace_id>.json`
+
+The CLI ticks (§5.4) **once per yield** from its ingest — per poll that read
+something, per request served — and never once per record. Per record would
+re-materialize the graph for every `RootEnded` evaluation, which is exactly what
+§5.7's cache spares, so a tick per record would make a `--root-grace` run
+quadratic in a trace's records. The cost of the choice is said rather than
+hidden: `--cap 3` completes at the first tick **after** the yield that carried
+the third record, not between two records of one chunk.
+
+**When the input ends, every trace still held is completed.** The CLI replaces
+its completion with one whose only policy is `Cap(0)` — a value §5.3 already
+defines, firing at `records >= 0`, which is every trace — and ticks once. So
+`Completed.policy` on those is `Cap(records=0)`, which is the honest report:
+they completed because the input ended, and the CLI has no code of its own to
+invent for that. The input ends at EOF on stdin, at the first poll that found
+nothing under `--once`, and at the `--requests` count for `serve`. The no-trace
+builder is not completed and writes no file, for §5.4's reason: it is not a
+trace.
+
+A completed trace's graph is written as `<trace_id>.json` in `--out`, which is
+§5.4's write under §5.5's name, and a second generation of the same trace is
+`<trace_id>.<n>.json` beside it. An id that is not usable as one path component
+is a `not_written` event and no file (§5.4).
+
+**The one way this CLI can lose a graph, said where a human reads it.** With
+`--max-completed N` the router forgets the oldest completions (§5.5), and a
+forgotten id has no generation left, so the next record for it opens generation
+1 and its completion writes `<trace_id>.json` **over** the file the earlier
+completion wrote. §5.5's "the file already written is not rewritten" holds only
+while the completion is remembered, and `--out` is the first caller in this
+project that can lose a graph that way. So the CLI says it in three places and
+none of them is a footnote: in `--max-completed`'s own `--help` text, in one
+`may_overwrite` line on stderr the first time a `forgotten` appears while
+`--out` is set, and in this paragraph. With the default — no `--max-completed` —
+nothing is ever forgotten and no file is ever written over.
+
+### 8.6 Exit codes
+
+| code | meaning |
+|---|---|
+| `0` | the input ended, every trace still held was completed, and everything the receiver had was delivered |
+| `1` | it could not start: the path would not open, or the socket would not bind |
+| `2` | usage — `argparse`'s own code, for a flag that does not exist or a value that is not a number |
+| `3` | it ran to the end, but something it had could not be delivered: at least one `not_written`, `delta_unsent` or `consumer_error` |
+| `130` | interrupted (`SIGINT`): what had been written stays written, and traces still open were **not** completed |
+
+The code is about **what the receiver could not do**, and never about what the
+telemetry said. A `refused`, a `refused_at_cap`, a `late_arrival`, a
+`truncated`, a `415`, a `400` and every reader diagnostic are observations
+(§1.3): a run full of them exits `0`, and the events and `counts` on stderr are
+where a caller reads them. A receiver that exited non-zero because a span was
+re-sent would be a gate, and the receiver enforces nothing.
+
+`1` is every `OSError` the source raises, reported as one `start_failed` line
+carrying the error verbatim. In practice that is the first open or the bind,
+which is where a source fails — §7.1 is explicit that an open that fails *at
+the start* raises rather than becoming an event, because waiting for a file to
+appear is a retry policy the receiver does not carry. A read that fails later
+would arrive here too and say the same thing, which is honest about the exit
+code and one notch loose about the word "start"; the alternative is a second
+code for a case no test can produce without a failing disk.
+
+`3` is the one code that is about the receiver's own output, and it is one code
+for three events on purpose: a graph that could not be written, a delta that
+could not be produced and a consumer that raised are all "it had something and
+could not hand it over". Which one it was is on stderr with its code; the exit
+status only has to be distinguishable from `0`.
+
+`130` is `128 + SIGINT`, the shell's convention, and the CLI reaches it by
+catching `KeyboardInterrupt` rather than by installing a handler of its own: one
+`cli` line of code `interrupted`, then the exit. Nothing is ticked on the way
+out, because the stop was not end of input and completing traces there would be
+the CLI inventing a policy a signal did not state (§1.2). Bytes the framer was
+still holding are reported as `pending` and left where they are: `--once` and
+EOF are the two stops that **are** end of input, and only those two flush
+(§7.1).
+
+### 8.7 What this section is tested against
+
+`tests/test_cli.py`, and every test in it runs the CLI as a **process** —
+`subprocess`, a pipe, an exit status — because an in-process call would test the
+functions and not the thing a human runs.
+
+Its central test is **gate A's comparison reached through a process**: every
+line-delimited corpus rendering is piped to `spanweave-live tail - --out <dir>`,
+and the `<trace_id>.json` the run leaves behind must equal `spanweave.dumps` of
+`spanweave.build` of that rendering **byte for byte**, using gate A's own
+loader and comparison (§4.7). The corpus' two OTLP documents are POSTed to
+`spanweave-live serve --port 0 --requests 1` and compared the same way. A second
+loader or a second comparison here would be a weaker gate wearing the same name,
+so there is neither.
+
+Every test is deterministic with no clock in it, which the three ingests make
+possible in three different ways: stdin's EOF is a stop that needs no timer,
+`--poll-seconds 0` leaves a tail's one trailing poll nothing to wait for, and
+`--port 0` with the `listening` line means no port is ever hard-coded. Where a
+test needs the process to have got somewhere before it acts, the barrier is a
+**read** and never a sleep: the `listening` line on stderr before a POST, a
+delta line on stdout before the next write to stdin.
+
+The named mutation for this section is the renaming in §8.3: a `framer` line
+that writes its `line` field as `line` instead of `framer_line`. It is the one
+mutation that leaves every graph, every exit code and every other event
+untouched and still makes the CLI say something false to a human — which is what
+R2b's line-number consequence is, one layer up.

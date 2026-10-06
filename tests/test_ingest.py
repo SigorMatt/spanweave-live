@@ -775,7 +775,10 @@ def test_ingest_needs_no_entry_in_the_seam_allowlist() -> None:
         )
         == []
     )
-    assert gates.SEAMS == {}, "R5 added no seam file: the caller supplies sleep"
+    assert "ingest.py" not in gates.SEAMS, (
+        "R5 added no seam entry: the caller supplies `sleep`. R7's `real.py` is "
+        "the allowlist's one entry and this file is not it (SPEC.md 8.2)"
+    )
 
 
 def test_these_tests_run_on_both_platforms_the_section_claims() -> None:

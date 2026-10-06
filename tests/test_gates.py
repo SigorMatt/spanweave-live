@@ -220,10 +220,11 @@ def test_a_seam_exempts_only_the_file_it_names():
     assert [v.rule for v in found] == ["no-ambient-runtime"]
 
 
-def test_the_real_allowlist_is_empty_until_a_batch_adds_a_seam():
-    # R0 has no seam file. This is not a style preference: it is the fact the
-    # gate's whole value rests on, and a batch that adds an entry here changes
-    # this assertion deliberately, in the same commit, with a reason.
+def test_the_real_allowlist_names_one_seam_file_and_nothing_else():
+    # R0 had no seam file, and R7 has exactly one. This is not a style
+    # preference: it is the fact the gate's whole value rests on, and a batch
+    # that changes this entry changes this assertion deliberately, in the same
+    # commit, with a reason.
     #
     # R3 was the batch expected to need the first entry — completion is a
     # timeout policy, and a timeout policy wants a clock — and it needed none:
@@ -235,10 +236,19 @@ def test_the_real_allowlist_is_empty_until_a_batch_adds_a_seam():
     # and both declined it too. R6 is the one worth reading twice, because this
     # gate bans `http` outright and §7.2's endpoint is `http.server`: the seam
     # is the handler's **base class** and the listener **factory**, two
-    # parameters with no defaults, so the import lives in R7's CLI and in
-    # `tests/test_endpoint.py` (`SPEC.md` §7.2). Nothing R0 predicted would want
-    # a line is left.
-    assert dict(gates.SEAMS) == {}
+    # parameters with no defaults, so the import lives in the caller.
+    #
+    # **R7 is the caller, and it is the one entry.** Something has to hand
+    # `Completion.now`, `tail`'s `now`/`sleep` and `serve`'s listener factory
+    # the real thing, and a process has nobody to take them from, so
+    # `spanweave_live/real.py` imports `time` and `http.server` and this
+    # allowlist names that file and exactly those two modules (`SPEC.md` §8.2).
+    # The entry is held here **literally**, rather than by a length or a key
+    # check, so that widening it -- a second file, a third module, `http`
+    # instead of `http.server` -- is a deliberate edit to this line with a
+    # reason in its commit body. `tests/test_cli.py` is where the narrowness is
+    # argued: `cli.py` is run through these rules with an empty allowlist.
+    assert dict(gates.SEAMS) == {"real.py": frozenset({"time", "http.server"})}
 
 
 def test_the_package_reaches_for_no_ambient_runtime():

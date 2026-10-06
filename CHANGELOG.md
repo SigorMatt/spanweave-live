@@ -8,6 +8,121 @@ of change is a **batch** (`WORKPLAN.md`), and each entry names the batch.
 
 ## Unreleased
 
+### R7 — the CLI, and the first entry in the seam allowlist (2026-10-06)
+
+Two commands, no new mechanism, and the one module in the package that imports
+`time` and `http.server` (`SPEC.md` §8, new in this commit).
+
+Added
+
+- **`spanweave-live tail <path> --out <dir>`** and **`spanweave-live serve
+  --port P --out <dir>`**. `<path>` is a file or `-` for stdin. Every other flag
+  sets a value an earlier section already declared — `--quiet`/`--root-grace`/
+  `--cap` are §5.3's three policies, `--max-traces` is §4.5, `--max-completed`
+  is §5.5, `--max-pending-bytes` is §3.4, `--deltas` is one §6.1 subscription,
+  `--poll-seconds`/`--once` are §7.1's and `--host`/`--port`/`--requests` are
+  §7.2's. §8.1's usage block is parsed out of `SPEC.md` by a test and held
+  against the parser **in both directions**, so a flag in one and not the other
+  fails the build. The policies compose in the order §8.1's table lists them,
+  because a command line has no tuple order of its own and §5.4's any-of needs
+  one; picking an order was unavoidable, hiding which one would not have been.
+- **Final graphs as `<trace_id>.json`** in `--out`, which is §5.4's write under
+  §5.5's name. The CLI ticks **once per yield** from its ingest and not once per
+  record (per record would re-materialize the graph for every `RootEnded`
+  evaluation, which is exactly what §5.7's cache spares), and when the input
+  ends it replaces its completion with one whose only policy is `Cap(0)` and
+  ticks once more — so a replay leaves every trace's graph behind, and
+  `Completed.policy` says `Cap(records=0)` rather than the CLI inventing a code
+  for "the input ended".
+- **Events to stderr, one JSON line each**, sorted keys and ASCII-escaped so a
+  line is one line whatever a trace payload held, flushed as written, with
+  `code` and `layer` on every line and a `None` field left out rather than
+  written as `null`. stdout carries **deltas and nothing else** — one
+  `spanweave.delta_dumps` document per line, the library's own canonical bytes,
+  which already end in one `\n` and hold no other, so there is no second
+  encoder here.
+- **Exit codes, documented in `--help` and in §8.6**: `0` the input ended and
+  everything was delivered; `1` it could not start; `2` usage; `3` it ran to the
+  end but something it had could not be delivered (`not_written`,
+  `delta_unsent` or `consumer_error`); `130` interrupted. The code is about
+  **what the receiver could not do**, never about what the telemetry said: a
+  `refused`, a cap, a late arrival, a `415` and a `400` are observations and
+  leave the code at `0`, because a receiver that exited non-zero on a re-sent
+  span would be a gate (§1.3).
+- **`tests/test_cli.py`**, 81 tests, every one of them through `subprocess`.
+  Its central test is gate A's comparison reached through a **process**: all 51
+  line-delimited corpus renderings piped to `tail -`, and the two OTLP
+  documents POSTed to `serve --port 0`, each compared byte for byte against
+  `spanweave.dumps` of `spanweave.build` of that rendering with gate A's own
+  loader. Nothing in the file waits on a clock: stdin's EOF is a stop,
+  `--poll-seconds 0` leaves the one trailing poll nothing to wait out, `--port 0`
+  plus the `listening` line means no port is written down, and every barrier is
+  a **read** (the `listening` line before a POST, a delta line before a signal).
+- **`make install-check` now runs a command, not just `--version`**: one corpus
+  record piped to the *installed* console script from outside the repo, with
+  `t1.json` required to land. `--version` proved the script existed; this proves
+  the thing a human runs works in what ships.
+
+Changed — the seam allowlist is no longer empty, and this is the entry worth reading
+
+- **`tests/gates.py`'s `SEAMS` is `{"real.py": {"time", "http.server"}}`** — the
+  project's first entry, after R3 (`now`), R5 (`sleep`) and R6 (the listener)
+  were each predicted to need one and each declined it. All three declined for
+  the same reason: the seam was a parameter with no default, so the caller held
+  the import. **R7 is that caller.** `Completion.now`, `tail`'s `now` and
+  `sleep` and `serve`'s listener factory are those parameters, and something has
+  to hand them the real `time.monotonic`, the real `time.sleep` and a real
+  `HTTPServer`: a process has nobody to take them from. The entry is not a
+  weakening of the three refusals; it is the place all three were deferring to,
+  and §1.4, §5.2, §7.1 and §7.2 each say so now.
+  - It names **`real.py`, not `cli.py`**, because an entry exempts a whole file:
+    the exempted file is fifty-odd lines that do nothing but hand back the real
+    thing,
+    and the several hundred lines of `cli.py` — where a stray `time.monotonic()`
+    could actually hide — stay under the gate. A test runs the gate's rules over
+    `cli.py` with an **empty** allowlist to prove it.
+  - It names **`http.server`, not `http`**, because the matcher matches a module
+    or anything under it and `http` would have exempted `http.client` too.
+  - `real.py` is deliberately **not** exported from `spanweave_live/__init__.py`.
+    Publishing it would publish a clock this library is built not to own.
+- **`tests/test_completion.py::test_no_other_test_in_the_suite_sets_a_bound`**
+  now names `tests/test_cli.py` as its one exception, and holds that the file
+  contains no `max_completed=` — the bound is set as a CLI flag in a child
+  process, never in a router of this suite's, so every router the rest of the
+  suite builds (gate A's included) still forgets nothing.
+
+Surfaced — R3a's overwrite reaches a human for the first time
+
+- `--out` is the first caller in this project that can **lose a graph**.
+  Forgetting a completed trace id loses its generation, so a later record for a
+  forgotten id writes `<trace_id>.json` **over** the file the earlier completion
+  wrote: §5.5's "the file already written is not rewritten" holds only while the
+  completion is remembered. The CLI says it in three places and none of them is
+  a footnote — in `--max-completed`'s own `--help` text, in one `may_overwrite`
+  line on stderr the first time a `forgotten` appears, and in §8.5. A test POSTs
+  two records of one trace with `--cap 1 --max-completed 0` and asserts the file
+  left behind is the **second** generation's graph and not the first's, with its
+  twin asserting that the default writes `t1.json` and `t1.2.json` side by side.
+
+Honoured — R2b's line numbers, where a human reads them
+
+- A framing event's `line` is written to stderr as **`framer_line`**. Once a
+  line has been cut by `--max-pending-bytes`, each fragment is numbered as a
+  line, so the number is the framer's count of lines *handed over* and not the
+  input's count of lines *written* (§3.4, §7.1) — and a key spelled `line` would
+  have been read as the second. The `line N` that opens a reader diagnostic's
+  message carries the same divergence and cannot be renamed, so the run's first
+  `fragment_too_long` is followed by one `cli` line of code
+  `line_numbers_diverged`, once per run and not once per fragment (§4.6).
+- The named mutation is that renaming: `framer_line` written as `line` takes
+  exactly one test down and leaves every graph, every exit code and every other
+  event untouched. R2's and R6's lesson applies twice over here and the test
+  **holds the premise rather than assuming it**: every corpus rendering's lines
+  end in `\n`, so the remainder after a push is empty and the cap never bites —
+  a suite whose only inputs were the corpus' own bytes would have left the
+  renaming untested and green. The input that bites is 70,000 bytes with no
+  newline in it at all, which holds **zero** lines while the framer reports two.
+
 ### R6 — the OTLP/HTTP endpoint, with the socket in the caller's hands (2026-10-06)
 
 The second of the two ingests (`SPEC.md` §7.2): an exporter POSTs a body instead

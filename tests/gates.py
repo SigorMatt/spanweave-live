@@ -19,7 +19,9 @@ what it enforced (`patches/REVIEW-2026-10-06.md` F7, F8):
   caught only the direct form, and the receiver is read-only toward the system
   it watches (`CLAUDE.md` 9). The parent `spanweave` repository has had this
   gate from its own start. R6's `http.server` endpoint is the one place this
-  rule was expected to bite, and it did not: see `SEAMS` below.
+  rule was expected to bite, and it did not: R6 injected the handler's base
+  class instead. R7's `real.py` is where `http.server` finally appears, and it
+  is the allowlist's one entry: see `SEAMS` below.
 - **no-ambient-os** bans `os.times`, `os.urandom`, `os.fork`, `os.pipe` and
   their kin without banning `os`, which `SPEC.md` §7.1's tail legitimately
   needs for `os.fstat` and `os.PathLike`.
@@ -179,10 +181,32 @@ AMBIENT_OS_ATTRIBUTES = (
 # `serve(endpoint, listener=...)` takes the listener factory. So
 # `import http.server` lives in the caller, which is R7's CLI and
 # `tests/test_endpoint.py`. Three predictions of the first entry, three batches
-# that declined it, one pattern: a parameter with no default. Nothing is left
-# that was predicted to want a line, so a batch that wants one now is proposing
-# something new and says so in its commit body.
-SEAMS: Mapping[str, frozenset[str]] = {}
+# that declined it, one pattern: a parameter with no default.
+#
+# **R7 is the one entry, and it is the batch that could not decline it.** The
+# three refusals above all end the same way: the seam is a parameter and the
+# caller passes it. R7 *is* that caller. `Completion.now`, `tail`'s `now` and
+# `sleep` and `serve`'s listener factory are the parameters, and something has
+# to hand them the real `time.monotonic`, the real `time.sleep` and a real
+# `HTTPServer` -- a process has no caller of its own to take them from. So the
+# entry is not a weakening of the three refusals; it is the place all three
+# were deferring to (`SPEC.md` §8.2).
+#
+# Two choices keep it narrow rather than convenient, and both were available:
+#
+# - **It names `real.py`, not `cli.py`.** An entry exempts a whole FILE, so the
+#   exempted file does nothing but hand back the real thing and is short enough
+#   to read in one go. `cli.py` -- the several hundred lines where a stray
+#   `time.monotonic()` could actually hide -- stays unexempted, and a test in
+#   `tests/test_cli.py` runs this module's rules over it with an empty
+#   allowlist to prove it.
+# - **It names `http.server`, not `http`.** `_matches_module` matches a module
+#   or anything under it, so `http` would have exempted `http.client` and
+#   `http.cookies` with it.
+#
+# A batch that wants a second entry is proposing something new -- there is no
+# prediction left to spend -- and says so in its commit body.
+SEAMS: Mapping[str, frozenset[str]] = {"real.py": frozenset({"time", "http.server"})}
 
 
 @dataclass(frozen=True)
