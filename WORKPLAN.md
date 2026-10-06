@@ -5,7 +5,7 @@ network, the clock and the consumer (`spanweave` `OPEN_QUESTIONS.md` §19,
 decided 2026-09-29). One batch = one sub-agent = one commit = one concern.
 This file plus git is the only state; any session can resume cold from it.
 
-Last updated: 2026-10-06 (run 3 under way: R2c, R5a, R3a done; R6 → R7 → R8 → R9 remain).
+Last updated: 2026-10-06 (run 3 under way: R2c, R5a, R3a, R6 done; R7 → R8 → R9 remain).
 
 ---
 
@@ -155,8 +155,8 @@ commit that cannot say `plan:`, and the watcher exempts it once per series.
 | R5 | **Ingest: file tail and stdin.** `tail(path, *, now, sleep, poll_seconds)` (SPEC §7.1) follows a growing file from an offset through `Framer.push`, survives truncation (restarts from 0 and emits `truncated`), and rotation (reopens by path); `stdin()` reads chunks until EOF. Both take `sleep` injected, so the test drives them on a fake clock with a file it appends to between ticks. ~~Both are generators of `Records`~~ — corrected by R5: `stdin()` is a generator, but `tail` returns a `Tail`, a single-use iterable that carries its events, because §3.1 forbids wrapping `Records` and a bare generator has nowhere to carry its events; see §4. Tests: a corpus rendering appended in random chunks is routed to the same graphs as gate A; truncation and rotation are events. | done (a7ade79) | 10 |
 | R5a | **The run-2 review's twelve `next batch` items, closed.** Read `patches/REVIEW-2026-10-06.md` and close every `next batch` item as the file states it, one commit, tests first, mutation shown. Among them: the `every=N` trailing delta on completion and on `flush` (§3), with the fold test at `records=7, every=2` red on the parent; `check (macos-latest, 3.12)` added to CI, and the run on that job printed in the body; the four `Tail` sentences corrected to "a single-use iterable, not an iterator", with the SPEC §3.1 reason kept; items the file lists that this row does not name are closed too. | done (c1e6946) | 8 |
 | R3a | **Completed trace ids are forgotten by the caller's bound.** `Router(max_completed=None)`; SPEC §5.5 rewritten from "unbounded" to the policy in §3. Tests on the fake clock, red on the parent: with `max_completed=2` and three completions the oldest is evicted at the next tick with one `forgotten` event carrying its id and completion tick; a record for the forgotten id opens generation 1 and emits no `late_arrival`; a record for a remembered id still emits `late_arrival` with the gap; with `None` nothing is ever forgotten across the whole suite. Measure the book after eviction (the review's ~220 B/id method) and put the number in the body. Mutation: an eviction that emits no `forgotten` fails. ~~evicted at the next tick~~ — evicted **in the tick whose completion pushes the book past the bound**, because a tick that completes nothing has no `Completed` to carry the event; settled by R3a, see §4. | done (baa32cb) | 6 |
-| R6 | **Ingest: OTLP/HTTP JSON endpoint.** (SPEC §7.2) Stdlib `http.server` only; one handler for `POST /v1/traces` with `Content-Type: application/json`, body → `Framer.document`; `Content-Encoding: gzip` accepted; anything else 415; the listener factory is injected so tests use a loopback socket on port 0. Tests: the `otlp_container` renderings posted as bodies route to the batch graph; a non-JSON body is 400 with the receiver's event, never a traceback. | todo | 10 |
-| R7 | **CLI.** `spanweave-live tail <path> --out <dir> [--quiet S] [--root-grace S] [--cap N] [--deltas]` and `spanweave-live serve --port P --out <dir>`: final graphs written as `<trace_id>.json` with `spanweave.dump`; `--deltas` writes each per-record delta document to stdout as one line; every event to stderr as one JSON line with its code; exit codes documented. Tests through `subprocess` on a corpus rendering. | awaiting R6 | 8 |
+| R6 | **Ingest: OTLP/HTTP JSON endpoint.** (SPEC §7.2) Stdlib `http.server` only; one handler for `POST /v1/traces` with `Content-Type: application/json`, body → `Framer.document`; `Content-Encoding: gzip` accepted; anything else 415; the listener factory is injected so tests use a loopback socket on port 0. Tests: the `otlp_container` renderings posted as bodies route to the batch graph; a non-JSON body is 400 with the receiver's event, never a traceback. | done (8ae7a5d) | 10 |
+| R7 | **CLI.** `spanweave-live tail <path> --out <dir> [--quiet S] [--root-grace S] [--cap N] [--deltas]` and `spanweave-live serve --port P --out <dir>`: final graphs written as `<trace_id>.json` with `spanweave.dump`; `--deltas` writes each per-record delta document to stdout as one line; every event to stderr as one JSON line with its code; exit codes documented. Tests through `subprocess` on a corpus rendering. | todo | 8 |
 | R8 | **Showcase: agentgolden's rules per delta.** agentgolden is `SigorMatt/agentgolden` at `aa1847f`, pinned as a dev dependency by git sha (its own `spanweave>=0.9.1,<1.0` resolves against the pinned spanweave). A consumer that, on each per-record delta, takes the trace's `graph()`, computes agentgolden's `Signature`, evaluates `examples/support_agent/rules.toml` **unchanged** with `agentgolden.rules.evaluate`, and records the first version at which each rule fails. The trace is agentgolden's own `examples/support_agent/candidates/skipped_verification.openinference.jsonl`, replayed through `Framer` + `Router`. Test: the first-failure version table is asserted exactly, and the `verify_identity → issue_refund` order rule fails at the version that absorbs the `llm.plan` span carrying the `issue_refund` request — one version before the `issue_refund` tool span arrives — which is the "when it almost happened" the memo promised; the same rules on the batch graph of the whole trace give the same final verdicts (batch and live are one model). | awaiting R7 | 12 |
 | R9 | **The receiver series closes.** `TASKS.md` registry R0–R9 with shas; ~~§3 folded~~ **§3 and §4 both folded** (the §0.6 correction of `9a2e40f` had never reached this row — the one an agent executes; R5a/F12); `reviews/` holds every review byte-for-byte with sha256 and every finding dispositioned; WORKPLAN.md deleted; README covers the CLI and the API; PR `receiver` → `main`. No `plan:` commit follows. | awaiting R8 | 8 |
 
@@ -500,6 +500,41 @@ onward land on `receiver`.
   SPEC §4.1 says why it is `at` and not `seconds`. R5a's SPEC-block test did its
   job: §4.1 had to be edited in the same commit or the test failed, which is
   exactly the drift R5a set it to catch.
+- 2026-10-06 R6 (`8ae7a5d`, CI green on that sha, 7/7): the OTLP/HTTP JSON
+  endpoint is in. Tests 503 → 547. Red on the code parent `baa32cb` was total
+  rather than meaningful — the new file is a collection `ImportError` there, so
+  all 44 are red for one reason; the **mutation** is what carries this batch, and
+  the parent's own 503 passing is the part worth having.
+- 2026-10-06 R6 — **the seam allowlist is still `{}`, and that is now three
+  declined predictions in a row** (R0 predicted R3, R3 predicted R5/R6, R5
+  predicted R6). The listener is injected as two parameters with no defaults:
+  `handler_class(base, endpoint, /)` takes `http.server.BaseHTTPRequestHandler`
+  and builds the handler with `type(...)`, because a `class` statement would need
+  the base **at import time** — the very import being avoided — and
+  `serve(endpoint, *, listener=…)` takes the factory. `endpoint.py` passes the
+  ambient, network and os rules unexempted. Recorded in `gates.py`,
+  `tests/test_gates.py` and SPEC §1.4.
+- 2026-10-06 R6 — **R2's lesson repeated, and the batch said so instead of
+  banking the green.** The `document` → `push` mutation took 10 of 44 tests
+  down, but both `verbatim` cases of the central test stayed **green**: the
+  corpus stores both container renderings newline-terminated, so a whole arrival
+  reads identically through `push`. The 4 `trimmed`/`compact` cases are what
+  bite (trimmed on the status, `400 != 200`; compact on the records), and a
+  framer-level control test now asserts the three spellings really do differ —
+  so the mutation cannot be made toothless again by a corpus that agrees with
+  itself. This is the same shape as R2's `otlp_container` finding: **a mutation
+  aimed at a dialect or framing read needs an input the corpus does not already
+  normalize.**
+- 2026-10-06 R6 — routing's `Event` gained **no** field, so §4.1 and R5a's
+  SPEC-block test are untouched; §7.2's own `Request`/`Response`/`Exchange` are
+  now held to the spec fence by that same test. Two facts stated in SPEC §7.2
+  rather than left to a reader: a **chunked** body is refused `415` rather than
+  mis-read (the §3.3 trap closed at the transport, not just the framer), and
+  `gzip.decompress(b"")` is `b""`, so an empty gzipped body is a `200`.
+- 2026-10-06 R6 — **R7 is the first file that may genuinely need a `SEAMS`
+  line**: it binds the real `time` pair *and* the one `import http.server`, and
+  §7.2 and `gates.py` both say so. R7 should take `handler_class` + `serve`
+  as-is rather than re-opening how the socket is owned.
 ## 5. Origins
 
 | ID | Origin |
