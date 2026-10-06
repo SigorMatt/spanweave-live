@@ -5,7 +5,7 @@ network, the clock and the consumer (`spanweave` `OPEN_QUESTIONS.md` §19,
 decided 2026-09-29). One batch = one sub-agent = one commit = one concern.
 This file plus git is the only state; any session can resume cold from it.
 
-Last updated: 2026-10-06 (run 3 under way: R2c, R5a, R3a, R6 done; R7 → R8 → R9 remain).
+Last updated: 2026-10-06 (run 3 under way: R2c, R5a, R3a, R6, R7 done; R8 → R9 remain).
 
 ---
 
@@ -156,8 +156,8 @@ commit that cannot say `plan:`, and the watcher exempts it once per series.
 | R5a | **The run-2 review's twelve `next batch` items, closed.** Read `patches/REVIEW-2026-10-06.md` and close every `next batch` item as the file states it, one commit, tests first, mutation shown. Among them: the `every=N` trailing delta on completion and on `flush` (§3), with the fold test at `records=7, every=2` red on the parent; `check (macos-latest, 3.12)` added to CI, and the run on that job printed in the body; the four `Tail` sentences corrected to "a single-use iterable, not an iterator", with the SPEC §3.1 reason kept; items the file lists that this row does not name are closed too. | done (c1e6946) | 8 |
 | R3a | **Completed trace ids are forgotten by the caller's bound.** `Router(max_completed=None)`; SPEC §5.5 rewritten from "unbounded" to the policy in §3. Tests on the fake clock, red on the parent: with `max_completed=2` and three completions the oldest is evicted at the next tick with one `forgotten` event carrying its id and completion tick; a record for the forgotten id opens generation 1 and emits no `late_arrival`; a record for a remembered id still emits `late_arrival` with the gap; with `None` nothing is ever forgotten across the whole suite. Measure the book after eviction (the review's ~220 B/id method) and put the number in the body. Mutation: an eviction that emits no `forgotten` fails. ~~evicted at the next tick~~ — evicted **in the tick whose completion pushes the book past the bound**, because a tick that completes nothing has no `Completed` to carry the event; settled by R3a, see §4. | done (baa32cb) | 6 |
 | R6 | **Ingest: OTLP/HTTP JSON endpoint.** (SPEC §7.2) Stdlib `http.server` only; one handler for `POST /v1/traces` with `Content-Type: application/json`, body → `Framer.document`; `Content-Encoding: gzip` accepted; anything else 415; the listener factory is injected so tests use a loopback socket on port 0. Tests: the `otlp_container` renderings posted as bodies route to the batch graph; a non-JSON body is 400 with the receiver's event, never a traceback. | done (8ae7a5d) | 10 |
-| R7 | **CLI.** `spanweave-live tail <path> --out <dir> [--quiet S] [--root-grace S] [--cap N] [--deltas]` and `spanweave-live serve --port P --out <dir>`: final graphs written as `<trace_id>.json` with `spanweave.dump`; `--deltas` writes each per-record delta document to stdout as one line; every event to stderr as one JSON line with its code; exit codes documented. Tests through `subprocess` on a corpus rendering. | todo | 8 |
-| R8 | **Showcase: agentgolden's rules per delta.** agentgolden is `SigorMatt/agentgolden` at `aa1847f`, pinned as a dev dependency by git sha (its own `spanweave>=0.9.1,<1.0` resolves against the pinned spanweave). A consumer that, on each per-record delta, takes the trace's `graph()`, computes agentgolden's `Signature`, evaluates `examples/support_agent/rules.toml` **unchanged** with `agentgolden.rules.evaluate`, and records the first version at which each rule fails. The trace is agentgolden's own `examples/support_agent/candidates/skipped_verification.openinference.jsonl`, replayed through `Framer` + `Router`. Test: the first-failure version table is asserted exactly, and the `verify_identity → issue_refund` order rule fails at the version that absorbs the `llm.plan` span carrying the `issue_refund` request — one version before the `issue_refund` tool span arrives — which is the "when it almost happened" the memo promised; the same rules on the batch graph of the whole trace give the same final verdicts (batch and live are one model). | awaiting R7 | 12 |
+| R7 | **CLI.** `spanweave-live tail <path> --out <dir> [--quiet S] [--root-grace S] [--cap N] [--deltas]` and `spanweave-live serve --port P --out <dir>`: final graphs written as `<trace_id>.json` with `spanweave.dump`; `--deltas` writes each per-record delta document to stdout as one line; every event to stderr as one JSON line with its code; exit codes documented. Tests through `subprocess` on a corpus rendering. | done (d21859d) | 8 |
+| R8 | **Showcase: agentgolden's rules per delta.** agentgolden is `SigorMatt/agentgolden` at `aa1847f`, pinned as a dev dependency by git sha (its own `spanweave>=0.9.1,<1.0` resolves against the pinned spanweave). A consumer that, on each per-record delta, takes the trace's `graph()`, computes agentgolden's `Signature`, evaluates `examples/support_agent/rules.toml` **unchanged** with `agentgolden.rules.evaluate`, and records the first version at which each rule fails. The trace is agentgolden's own `examples/support_agent/candidates/skipped_verification.openinference.jsonl`, replayed through `Framer` + `Router`. Test: the first-failure version table is asserted exactly, and the `verify_identity → issue_refund` order rule fails at the version that absorbs the `llm.plan` span carrying the `issue_refund` request — one version before the `issue_refund` tool span arrives — which is the "when it almost happened" the memo promised; the same rules on the batch graph of the whole trace give the same final verdicts (batch and live are one model). | todo | 12 |
 | R9 | **The receiver series closes.** `TASKS.md` registry R0–R9 with shas; ~~§3 folded~~ **§3 and §4 both folded** (the §0.6 correction of `9a2e40f` had never reached this row — the one an agent executes; R5a/F12); `reviews/` holds every review byte-for-byte with sha256 and every finding dispositioned; WORKPLAN.md deleted; README covers the CLI and the API; PR `receiver` → `main`. No `plan:` commit follows. | awaiting R8 | 8 |
 
 ## 2. Execution order
@@ -535,6 +535,53 @@ onward land on `receiver`.
   line**: it binds the real `time` pair *and* the one `import http.server`, and
   §7.2 and `gates.py` both say so. R7 should take `handler_class` + `serve`
   as-is rather than re-opening how the socket is owned.
+- 2026-10-06 R7 (`d21859d`, CI green on that sha, 7/7): the CLI is in — two
+  commands, SPEC §8.1–§8.7 new. Tests 547 → 628, of which `tests/test_cli.py`
+  has **81, all through `subprocess`**. Red on the code parent `8ae7a5d`: **76
+  failed, 3 passed**, and the 3 are meant to pass (the "no new surface"
+  assertions: usage exit 2, `real` not in `__all__`, no new dataclasses). The
+  central test is gate A's own comparison **through a process** — 51 `.jsonl`
+  renderings via `tail -`, 2 OTLP documents via `serve --port 0`, gate A's
+  loader, byte for byte.
+- 2026-10-06 R7 — **the seam allowlist is no longer empty, and this is the one
+  entry the series predicted three times and refused twice.** `SEAMS =
+  {"real.py": frozenset({"time", "http.server"})}`: one file, two modules. It
+  could not be avoided because R3/R5/R6 each declined on the same ground — the
+  seam was a parameter with no default and the *caller* held the import — and
+  **R7 is that caller**: a process has nobody to take `now`/`sleep`/listener
+  from. Narrowed two ways worth keeping: it names `real.py` (fifty-odd lines of
+  nothing but bindings) and **not** `cli.py`, with a test running the gate's
+  rules over `cli.py` against an **empty** allowlist; and `http.server`, not
+  `http`. `real.py` is not exported from `__init__`. The four tests that
+  asserted `SEAMS == {}` were **narrowed to "my module is not in it"**, not
+  deleted — so the gate still bites for every other file.
+- 2026-10-06 R7 — **R3a's overwrite is now in front of a human** three ways:
+  `--max-completed`'s `--help` text, one `may_overwrite` stderr line at a run's
+  first `forgotten` (once per run, §4.6), and SPEC §8.5. Pinned by a pair of
+  tests: `--cap 1 --max-completed 0` over two POSTs of one trace leaves only
+  `t1.json` holding the **second** generation's graph, while the default leaves
+  `t1.json` + `t1.2.json`.
+- 2026-10-06 R7 — **the mutation was chosen against the corpus, not in spite of
+  it.** `framer_line=event.line` → `line=event.line` is caught (1 failed / 79
+  passed, `KeyError: 'framer_line'`), and the test **holds its own premise**:
+  every corpus rendering's lines end in `\n`, so the cap never bites there, and
+  the input that does bite is 70,000 newline-free bytes — zero input lines, two
+  framer lines. That is R2b's line-number consequence honoured and R2/R6's
+  lesson applied before the fact rather than discovered after it.
+- 2026-10-06 R7 — two judgement calls the row did not settle, both stated in
+  SPEC. End-of-input finalisation **reassigns `router.completion`** to
+  `Completion(policies=(Cap(0),), …)` and ticks once, so a replay always leaves
+  files behind and reports `Cap(records=0)` rather than a CLI-invented code
+  (§8.5) — note this is the review's thread **T1** (a completion attached after
+  records have been routed measures `Quiet` from the tick, not the records)
+  reached by the very caller T1 said would not reach it; `Cap(0)` completes
+  immediately so nothing is mismeasured here, but **T1's disposition at close
+  should say that rather than cite T1's own prediction**. And exit `1` is every
+  `OSError` from the source, which §8.6 admits is one notch loose about the word
+  "start".
+- 2026-10-06 R7 — `make install-check` now runs a **command**, piping a corpus
+  record to the installed console script from outside the repo, so the gate that
+  proves what ships finally exercises the thing a user types.
 ## 5. Origins
 
 | ID | Origin |
