@@ -18,7 +18,8 @@ what it enforced (`patches/REVIEW-2026-10-06.md` F7, F8):
   `urllib`, `http`, `requests`, `httpx` and the rest -- because `socket` alone
   caught only the direct form, and the receiver is read-only toward the system
   it watches (`CLAUDE.md` 9). The parent `spanweave` repository has had this
-  gate from its own start.
+  gate from its own start. R6's `http.server` endpoint is the one place this
+  rule was expected to bite, and it did not: see `SEAMS` below.
 - **no-ambient-os** bans `os.times`, `os.urandom`, `os.fork`, `os.pipe` and
   their kin without banning `os`, which `SPEC.md` §7.1's tail legitimately
   needs for `os.fstat` and `os.PathLike`.
@@ -102,9 +103,11 @@ AMBIENT_MODULES = (
 # under the package and watching it pass (`patches/REVIEW-2026-10-06.md` F8).
 #
 # `http` is here and `SPEC.md` §7.2's endpoint is `http.server`: that is
-# deliberate. R6 either injects the listener so the import lives in the caller,
-# as R3 did with `now` and R5 with `sleep`, or it writes one narrow SEAMS line
-# for one file and says why injection was not enough.
+# deliberate. R6 either injected the listener so the import lives in the caller,
+# as R3 did with `now` and R5 with `sleep`, or wrote one narrow SEAMS line for
+# one file and said why injection was not enough. **It injected**: the handler's
+# base class and the listener factory are both parameters with no defaults, and
+# `spanweave_live/endpoint.py` passes this rule unexempted.
 NETWORK_MODULES = (
     "urllib",
     "http",
@@ -164,9 +167,21 @@ AMBIENT_OS_ATTRIBUTES = (
 # `sleep` with no default, as `Completion` takes `now` with none, so the only
 # `time` in the project is the one R7's CLI will bind (`SPEC.md` §7.1). Two
 # batches that were each expected to need the first entry did not, and the
-# pattern they share is a parameter with no default. R6's listener factory is the
-# last candidate, and it should be made to prove it the same way: a batch that
-# wants a line here says why an injected seam with no default was not enough.
+# pattern they share is a parameter with no default.
+#
+# **R6 added nothing either, and it was the last candidate.** The endpoint
+# (`SPEC.md` §7.2) was made to prove it needed a line and could not: the seam
+# turned out to be *two* parameters with no defaults rather than one, and
+# neither of them lives here. `handler_class(base, endpoint)` takes the
+# handler's base class -- `http.server.BaseHTTPRequestHandler` -- and builds
+# the class with `type(...)`, because a `class` statement would need the base
+# at import time and that is the very import being avoided;
+# `serve(endpoint, listener=...)` takes the listener factory. So
+# `import http.server` lives in the caller, which is R7's CLI and
+# `tests/test_endpoint.py`. Three predictions of the first entry, three batches
+# that declined it, one pattern: a parameter with no default. Nothing is left
+# that was predicted to want a line, so a batch that wants one now is proposing
+# something new and says so in its commit body.
 SEAMS: Mapping[str, frozenset[str]] = {}
 
 

@@ -8,6 +8,72 @@ of change is a **batch** (`WORKPLAN.md`), and each entry names the batch.
 
 ## Unreleased
 
+### R6 — the OTLP/HTTP endpoint, with the socket in the caller's hands (2026-10-06)
+
+The second of the two ingests (`SPEC.md` §7.2): an exporter POSTs a body instead
+of writing a file. Stdlib `http.server` only, and no dependency.
+
+Added
+
+- **`Endpoint`**, which serves exactly one request — `POST /v1/traces` with
+  `Content-Type: application/json`, `Content-Encoding: gzip` inflated — and
+  hands the body to **`Framer.document`**, never to `Framer.push`. That has been
+  a standing instruction since R1 (`SPEC.md` §3.3) and it is a trap rather than a
+  rule: the corpus' two container renderings end in a newline, so a POST of one
+  of those bytes-for-bytes reads *identically* through `push`. The same export
+  with its trailing newline trimmed — the ordinary shape of an HTTP body — loses
+  its closing brace to the remainder, and compacted onto one line it reads as
+  nothing at all. So `tests/test_endpoint.py` posts every document rendering in
+  **three spellings** and compares each against gate A's own batch graph; the
+  `push` mutation leaves both verbatim cases green and takes ten tests down.
+- **`415` for every request that is not the one served** — wrong method, wrong
+  target, wrong media type, a `Content-Encoding` it cannot undo, or a
+  `Transfer-Encoding` it cannot unframe — counted, with the check named in the
+  event's `detail`. One status and not three, argued in §7.2 rather than
+  defaulted. `Transfer-Encoding` is **refused rather than ignored**, which is the
+  one check that exists for §1.5 and not for HTTP: `respond` reads
+  `Content-Length` bytes, so accepting a chunked body would mean answering `200`
+  to a body nobody read.
+- **`400` for a body that cannot be read**: a gzip that will not inflate, or a
+  read that skipped every line and produced no record. The reader's own
+  diagnostics ride out in the exchange's `records`, which is the only place
+  those bytes survive, and `Event.spanweave_code` carries the first diagnostic's
+  code. An **empty** body and an empty container are a `200`: calling them a
+  `400` would be the receiver deciding a body should have held spans, which is a
+  dialect read (§1.1). An accepted body answers `{}` and **not** OTLP's
+  `partialSuccess` envelope, for the same reason — a truthful `rejectedSpans`
+  needs a span count.
+- **`serve(endpoint, listener=…)`**, one yield per request handled, refusals
+  included and empty rather than absent (§7.1's rule for a poll that read
+  nothing), with the listener closed however the iteration ends and `until` the
+  caller's stop.
+
+Unchanged, and this is the entry's one real finding
+
+- **The seam allowlist in `tests/gates.py` is still `{}`.** R0 predicted that
+  R6's listener would be the first entry, as it predicted R3's clock and R5's
+  sleep, and all three predictions were wrong for the same reason: a parameter
+  with no default. Here the seam turned out to be **two** parameters, not one —
+  `handler_class(base, endpoint)` takes the handler's base class and builds the
+  class with `type(...)` because a `class` statement would need the base at
+  import time, and `serve` takes the listener factory. So nothing under
+  `spanweave_live/` imports `http`, `socketserver` or `socket`, the gate passes
+  the new module unexempted, and `import http.server` waits for R7's CLI beside
+  the real `time.monotonic` and `time.sleep`. `gates.py` and §1.4 record the
+  third declined prediction; nothing R0 named is left to want a line.
+- **Routing's `Event` gained no field**, unlike R3 (`seconds`), R4 (`version`),
+  R5 (`offset`) and R3a (`at`): a `415` and a `400` are about a request, and
+  `index`, `spanweave_code` and `detail` are the three facts they have. The HTTP
+  status lives on the `Response` beside the event, where it is not `None` for
+  every other code in the project.
+- **§7.2's surface is held to the code** from the day it exists, by §4.1's own
+  block test (R5a, F5) reused for `Request`, `Response` and `Exchange` —
+  `declared_fields` now also finds the last subsection of a part, which §7.2 is.
+
+Tests 503 → 547. Red on the code parent (`baa32cb`): its own 503 pass there and
+the whole new file is a collection error, because `spanweave_live.endpoint` does
+not exist on it.
+
 ### R3a — completed trace ids are forgotten by the caller's bound (2026-10-06)
 
 R5a's §5.5 stated the cost and said the fix was a decision rather than a

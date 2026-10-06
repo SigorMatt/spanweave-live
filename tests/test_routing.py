@@ -152,7 +152,17 @@ def declared_fields(section: str, name: str) -> list[tuple[str, bool]]:
     )
     heading = f"### {section} "
     start = spec.index(heading)
-    end = spec.index("\n### ", start + 1)
+    # The next sibling `###`, or the next parent `##` for the last subsection
+    # of a part -- which §7.2 is. Written as a minimum over both rather than as
+    # one `index`, because the one that is absent must not end the search.
+    end = min(
+        (
+            where
+            for where in (spec.find("\n### ", start + 1), spec.find("\n## ", start + 1))
+            if where != -1
+        ),
+        default=len(spec),
+    )
     block = spec[start:end]
     fence = block.index("```python") + len("```python")
     source = block[fence : block.index("```", fence)]

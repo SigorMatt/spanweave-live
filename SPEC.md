@@ -155,10 +155,11 @@ and fake in every test.
 No module under `spanweave_live/` imports `time`, `datetime`, `random`,
 `socket`, `threading` or `asyncio`, except a seam file named in the allowlist in
 `tests/gates.py`, and the gate fails the build when one does. The allowlist was
-empty at R0 and is **still empty**: R3 needed no entry for the clock (§5.2) and
-R5 needed none for sleeping (§7.1), because a seam with no default is a seam the
-caller binds and there is then no import to exempt. R6's listener is the last
-candidate.
+empty at R0 and is **still empty**: R3 needed no entry for the clock (§5.2),
+R5 needed none for sleeping (§7.1) and R6 needed none for listening (§7.2),
+because a seam with no default is a seam the caller binds and there is then no
+import to exempt. All three candidates R0 named have now declined the entry,
+and nothing is left that was predicted to want one.
 
 **What the gate enforces, exactly.** Those six are the modules this paragraph
 has always named, and the run-2 review measured the gap between them and the
@@ -174,8 +175,10 @@ their kin — §1.3's read-only posture, and `CLAUDE.md` 9), and a third bans
 `os`, which §7.1 legitimately needs for `os.fstat` and `os.PathLike`. All three
 are **static**: a dynamic `importlib.import_module("time")` escapes an AST walk,
 and that limit is stated in the rule's own docstring and held by a test rather
-than left for a reader to find. R6's `http.server` is now the first import that
-must either be injected away or earn one narrow allowlist line (§7.2).
+than left for a reader to find. R6's `http.server` was the first import that
+had to either be injected away or earn one narrow allowlist line, and it was
+injected away: the handler's base class and the listener factory are two
+parameters with no defaults, so the import lives in R7's CLI (§7.2).
 
 Why a gate and not a convention: completion is a timeout policy (§5), and a
 timeout policy tested against the real clock is a test that passes on a fast
@@ -1556,9 +1559,9 @@ ends, `Router` (§4) decides where it goes, and an ingest hands over chunks and
 hands back what the framer said about them.
 
 §7.1 is the two sources that are files, and is R5's. §7.2 is the OTLP/HTTP
-endpoint and is **R6's**, reserved here and written by that batch; §8 is the CLI
-(R7), which is where the real `time.monotonic`, the real `time.sleep` and the
-real listener are finally bound.
+endpoint and is R6's; §8 is the CLI (R7), which is where the real
+`time.monotonic`, the real `time.sleep`, the real listener and the one
+`import http.server` are finally bound.
 
 ### 7.1 `tail` and `stdin` — a growing file, and a pipe
 
@@ -1793,10 +1796,247 @@ in the workflow, so the claim and the thing that proves it fail together.
 
 ### 7.2 The OTLP/HTTP endpoint
 
-Reserved for R6, written by that batch: stdlib `http.server` only, one handler
-for `POST /v1/traces`, bodies to `Framer.document` and **never** to `push`
-(§3.3), and the listener factory injected so the tests bind a loopback socket on
-port 0. Nothing under `spanweave_live/` opens a socket before that batch.
+The other ingest: an exporter POSTs a body instead of writing a file. Same
+answer to the section's one question — the bytes reach the framer — and one
+different method for getting there, which is the whole of this section's risk.
+
+```python
+TRACES_TARGET = "/v1/traces"
+JSON_MEDIA_TYPE = "application/json"
+GZIP_ENCODING = "gzip"
+UNSUPPORTED_MEDIA_TYPE = "unsupported_media_type"
+UNREADABLE_BODY = "unreadable_body"
+
+@dataclass(frozen=True, slots=True)
+class Request:
+    method: str
+    target: str
+    body: bytes
+    content_type: str | None = None
+    content_encoding: str | None = None
+    transfer_encoding: str | None = None
+
+@dataclass(frozen=True, slots=True)
+class Response:
+    status: int
+    body: bytes
+    content_type: str = JSON_MEDIA_TYPE
+
+@dataclass(frozen=True, slots=True)
+class Exchange:
+    request: Request
+    response: Response
+    records: spanweave.Records
+    events: tuple[Event, ...] = ()
+
+class Endpoint:
+    def __init__(self, *, framer: Framer | None = None) -> None: ...
+    def handle(self, request: Request) -> Exchange: ...
+    @property
+    def framer(self) -> Framer: ...
+    @property
+    def requests(self) -> int: ...
+    @property
+    def last(self) -> Exchange | None: ...
+    @property
+    def events(self) -> tuple[Event, ...]: ...
+    @property
+    def counts(self) -> Mapping[str, int]: ...
+
+class HttpHandler(Protocol):      # what BaseHTTPRequestHandler already is
+    ...
+
+class Listener(Protocol):         # what HTTPServer already is
+    def handle_request(self) -> None: ...
+    def server_close(self) -> None: ...
+
+def respond(handler: HttpHandler, endpoint: Endpoint) -> Exchange: ...
+def handler_class(base: type[Any], endpoint: Endpoint, /) -> type[Any]: ...
+def serve(endpoint: Endpoint, *, listener: Callable[[], Listener],
+          until: Callable[[], bool] | None = None) -> Iterator[spanweave.Records]: ...
+```
+
+That block is the whole public surface, declared exactly as the code accepts it,
+and `tests/test_endpoint.py` holds the three dataclasses to it field by field
+and default by default, as `tests/test_routing.py` holds §4.1's (R5a, F5).
+Everything after the first argument is keyword-only, for §3.1's and §4.1's
+reason — these are seams and policies, not a reading order — with the one
+exception named below.
+
+#### Bodies go to `document`, and that is the batch's only hard rule
+
+A POST body is a whole document, so it goes to **`Framer.document`** and never
+to `Framer.push` (§3.3). The reason this is written as a rule and tested as one
+is that the wrong method does not fail: a pretty-printed export whose body ends
+in a newline reads *identically* through `push` — the same records, no
+diagnostic, byte for byte — because the reader's container detection runs per
+call and a whole arrival is one call. The corpus' two OTLP container renderings
+both end in a newline, so a `push` here passes a sweep over the corpus as it
+stands. What it does not pass is the ordinary shape of an HTTP body:
+
+- the same export with its **trailing newline trimmed** loses its last line to
+  the remainder, and what is handed over is a JSON document missing its closing
+  brace — 327 `malformed_record`s and no record for one of the two renderings,
+  201 for the other;
+- the same export **compacted onto one line** with no terminator completes no
+  line at all, so `push` reads **nothing**, reports nothing, and leaves the
+  whole body in a remainder no later request will finish.
+
+So the test posts every document rendering in **all three spellings** —
+verbatim, newline-trimmed and compacted — and requires each to produce that
+rendering's batch graph byte for byte. The middle two are what a `push` fails,
+and the first is what makes the trap a trap rather than a bug anybody would
+have found.
+
+`document` ignores `max_pending_bytes` and does not touch the remainder (§3.3),
+so an endpoint's framer holds nothing between requests. That is asserted, not
+assumed: `Framer.pending_bytes == 0` after every request in every test here.
+
+#### One request is served, and everything else is 415
+
+`POST /v1/traces` with `Content-Type: application/json` is the one request this
+endpoint serves. Five checks, in this order, and **one** refusal: a method that
+is not `POST`, a target that is not `/v1/traces`, a media type that is not
+`application/json`, a `Transfer-Encoding` other than `identity`, or a
+`Content-Encoding` that is neither `identity` nor `gzip` is `415` with an
+`unsupported_media_type` event.
+
+`415` for a wrong target and a wrong method too, rather than `404` and `405`,
+is a **choice and is argued rather than defaulted**: this endpoint serves
+exactly one request, and three statuses would be three policies where this
+section states one (§1.2). Nothing is hidden by the single status, because the
+event's `detail` names which of the five checks failed and `counts` carries the
+total (§1.5). A caller that wants HTTP's finer answers owns the handler class
+and can give them.
+
+The media type is matched case-insensitively with its parameters dropped, so
+`Content-Type: Application/JSON; charset=utf-8` is the served request; that is
+HTTP's own rule about its own header and not a policy invented here.
+`Content-Encoding: gzip` is inflated before the body reaches the framer, and a
+header that is absent or `identity` is no coding at all.
+
+**`Transfer-Encoding` is refused rather than ignored**, which is the one check
+that exists for §1.5 rather than for HTTP. `respond` reads `Content-Length`
+bytes; a chunked body carries no `Content-Length`, so ignoring the header would
+mean answering `200` to a body nobody read — an export lost in silence, which
+is the one outcome this project does not allow. Unframing a chunked body is not
+in this section, and saying so costs one status.
+
+#### A body that is not readable is 400, and a body that is empty is not
+
+`400` with an `unreadable_body` event, in exactly two cases:
+
+- the body declared `gzip` and would not inflate — `BadGzipFile`, a truncated
+  member or a corrupt deflate stream, three exception families for the one fact
+  that these bytes are not a gzip member;
+- the reader **skipped every line and produced no record**:
+  `records == ()` and `skipped_records > 0`. The reader's own diagnostics ride
+  out in the exchange's `records`, which is the only place that text survives
+  (§1.5), and `Event.spanweave_code` carries the first diagnostic's code in the
+  library's own order (`spanweave` `SPEC.md` §5.2), so the caller matches on it
+  instead of reading a sentence.
+
+Everything else the reader accepts is a `200`, **including an empty body and an
+empty container**: `b""` and `b"[]"` read as no records and nothing skipped.
+Calling those a `400` would mean the receiver deciding that a body *should* have
+held spans, which is a judgement about what the bytes mean and therefore a
+dialect read (§1.1). A body that holds records the reader could read and some it
+could not is likewise a `200` — it was read, and the diagnostics say what was
+skipped.
+
+An accepted body answers `{}`, and **not** OTLP's `partialSuccess` envelope.
+That is deliberate and is the §1.1 line again: a truthful `rejectedSpans` would
+require counting spans, which only a dialect read can do, and an always-empty
+`partialSuccess` would be a claim of full success this receiver cannot make
+about a body whose records it has not yet routed. A refusal answers
+`{"code": "<the receiver's code>"}`, serialized with `sort_keys=True`, so the
+poster is told what the event says.
+
+Nothing in `Endpoint.handle` raises for anything a request can carry — not a
+body that is not JSON, not one that is not UTF-8, not a `Content-Length` that is
+not a number, not an absent header. That is §4.4's rule one layer up: a refusal
+is an event and the endpoint keeps serving.
+
+#### Four layers, and `http.server` is imported above all four
+
+`CLAUDE.md`'s standing rule 4 names a **listener factory** as one of the three
+injected seams, and `tests/gates.py` bans `http`, `socketserver` and `urllib`
+under `spanweave_live/` outright (R5a). This section's answer is that the seam
+is two things, not one, and both are injected with **no default**:
+
+| layer | what it is | what the caller supplies |
+|---|---|---|
+| `Endpoint.handle` | pure: a `Request` in, an `Exchange` out | nothing |
+| `respond` | one request on a live handler | the handler |
+| `handler_class` | the handler **class** | the base class |
+| `serve` | the request loop | the listener factory |
+
+So **the seam allowlist in `tests/gates.py` is still `{}` after this batch**, as
+it was after R3 (`now`), R4 and R5 (`sleep`). R0 predicted that R6's listener
+would need the first entry, and that is the third wrong prediction of the same
+kind: the pattern all three share is a parameter with no default. R7's CLI is
+where `import http.server` finally appears, beside the real `time.monotonic`
+and `time.sleep`.
+
+`handler_class(base, endpoint)` is the one place the shape is not a plain
+callable seam, and it is positional-only (`/`) because the two arguments are the
+thing and the thing it serves, in that order, rather than policies. It builds
+the class with `type(...)` instead of a `class` statement, because a `class`
+statement needs its base at import time and that import is the one this module
+does not make. Every method in `GET POST PUT PATCH DELETE HEAD OPTIONS` is
+routed through `respond`, so a request this endpoint does not serve gets the
+endpoint's own counted `415` rather than `http.server`'s uncounted `501`;
+`log_message` is silenced, because a line per request on stderr is the caller's
+business (§1.2) and `counts` is the receiver's own answer.
+
+`HttpHandler` and `Listener` are `Protocol`s satisfied **structurally** by
+`http.server.BaseHTTPRequestHandler` and `http.server.HTTPServer`, and that is
+documentation plus duck typing rather than a checked claim: `mypy` never sees
+the stdlib class handed to `respond`, because the call site is the caller's.
+What makes the shape true is the test driving a real `HTTPServer`, and this
+paragraph says so rather than leaving a reader to assume a type checker did it.
+
+#### One yield per request, and the socket is bound on port 0
+
+`serve` calls its factory once, drives `listener.handle_request()` — which
+serves exactly **one** request and returns — and yields one
+`spanweave.Records` per request handled, refusals included, empty rather than
+absent. That is §7.1's rule for a poll that read nothing, for the same reason:
+"nothing arrived" and "nothing was readable" are different answers, and
+`Endpoint.last` is where the second is visible beside the yield. The listener is
+closed when the iteration ends, however it ends. `until` is the caller's stop
+condition, asked once before each request, `None` serving forever — a policy
+(§1.2), and a stop a test can state.
+
+There is no thread and no timeout anywhere in this section, which is what makes
+its tests facts rather than races. A test binds `127.0.0.1` on port **0**, lets
+the kernel choose, writes a request on an `http.client` connection, asks `serve`
+for one yield, and then reads the response. No port is hard-coded, nothing
+sleeps, and nothing is retried. A caller that wants concurrency brings its own
+listener; `threading` and `asyncio` are banned here (`CLAUDE.md` 4) and a
+`ThreadingHTTPServer` the caller passes to `serve` is the caller's choice.
+
+#### What this section is tested against
+
+`tests/test_endpoint.py`. Its central test is **gate A's comparison reached
+through a socket**: each of the corpus' two OTLP container renderings, in each
+of the three body spellings above, POSTed over a loopback connection and routed,
+and each must serialize byte for byte to `spanweave.dumps` of
+`spanweave.build` of that rendering, using gate A's own loader and comparison
+(§4.7). A second comparison here would be a weaker gate wearing the same name,
+so there is not one.
+
+The named mutation for this section is the obvious one and the one the series
+has been warned about since R1: `Endpoint` hands the body to `Framer.push`
+instead of `Framer.document`. It takes **ten** tests here down, and the shape of
+the ten is the whole lesson: both `verbatim` cases of the central test still
+**pass**, and the four `trimmed` and `compact` cases fail — the trimmed body on
+the status, because `push` hands over a document missing its closing brace and
+that is a `400`, and the compacted body on the records, because `push` completes
+no line and reads nothing at all. A suite whose bodies were only the corpus' own
+bytes would have been green, which is why `spellings()` has three entries and
+why one test in that file asserts, at the framer and with no socket in it, that
+the three really do differ.
 
 ## 8 onward
 

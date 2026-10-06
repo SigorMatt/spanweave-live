@@ -13,8 +13,9 @@ decisions come back in, R2b the framer's cap and the event it reports, R3 the
 completion policies, the clock the caller supplies with them, and `Router.tick`,
 R4 `Subscriptions` and the `Update` one consumer is handed, R5 the two file
 ingests -- `tail` and `stdin` -- and the codes for what happens to a file that
-is not growth, and R3a the code a router emits when the caller's bound on the
-completed-trace book makes it forget one.
+is not growth, R3a the code a router emits when the caller's bound on the
+completed-trace book makes it forget one, and R6 the OTLP/HTTP endpoint and the
+two codes it refuses with.
 """
 
 from __future__ import annotations
@@ -36,6 +37,22 @@ from spanweave_live.completion import (
     RootEnded,
     TraceState,
     root_ended,
+)
+from spanweave_live.endpoint import (
+    GZIP_ENCODING,
+    JSON_MEDIA_TYPE,
+    TRACES_TARGET,
+    UNREADABLE_BODY,
+    UNSUPPORTED_MEDIA_TYPE,
+    Endpoint,
+    Exchange,
+    HttpHandler,
+    Listener,
+    Request,
+    Response,
+    handler_class,
+    respond,
+    serve,
 )
 from spanweave_live.framing import FRAGMENT_TOO_LONG, Framer, FramingEvent
 from spanweave_live.ingest import (
@@ -77,6 +94,8 @@ __all__ = [
     "DELTA_UNSENT",
     "FORGOTTEN",
     "FRAGMENT_TOO_LONG",
+    "GZIP_ENCODING",
+    "JSON_MEDIA_TYPE",
     "LATE_ARRIVAL",
     "NOT_WRITTEN",
     "QUIET",
@@ -86,7 +105,10 @@ __all__ = [
     "REOPEN_FAILED",
     "ROOT_ENDED",
     "ROTATED",
+    "TRACES_TARGET",
     "TRUNCATED",
+    "UNREADABLE_BODY",
+    "UNSUPPORTED_MEDIA_TYPE",
     "VANISHED",
     "WRITTEN",
     "Cap",
@@ -94,11 +116,17 @@ __all__ = [
     "Completion",
     "Consumer",
     "Delivery",
+    "Endpoint",
     "Event",
+    "Exchange",
     "Framer",
     "FramingEvent",
+    "HttpHandler",
+    "Listener",
     "Policy",
     "Quiet",
+    "Request",
+    "Response",
     "RootEnded",
     "Routed",
     "Router",
@@ -108,7 +136,10 @@ __all__ = [
     "TraceState",
     "Update",
     "__version__",
+    "handler_class",
+    "respond",
     "root_ended",
+    "serve",
     "stdin",
     "tail",
     "trace_id_of",

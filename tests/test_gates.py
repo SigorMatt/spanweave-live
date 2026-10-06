@@ -230,6 +230,14 @@ def test_the_real_allowlist_is_empty_until_a_batch_adds_a_seam():
     # `Completion.now` has no default, so the caller holds the import
     # (`SPEC.md` §5.2). The allowlist is still empty after the batch that was
     # supposed to grow it.
+    #
+    # R5 (`sleep`) and R6 (the listener) were the other two candidates R0 named
+    # and both declined it too. R6 is the one worth reading twice, because this
+    # gate bans `http` outright and §7.2's endpoint is `http.server`: the seam
+    # is the handler's **base class** and the listener **factory**, two
+    # parameters with no defaults, so the import lives in R7's CLI and in
+    # `tests/test_endpoint.py` (`SPEC.md` §7.2). Nothing R0 predicted would want
+    # a line is left.
     assert dict(gates.SEAMS) == {}
 
 
