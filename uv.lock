@@ -353,7 +353,7 @@ wheels = [
 [[package]]
 name = "spanweave"
 version = "0.9.1"
-source = { git = "https://github.com/SigorMatt/spanweave?rev=e42f257b91be1bd9c7be6bcdbd31313947401288#e42f257b91be1bd9c7be6bcdbd31313947401288" }
+source = { git = "https://github.com/SigorMatt/spanweave?rev=fec7da27af517ad8b58ae3ec57827916aae60674#fec7da27af517ad8b58ae3ec57827916aae60674" }
 
 [[package]]
 name = "spanweave-live"
@@ -375,7 +375,7 @@ requires-dist = [
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.11" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.6" },
-    { name = "spanweave", git = "https://github.com/SigorMatt/spanweave?rev=e42f257b91be1bd9c7be6bcdbd31313947401288" },
+    { name = "spanweave", git = "https://github.com/SigorMatt/spanweave?rev=fec7da27af517ad8b58ae3ec57827916aae60674" },
 ]
 provides-extras = ["dev"]
 

@@ -58,29 +58,41 @@ Both are held by a test (`tests/test_pins.py`), the submodule half included:
 until R2a it was stated only in a comment in `.github/workflows/ci.yml`, so a
 re-added SSH submodule passed `make check` and failed only at CI.
 
-### 0.2 One typing override, and why it is temporary
+### 0.2 No typing override: the dependency is a typed package
 
-`pyproject.toml` carries exactly one mypy override:
-`follow_untyped_imports = true` for `module = ["spanweave.*"]`. It is here
-because the pinned `spanweave` ships **no `py.typed` marker**, so `mypy
---strict` refuses to analyse it as soon as a receiver module imports it, even
-though every line of it is annotated.
+`pyproject.toml` carries **no** mypy override for `spanweave`. The pin of §0.1
+names `fec7da27af517ad8b58ae3ec57827916aae60674`, and the package at that
+commit ships `spanweave/py.typed`, so `mypy --strict` reads the library as the
+typed package it is: `Records`, `Diagnostic` and `read_records` resolve to
+their real types, and a planted `x: int = read_records(b"")` errors with
+`expression has type "Records"`.
 
-The two ways out are not equivalent, which is why the narrow one was chosen.
-`ignore_missing_imports` would make `Records`, `Diagnostic` and `read_records`
-all `Any`, and then every annotation in this package would type-check
-vacuously — a green gate that has stopped asking the question.
-`follow_untyped_imports` instead analyses the installed source, so the receiver
-is checked against the library's real signatures: a planted
-`x: int = read_records(b"")` still errors, as it should.
+Until R2c this section recorded a temporary override, and the history matters
+because it names the thing this project must never settle for. The pin before
+the bump shipped no marker, so `--strict` refused to analyse `spanweave` as
+soon as a receiver module imported it, and the two ways out were not
+equivalent. `ignore_missing_imports` would have made `Records`, `Diagnostic`
+and `read_records` all `Any`, and then **every annotation in this package would
+have type-checked vacuously** — a green gate that has stopped asking the
+question. `follow_untyped_imports` instead analysed the installed source, which
+kept the question being asked, so that is what R1 used and R2a wrote down as
+temporary. The marker then landed upstream — `SigorMatt/spanweave` **PR #4**,
+*"packaging: the package ships py.typed"* (`bea9d44`), merged as the sha above
+— and R2c moved both halves of the pin to it and deleted the override.
 
-The marker belongs upstream, and it is on its way there:
-`SigorMatt/spanweave` **PR #4**, *"packaging: the package ships py.typed"*
-(commit `bea9d44`), open and green at the time of writing and **not yet
-merged**. When it merges, the pins of §0.1 move to the new `main` sha and this
-override is **deleted** (`WORKPLAN.md` R2c), with a test asserting that no
-`follow_untyped_imports` remains. Until then the override is a current fact
-stated here rather than a suppression hidden in a config file.
+`tests/test_typing.py` holds all of that true, and it asserts three things
+rather than one, because only the three together say what this section claims:
+the installed `spanweave` really carries the marker; no mypy configuration
+anywhere — `[tool.mypy]`, any `[[tool.mypy.overrides]]` entry, any `mypy.ini`
+or `setup.cfg`, any command line in the `Makefile` or in CI — sets
+`follow_untyped_imports` or `ignore_missing_imports`; and `mypy --strict`, run
+with this repository's own configuration, really reports the planted error.
+
+The third is not redundant. Deleting the override while the dependency were
+untyped fails loudly: mypy says it is *skipping* the module, and `make check`
+goes red. `ignore_missing_imports` is the one that would fail quietly, by
+making the gate green and empty — so the test checks that the question is
+still being asked, not merely that one spelling of not-asking is absent.
 
 ## 1. Non-goals — permanent, not parked
 

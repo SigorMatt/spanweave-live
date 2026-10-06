@@ -8,6 +8,52 @@ of change is a **batch** (`WORKPLAN.md`), and each entry names the batch.
 
 ## Unreleased
 
+### R2c — the pins move to a typed spanweave, and the override goes (2026-10-06)
+
+A batch with no new behaviour in it: it makes a fact true that two documents and
+a config comment had been calling temporary. `spanweave` PR #4 is merged, so the
+pinned library now ships `py.typed` and the one mypy override this repository
+carried has nothing left to stand in for.
+
+Changed
+
+- **Both halves of the pin move to `fec7da27af517ad8b58ae3ec57827916aae60674`**
+  (spanweave `main` after PR #4): the `pyproject.toml` dependency, the `corpus/`
+  submodule and `uv.lock`, in one commit, as `tests/test_pins.py` requires.
+  Still HTTPS on both halves — CI's own `submodules: true` checkout
+  authenticates over HTTPS and an SSH URL fails at checkout rather than at a
+  pin (`SPEC.md` §0.1). The sha carries no API change: PR #4 is one commit and
+  it adds a marker file.
+
+Removed
+
+- **The `[[tool.mypy.overrides]]` entry for `spanweave.*`**, and with it
+  `follow_untyped_imports = true`. `mypy --strict` now reads `spanweave` as the
+  typed package it is: 20 of its modules enter the build from site-packages,
+  `read_records` reveals as `def (data: bytes | bytearray | memoryview[int]) ->
+  spanweave.read.Records`, and nothing resolves to `Any`. The `pyproject.toml`
+  comment that explained the override is replaced by one that explains its
+  absence, because "there is deliberately no override here" is the thing a
+  reader needs told.
+
+Added
+
+- `tests/test_typing.py` — three tests, because the claim has three parts: the
+  installed `spanweave` carries `py.typed`; no mypy configuration anywhere sets
+  `follow_untyped_imports` or `ignore_missing_imports` (`[tool.mypy]` and every
+  override entry parsed, not grepped, so the file is still free to *name* the
+  deleted setting in a comment; plus `mypy.ini`/`setup.cfg` and the mypy command
+  lines in the `Makefile` and CI); and `mypy --strict`, under this repository's
+  own configuration, really reports a planted `int = read_records(b"")` against
+  the real return type. The third is the one that matters most: deleting the
+  override while the dependency were untyped fails **loudly**, but
+  `ignore_missing_imports` would fail **quietly**, by making every annotation in
+  this package vacuous while the gate stayed green.
+- `SPEC.md` §0.2 rewritten from *"one typing override, and why it is temporary"*
+  to *"no typing override: the dependency is a typed package"*, keeping the
+  history — including why `ignore_missing_imports` was refused — because that
+  reasoning is what stops the override coming back under a worse name.
+
 ### R5 — ingest: a growing file, and a pipe (2026-10-05)
 
 The fifth piece (`SPEC.md` §7, new; §7.1 written, §7.2 reserved for R6). The
@@ -313,7 +359,9 @@ Added
   and green and **not yet merged**; when it merges the pins move and this
   override is deleted (`WORKPLAN.md` R2c). Stated in the spec and here because
   it lived in a `pyproject.toml` comment and in the plan's resume note, and the
-  plan is deleted at series close (P-1).
+  plan is deleted at series close (P-1). *(PR #4 has since merged and R2c
+  deleted the override; this entry is left as it read, and §0.2 now describes
+  the typed dependency.)*
 - `SPEC.md` §3.3 states the `push`-vs-`document` **trap** in full: a body that
   happens to arrive whole reads *identically* to `document(body)`, which is
   exactly why the same body arriving in chunks being lost to one
@@ -456,7 +504,8 @@ Added
   `py.typed` and `mypy --strict` therefore refuses to analyse it as soon as a
   receiver module imports it. Named here retroactively by R2a, which states the
   override and its upstream fix in `SPEC.md` §0.2: this entry said nothing about
-  `pyproject.toml` changing at all.
+  `pyproject.toml` changing at all. *(Deleted again by R2c, which moved the
+  pin to a `spanweave` that ships the marker.)*
 
 ### R0 — repository skeleton (2026-10-04)
 

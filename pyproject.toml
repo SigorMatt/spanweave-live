@@ -35,7 +35,7 @@ classifiers = [
 # catch. The URL is HTTPS, not SSH, so an unauthenticated clone (CI, a
 # stranger) resolves it.
 dependencies = [
-    "spanweave @ git+https://github.com/SigorMatt/spanweave@e42f257b91be1bd9c7be6bcdbd31313947401288",
+    "spanweave @ git+https://github.com/SigorMatt/spanweave@fec7da27af517ad8b58ae3ec57827916aae60674",
 ]
 
 [project.scripts]
@@ -107,22 +107,14 @@ exclude = ["^corpus/"]
 module = ["tests.*"]
 strict = false
 
-[[tool.mypy.overrides]]
-# `spanweave` ships no `py.typed` marker, so `--strict` refuses to look at it
-# even though every line of it is annotated. The two ways out are not
-# equivalent: `ignore_missing_imports` would make `Records`, `Diagnostic` and
-# `read_records` all `Any`, and then every use of them in this package would
-# type-check vacuously -- a green gate that has stopped asking the question.
-# `follow_untyped_imports` instead analyses the installed source, so the
-# receiver is checked against the library's real signatures. The marker belongs
-# upstream and is on its way there -- SigorMatt/spanweave PR #4, "packaging: the
-# package ships py.typed" (bea9d44), not yet merged -- and when it merges the
-# pins move and this override is DELETED (WORKPLAN.md R2c). Until then it is the
-# honest local answer and not a suppression. Stated in full in SPEC.md 0.2,
-# because a fact that lives only in a config comment is a fact nobody finds.
-# R1; documented by R2a.
-module = ["spanweave.*"]
-follow_untyped_imports = true
+# There is deliberately NO override for `spanweave.*`. R1 through R5 carried one
+# -- `follow_untyped_imports = true` -- because the pinned `spanweave` shipped no
+# `py.typed` marker and `--strict` therefore refused to analyse it. The marker is
+# upstream as of the pin above (SigorMatt/spanweave PR #4, merged as fec7da2), so
+# `mypy --strict` reads the library as the typed package it is and the override
+# is gone (R2c). `tests/test_typing.py` holds it gone and holds mypy to really
+# analysing it; SPEC.md 0.2 tells the whole story, because a fact that lives only
+# in a config comment is a fact nobody finds.
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
