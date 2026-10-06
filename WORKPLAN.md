@@ -5,7 +5,7 @@ network, the clock and the consumer (`spanweave` `OPEN_QUESTIONS.md` §19,
 decided 2026-09-29). One batch = one sub-agent = one commit = one concern.
 This file plus git is the only state; any session can resume cold from it.
 
-Last updated: 2026-10-06 (run 3 under way: R2c done; R5a → R3a → R6 → R7 → R8 → R9 remain).
+Last updated: 2026-10-06 (run 3 under way: R2c, R5a done; R3a → R6 → R7 → R8 → R9 remain).
 
 ---
 
@@ -153,12 +153,12 @@ commit that cannot say `plan:`, and the watcher exempts it once per series.
 | R3 | **Completion is a policy with an injected clock.** `Completion` (SPEC §5): three policies, each a value — `Quiet(seconds)`, `RootEnded(grace_seconds)`, `Cap(records)` — composable as any-of; `now: Callable[[], float]` is injected, never `time.time` inside `spanweave_live/`; `Router.tick()` evaluates policies and returns the traces completed; a completed trace's final graph is materialized, optionally written with `spanweave.dump` to a directory the caller names, and its builder released; a record arriving for a completed trace opens a new builder and emits `late_arrival` with the trace id and the gap. Tests on a fake clock: each policy fires exactly when its definition says; a late arrival is an event, never silent, and never a mutation of the written graph. Mutation: a `Quiet` that fires one tick early fails. | done (e09af3f) | 10 |
 | R4 | **Subscription and delta fan-out.** `Subscriptions` (SPEC §6): a consumer registers a callback for one trace or all; after each absorbed record the router hands each subscriber `delta(since=version-1)` (per-record mode) or, for a subscriber that asked for `every=N`, `delta(since=last_seen)`; retention is set from the longest window any subscriber asked for; a callback that raises is isolated — recorded as `consumer_error` with the trace id and version, other subscribers still called, the record still absorbed. Tests: folding every delta a subscriber received onto its first graph equals the final `graph()`; a raising subscriber never stalls another. Mutation: a fan-out that skips the subscriber after the raising one fails. | done (54a6009) | 10 |
 | R5 | **Ingest: file tail and stdin.** `tail(path, *, now, sleep, poll_seconds)` (SPEC §7.1) follows a growing file from an offset through `Framer.push`, survives truncation (restarts from 0 and emits `truncated`), and rotation (reopens by path); `stdin()` reads chunks until EOF. Both take `sleep` injected, so the test drives them on a fake clock with a file it appends to between ticks. ~~Both are generators of `Records`~~ — corrected by R5: `stdin()` is a generator, but `tail` returns a `Tail`, a single-use iterable that carries its events, because §3.1 forbids wrapping `Records` and a bare generator has nowhere to carry its events; see §4. Tests: a corpus rendering appended in random chunks is routed to the same graphs as gate A; truncation and rotation are events. | done (a7ade79) | 10 |
-| R5a | **The run-2 review's twelve `next batch` items, closed.** Read `patches/REVIEW-2026-10-06.md` and close every `next batch` item as the file states it, one commit, tests first, mutation shown. Among them: the `every=N` trailing delta on completion and on `flush` (§3), with the fold test at `records=7, every=2` red on the parent; `check (macos-latest, 3.12)` added to CI, and the run on that job printed in the body; the four `Tail` sentences corrected to "a single-use iterable, not an iterator", with the SPEC §3.1 reason kept; items the file lists that this row does not name are closed too. | todo | 8 |
-| R3a | **Completed trace ids are forgotten by the caller's bound.** `Router(max_completed=None)`; SPEC §5.5 rewritten from "unbounded" to the policy in §3. Tests on the fake clock, red on the parent: with `max_completed=2` and three completions the oldest is evicted at the next tick with one `forgotten` event carrying its id and completion tick; a record for the forgotten id opens generation 1 and emits no `late_arrival`; a record for a remembered id still emits `late_arrival` with the gap; with `None` nothing is ever forgotten across the whole suite. Measure the book after eviction (the review's ~220 B/id method) and put the number in the body. Mutation: an eviction that emits no `forgotten` fails. | awaiting R5a | 6 |
+| R5a | **The run-2 review's twelve `next batch` items, closed.** Read `patches/REVIEW-2026-10-06.md` and close every `next batch` item as the file states it, one commit, tests first, mutation shown. Among them: the `every=N` trailing delta on completion and on `flush` (§3), with the fold test at `records=7, every=2` red on the parent; `check (macos-latest, 3.12)` added to CI, and the run on that job printed in the body; the four `Tail` sentences corrected to "a single-use iterable, not an iterator", with the SPEC §3.1 reason kept; items the file lists that this row does not name are closed too. | done (c1e6946) | 8 |
+| R3a | **Completed trace ids are forgotten by the caller's bound.** `Router(max_completed=None)`; SPEC §5.5 rewritten from "unbounded" to the policy in §3. Tests on the fake clock, red on the parent: with `max_completed=2` and three completions the oldest is evicted at the next tick with one `forgotten` event carrying its id and completion tick; a record for the forgotten id opens generation 1 and emits no `late_arrival`; a record for a remembered id still emits `late_arrival` with the gap; with `None` nothing is ever forgotten across the whole suite. Measure the book after eviction (the review's ~220 B/id method) and put the number in the body. Mutation: an eviction that emits no `forgotten` fails. | todo | 6 |
 | R6 | **Ingest: OTLP/HTTP JSON endpoint.** (SPEC §7.2) Stdlib `http.server` only; one handler for `POST /v1/traces` with `Content-Type: application/json`, body → `Framer.document`; `Content-Encoding: gzip` accepted; anything else 415; the listener factory is injected so tests use a loopback socket on port 0. Tests: the `otlp_container` renderings posted as bodies route to the batch graph; a non-JSON body is 400 with the receiver's event, never a traceback. | awaiting R5 | 10 |
 | R7 | **CLI.** `spanweave-live tail <path> --out <dir> [--quiet S] [--root-grace S] [--cap N] [--deltas]` and `spanweave-live serve --port P --out <dir>`: final graphs written as `<trace_id>.json` with `spanweave.dump`; `--deltas` writes each per-record delta document to stdout as one line; every event to stderr as one JSON line with its code; exit codes documented. Tests through `subprocess` on a corpus rendering. | awaiting R6 | 8 |
 | R8 | **Showcase: agentgolden's rules per delta.** agentgolden is `SigorMatt/agentgolden` at `aa1847f`, pinned as a dev dependency by git sha (its own `spanweave>=0.9.1,<1.0` resolves against the pinned spanweave). A consumer that, on each per-record delta, takes the trace's `graph()`, computes agentgolden's `Signature`, evaluates `examples/support_agent/rules.toml` **unchanged** with `agentgolden.rules.evaluate`, and records the first version at which each rule fails. The trace is agentgolden's own `examples/support_agent/candidates/skipped_verification.openinference.jsonl`, replayed through `Framer` + `Router`. Test: the first-failure version table is asserted exactly, and the `verify_identity → issue_refund` order rule fails at the version that absorbs the `llm.plan` span carrying the `issue_refund` request — one version before the `issue_refund` tool span arrives — which is the "when it almost happened" the memo promised; the same rules on the batch graph of the whole trace give the same final verdicts (batch and live are one model). | awaiting R7 | 12 |
-| R9 | **The receiver series closes.** `TASKS.md` registry R0–R9 with shas; §3 folded; `reviews/` holds every review byte-for-byte with sha256 and every finding dispositioned; WORKPLAN.md deleted; README covers the CLI and the API; PR `receiver` → `main`. No `plan:` commit follows. | awaiting R8 | 8 |
+| R9 | **The receiver series closes.** `TASKS.md` registry R0–R9 with shas; ~~§3 folded~~ **§3 and §4 both folded** (the §0.6 correction of `9a2e40f` had never reached this row — the one an agent executes; R5a/F12); `reviews/` holds every review byte-for-byte with sha256 and every finding dispositioned; WORKPLAN.md deleted; README covers the CLI and the API; PR `receiver` → `main`. No `plan:` commit follows. | awaiting R8 | 8 |
 
 ## 2. Execution order
 
@@ -180,7 +180,7 @@ onward land on `receiver`.
 | 2026-10-05 | §0.6 | At series close both §3 and §4 fold into TASKS.md, not §3 alone; corrected in this commit. | maintainer |
 | 2026-10-05 | run 2 | R2a → R2b → R3 → R4 → R5 → R2c, then stop for a cold review. R2c is last so that PR #4 has merged by the time it runs; if it has not, R2c ends `awaiting PR #4` and the run stops there. | maintainer |
 | 2026-10-06 | review run 2 | Nothing blocks. The review's twelve `next batch` items are one fix batch (R5a) made by the builder from the review file; the thirteen threads are registered at close. Three review premises of the brief's own were false and are decided here rather than left as findings: (c) the `every=N` fold, (d) macOS coverage, (d) the `Tail` wording. | maintainer |
-| 2026-10-06 | R4 `every=N` | A subscriber with `every=N` receives a trailing delta — `delta(since=last_seen)` for the records after the last multiple — when its trace completes (R3's completion hook) and on an explicit `Subscriptions.flush(trace_id)`; SPEC §6.6's fold claim is restated as holding after completion or flush, and the test runs at a record count that is not a multiple of N. Without this a subscriber silently never sees the tail of a trace, which is a dropped delta. | maintainer |
+| 2026-10-06 | R4 `every=N` | A subscriber with `every=N` receives a trailing delta — `delta(since=last_seen)` for the records after the last multiple — when its trace completes (R3's completion hook) and on an explicit ~~`Subscriptions.flush(trace_id)`~~ `Router.flush(trace_id)` (the entry point this decision named is the router's, not the subscription registry's — corrected by R5a, see §4); SPEC §6.6's fold claim is restated as holding after completion or flush, and the test runs at a record count that is not a multiple of N. Without this a subscriber silently never sees the tail of a trace, which is a dropped delta. | maintainer |
 | 2026-10-06 | CI | No ingest test has run on macOS: the only macOS job runs `make conformance`. CI gains `check (macos-latest, 3.12)` running `make check`, so rotation and truncation detection (`st_dev`, `st_ino`) are proven on both platforms the series claims. The §4 sentence that claimed macOS coverage for R5 is corrected. | maintainer |
 | 2026-10-06 | forgetting | The per-completed-trace-id book (~220 B per id, unbounded) gets a caller-set bound: `Router(max_completed: int \| None = None)`, default `None` (as shipped). At `tick()`, when the book exceeds the bound, the oldest-completed ids are evicted, one `forgotten` event per id with the trace id and its completion tick. A record for a forgotten id is a new trace at generation 1 and emits no `late_arrival` — the consequence of the policy, stated in SPEC §5.5, never a surprise. Memory is what the bound is for, so it is a count, not a time (R3a). | maintainer |
 | 2026-10-06 | R2c | Run 2 stopped at `awaiting PR #4`; PR #4 is merged and spanweave `main` is `fec7da27af517ad8b58ae3ec57827916aae60674`. R2c is first in run 3 and pins to that sha. | maintainer |
@@ -429,6 +429,44 @@ onward land on `receiver`.
   and R2a changelog bullets gained back-references rather than being
   rewritten.
 
+- 2026-10-06 R5a (`c1e6946`, CI green on that sha, **7/7** — the job count is
+  seven now, not six): the run-2 review's F1–F10 plus T10/T11 are closed. Tests
+  447 → 492. Red on the code parent `a4ce94b` was meaningful: **43 failed, 449
+  passed** there, including the `records=7, every=2` fold, both `Router.flush`
+  tests and the macOS-job assertion.
+- 2026-10-06 R5a — **`check (macos-latest, 3.12)` exists, so `tests/test_ingest.py`
+  has now actually run on macOS**: `st_dev`/`st_ino` rotation and truncation
+  detection are proven on both platforms the series claims, which R5's note
+  wrongly implied the macOS *conformance* job had already done. That correction
+  is the one in this file's R5 entry above; this is the job that makes it true.
+- 2026-10-06 R5a — **the decision in §3 named the wrong entry point, and the row
+  above is corrected.** The trailing delta ships as **`Router.flush(trace_id)`**,
+  not `Subscriptions.flush(trace_id)`: producing a delta needs a builder and
+  reporting a refusal needs an event, and by SPEC §6.1's layering both are the
+  router's. `Subscriptions.flush(trace_id, version)` is the pure lower half. SPEC
+  §6.1 records the divergence and why, so a reader of §3 alone is not misled.
+- 2026-10-06 R5a — **one review premise of its own was false.** F9 assumed a
+  negative `max_pending_bytes` behaves as `0`; it does not — it emits a
+  `fragment_too_long` of length 0 on every push that ends on a line boundary and
+  inflates the framer's line numbers (R2b's consequence, compounding). R5a took
+  F9's second option: a negative cap is a `ValueError`, stated in SPEC §3.4.
+- 2026-10-06 R5a — three things a later batch must read fresh rather than from
+  memory. `delta_unsent` **changed meaning**: it is now "the tail could not be
+  produced", carrying `spanweave_code`, and `Subscriptions.released` is gone,
+  replaced by `flush` + `forget` (SPEC §6.5). The SPEC-block test caught a second
+  drift — `Routed.events` had `= ()` in code and no default in §4.1 — so **R6
+  adding a field to `Event` now fails unless §4.1 is edited in the same commit**.
+  And the import gate now bans `http`, `socketserver` and `urllib`, so **R6's
+  `http.server` must be injected away or earn one narrow `SEAMS` line**; the
+  allowlist is still `{}` and a test holds it, which is R5's standing challenge
+  to R6 made enforceable.
+- 2026-10-06 R5a — **two review items were not R5a's to close** (F11, F12, both
+  `WORKPLAN.md`, and a batch never edits this file). F11 is closed by the plan
+  commits `63cbcca` (R2c written into run 3, first) and `33364b4` (status, sha,
+  "Last updated"); F12 is closed by this commit — R9's row had still said "§3
+  folded" while §0.6 and §3 had said "§3 and §4" since `9a2e40f`, which left the
+  corrected decision in the two places nobody reads at close and out of the one
+  instruction an agent executes.
 ## 5. Origins
 
 | ID | Origin |
