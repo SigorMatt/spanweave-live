@@ -85,6 +85,13 @@ the same repository at the same sha; `uv.lock` records it a third time.
 in three places and one commit — and `make install-check` afterwards, because a
 pin move is a dependency move.
 
+Since R8 there is a **second pin of the same shape**: `agentgolden` by git sha in
+the `dev` extra, `showcase/` a submodule of that repository at that sha, and
+`uv.lock` again. It is a *dev* pin and its consumer is a test, because the
+receiver carries no rules (`SPEC.md` §1.2, §9.4); a gate fails the build if any
+module under `spanweave_live/` imports it. Moving it moves the first-failure
+table the showcase asserts, so the new table belongs in the same commit.
+
 ## Reporting a bug
 
 The best report is a **failing fixture**: the smallest byte stream that

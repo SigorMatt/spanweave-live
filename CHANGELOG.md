@@ -8,6 +8,73 @@ of change is a **batch** (`WORKPLAN.md`), and each entry names the batch.
 
 ## Unreleased
 
+### R8 — the showcase: agentgolden's rules per delta, and a premise corrected (2026-10-06)
+
+No change under `spanweave_live/`. The receiver already had everything a live
+rules consumer needs, and that is the finding rather than a shortfall of it
+(`SPEC.md` §9, new in this commit).
+
+Added
+
+- **`tests/showcase.py`**, a consumer that on every per-record `Update` asks
+  `update.builder.graph()`, computes `agentgolden.signature.signature`, and
+  evaluates `showcase/examples/support_agent/rules.toml` — **unchanged** —
+  with `agentgolden.rules.evaluate`, keeping every version's verdicts so the
+  first version at which each rule failed is a lookup. It lives in `tests/`,
+  not in the package: the receiver carries no rules (`SPEC.md` §1.2), and
+  `make showcase` / `python -m tests.showcase` prints the table.
+- **`agentgolden` as a pinned *dev* dependency** (`aa1847f`) plus **`showcase/`,
+  a submodule of that repository at the same sha**, because the rules file and
+  the trace live under its `examples/`, which its wheel does not ship, and a
+  copy here would be a second thing to keep at the pin. `tests/test_pins.py`
+  holds the pair equal the way it holds the `spanweave` pair, asserts the
+  receiver's runtime dependency list is exactly `["spanweave"]` so an installed
+  receiver carries no rule engine, and asserts the resolution the row only
+  claimed: `agentgolden` needs `spanweave>=0.9.1,<1.0` and the pinned
+  `spanweave` is `0.9.1`, so it is the **lower** bound that is met exactly.
+- **`tests/gates.py`'s fourth rule, `no-consumer-rules`**: no module under
+  `spanweave_live/` may statically import `agentgolden`, with **no seam** —
+  the package evaluates nothing, so no file at the edge has to bind a rule
+  engine. Watched failing against four planted imports, and its limit stated:
+  it bans a module, not a vocabulary.
+- **`tests/test_showcase.py`**, 12 tests, asserting the first-failure version
+  table exactly, the complement (fifteen rules passing at every version),
+  verdict-for-verdict equality against `spanweave.build` of the whole trace,
+  byte equality of the live final graph against the batch graph through gate
+  A's own `undigested`, and that the rules file and the trace are the pinned
+  submodule's own committed blobs.
+
+Corrected
+
+- **`WORKPLAN.md` R8's premise is false, and the test asserts the measurement
+  rather than the row.** The row — from `spanweave` `OPEN_QUESTIONS.md` §19 —
+  predicted the `verify_identity → issue_refund` **order** rule failing at the
+  version that absorbs the `llm.plan` span carrying the `issue_refund` request,
+  one version before the tool span. It fails at version **6**, when
+  `tool.issue_refund` arrives. The mechanism the memo named is true (the
+  request *is* absorbed first: at version 5 the graph already reports
+  `issue_refund` as an `unpaired_call`), but `agentgolden`'s `OrderRule` reads
+  `Signature.tool_calls` — tool **nodes** — and `spanweave`'s `NodeKind` is
+  closed, so a requested call with no span is a *diagnostic* and not a node.
+  At version 5 the order rule is a **vacuous pass**.
+- **"When it almost happened" is real and it is a different rule.**
+  `trajectory.all_calls_fulfilled` fails at version 2 and version 5 and passes
+  at every other version including the last — a verdict that exists only live,
+  because the batch graph of the finished trace shows it passing. The live
+  reading does not make the *ordering* violation visible earlier; it makes the
+  *window between a request and its fulfilment* visible, which the finished
+  graph closes.
+
+The first-failure table, in full: `tools.required:verify_identity` 1,
+`tools.required:issue_refund` 1, `trajectory.all_calls_fulfilled` 2,
+`order:verify_identity<issue_refund` 6; the other fifteen rules never fail.
+
+The named mutation: a consumer that evaluates only the **final** graph
+(`LiveRules.__call__` keeping the latest `Observation` instead of appending it)
+reports every failure at version 7 and loses `trajectory.all_calls_fulfilled`
+entirely — 6 of 12 tests fail. A showcase whose table survived that mutation
+would not be showing anything live.
+
 ### R7 — the CLI, and the first entry in the seam allowlist (2026-10-06)
 
 Two commands, no new mechanism, and the one module in the package that imports

@@ -46,6 +46,19 @@ dev = [
     "ruff>=0.6",
     "mypy>=1.11",
     "pytest>=8",
+    # The showcase's consumer (SPEC.md section 9). `agentgolden` evaluates a
+    # rule file against a spanweave graph; the receiver evaluates nothing, so
+    # this is a DEV dependency and the consumer that uses it is a test. Pinned
+    # by sha for the same reason `spanweave` is: the showcase asserts an exact
+    # per-version verdict table, and a floating consumer would move that table
+    # with no commit of its own to explain it. `showcase/` is a submodule of
+    # this same repository at this same sha, because the rules file and the
+    # trace the showcase replays live under its `examples/` -- which the wheel
+    # does not ship -- and `tests/test_pins.py` holds the two shas equal.
+    # agentgolden requires `spanweave>=0.9.1,<1.0`; the pinned spanweave above
+    # is 0.9.1, so the two resolve together, and `tests/test_pins.py` asserts
+    # that rather than trusting it.
+    "agentgolden @ git+https://github.com/SigorMatt/agentgolden@aa1847f2a2ad51a95b98ab3e180bc5d211e6b138",
 ]
 
 [project.urls]
@@ -69,7 +82,8 @@ packages = ["spanweave_live"]
 # .gitignore does not exclude", which also ships untracked scratch lying in
 # the builder's working directory. `corpus/` is deliberately absent -- it is a
 # submodule, not this project's content, and an sdist carrying a second
-# repository's working tree would be a copy nothing holds at a sha.
+# repository's working tree would be a copy nothing holds at a sha. `showcase/`
+# is absent for the same reason: it is the pinned `agentgolden` repository.
 include = [
     "/spanweave_live",
     "/tests",
@@ -80,14 +94,14 @@ include = [
     "/pyproject.toml",
     "/uv.lock",
 ]
-exclude = ["/corpus"]
+exclude = ["/corpus", "/showcase"]
 
 [tool.ruff]
 line-length = 88
 target-version = "py311"
 # Markdown code blocks in these docs are illustrative -- type sketches, shell
 # transcripts -- not library code. Formatting prose is not ruff's job here.
-extend-exclude = ["*.md", "corpus"]
+extend-exclude = ["*.md", "corpus", "showcase"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF", "ANN", "PTH"]
@@ -101,7 +115,7 @@ python_version = "3.11"
 strict = true
 warn_unreachable = true
 disallow_any_explicit = false
-exclude = ["^corpus/"]
+exclude = ["^corpus/", "^showcase/"]
 
 [[tool.mypy.overrides]]
 module = ["tests.*"]

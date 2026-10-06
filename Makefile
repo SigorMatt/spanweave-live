@@ -2,7 +2,7 @@
 # counts as done (CONTRIBUTING.md, "The bar"): it wraps the exact toolchain
 # commands plus the invariant gate as runnable checks.
 
-.PHONY: check lint types test gates conformance install-check clean
+.PHONY: check lint types test gates conformance showcase install-check clean
 
 check: lint types test gates
 	uv run spanweave-live --version
@@ -40,6 +40,23 @@ conformance:
 	  exit 1; }
 	uv run pytest tests/test_conformance.py -v
 
+# The showcase (SPEC.md section 9): agentgolden's support-agent rules, UNCHANGED,
+# evaluated on every per-record delta of agentgolden's own skipped_verification
+# trace, with the first version at which each rule failed asserted exactly. It
+# prints the table and then asserts it, because a table a human can read is
+# what makes the claim checkable by someone who does not run pytest.
+#
+# It is also run by `check`, via `test`. This target is how you run it alone.
+# The consumer lives in tests/, never in spanweave_live/: the receiver carries
+# no rules (CLAUDE.md, standing rule 2), and a gate fails the build if the
+# package imports the rule engine.
+showcase:
+	@test -d showcase/examples || { \
+	  echo "showcase/ is not checked out: run 'git submodule update --init'"; \
+	  exit 1; }
+	uv run python -m tests.showcase
+	uv run pytest tests/test_showcase.py -v
+
 # Prove that what SHIPS works: builds the wheel, installs it into a throwaway
 # venv, and runs it from a working directory outside the repo -- the only gate
 # that can catch a packaging break. Needs the network once, to resolve the
@@ -49,4 +66,5 @@ install-check:
 
 clean:
 	rm -rf .mypy_cache .ruff_cache .pytest_cache dist/ out/
-	find . -type d -name __pycache__ -not -path './corpus/*' -prune -exec rm -rf {} +
+	find . -type d -name __pycache__ -not -path './corpus/*' \
+	  -not -path './showcase/*' -prune -exec rm -rf {} +

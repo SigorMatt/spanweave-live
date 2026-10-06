@@ -25,6 +25,14 @@ that same repository at the same commit, read-only, used only to build
 `fixtures/conformance/`. Nothing in this repo changes `spanweave`; if a batch
 seems to need a change there, that is a halt point (below).
 
+The showcase (`SPEC.md` §9) has the same shape one directory over: `agentgolden`
+is a **dev** dependency pinned to one commit, and `showcase/` is a submodule of
+that repository at the same commit, read-only, where the rules file and the
+trace are read from. It is a dev dependency and its consumer is a **test**
+because the receiver carries no rules; a gate fails the build if any module
+under `spanweave_live/` imports it. Nothing in this repo changes `agentgolden`
+either, and that too is a halt point.
+
 ## Standing rules — non-negotiable
 
 These are `WORKPLAN.md` §0.6, which is where they were first written, repeated
@@ -59,7 +67,9 @@ to find them. A change that violates one is wrong even if it passes tests.
 6. **The two pins are one pin.** `spanweave` is pinned to one commit in
    `pyproject.toml`, the `corpus/` submodule is at the same commit, and
    `tests/test_pins.py` holds the two equal (and `uv.lock` with them). Moving one
-   without the others is the failure that test exists to catch.
+   without the others is the failure that test exists to catch. Since R8 there is
+   a second pair of the same shape: the `agentgolden` dev pin and the `showcase/`
+   submodule, held equal by the same file.
 
 7. **Nothing is frozen.** Pre-1.0, by `0.0.x`, said out loud in the version
    number, in `--help`, in `README.md` and at the top of `SPEC.md`. Publishing is
@@ -105,6 +115,7 @@ Tooling is `uv`. The `Makefile` is the source of truth for the gates.
 make check            # THE gate: ruff, ruff format --check, mypy --strict, pytest, gates
 make gates            # the invariant gate and the pin test alone
 make conformance      # gate A (real from R2: tests/test_conformance.py, ~25s)
+make showcase         # the showcase: prints the first-failure table, then asserts it
 make install-check    # wheel into a throwaway venv, run from OUTSIDE the repo (needs network once)
 uv run pytest tests/test_gates.py::test_the_package_reaches_for_no_ambient_runtime
 ```
@@ -115,7 +126,8 @@ only gate that can catch a packaging break. CI runs both, on 3.11–3.14, plus
 `make conformance` on ubuntu and macos. Run both locally before calling a change
 done.
 
-First time in a fresh clone: `git submodule update --init` then `uv sync --extra dev`.
+First time in a fresh clone: `git submodule update --init` (both `corpus/` and
+`showcase/`) then `uv sync --extra dev`.
 
 ## Definition of done (per change)
 

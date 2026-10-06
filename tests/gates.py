@@ -26,7 +26,15 @@ what it enforced (`patches/REVIEW-2026-10-06.md` F7, F8):
   their kin without banning `os`, which `SPEC.md` §7.1's tail legitimately
   needs for `os.fstat` and `os.PathLike`.
 
-All three are **static**: a dynamic `importlib.import_module("time")` passes,
+R8 added the fourth, for the standing rule nothing had held statically:
+
+- **no-consumer-rules** bans `agentgolden`, the rule engine the showcase's
+  consumer evaluates graphs with (`SPEC.md` §9). The receiver carries no rules
+  and no semantics, the consumer is a **test** and `agentgolden` is a **dev**
+  dependency -- and a showcase is exactly the occasion on which one import
+  drifts from `tests/` into the package and passes every other gate.
+
+All four are **static**: a dynamic `importlib.import_module("time")` passes,
 and that limit is stated in the rule's own docstring and held by a test rather
 than left for a reader to discover (T11).
 
@@ -127,6 +135,24 @@ NETWORK_MODULES = (
     "websockets",
 )
 
+# R8 added the fourth rule, and it is the one standing rule 2 had never been
+# held by: **the receiver carries no rules and no semantics.** The showcase
+# (`SPEC.md` §9) brings a consumer that loads a rules file, computes a
+# signature and calls a verdict a failure -- exactly the vocabulary §1.2 keeps
+# out of the package -- and the risk a showcase runs is that some of it drifts
+# one directory left, where it would pass every other gate and every test.
+# `agentgolden` is the package that holds all of it, so a static import of it
+# under `spanweave_live/` is the whole violation and the whole rule.
+#
+# This is a narrower claim than `spanweave`'s own neutrality gate, which bans a
+# vocabulary rather than a module, and the difference is stated rather than
+# glossed: a hand-written rule evaluator under `spanweave_live/` that imported
+# nothing would pass this rule. It would also be a line of code nobody could
+# miss in review, whereas an `import agentgolden` added for convenience is the
+# plausible accident -- so this gate catches the accident and review catches
+# the deliberate act. There is no seam: no file of the package may import it.
+CONSUMER_MODULES = ("agentgolden",)
+
 # `os` is not a banned module: `SPEC.md` §7.1's tail needs `os.fstat` for the
 # file's size and identity, and `os.PathLike` for its own signature. What is
 # banned is the set of names *on* it that are the clock, randomness or a child
@@ -150,8 +176,10 @@ AMBIENT_OS_ATTRIBUTES = (
 # THE SEAM ALLOWLIST. Maintained here and nowhere else.
 #
 # A key is a path relative to the package root; its value is the set of banned
-# modules that one file may import -- ambient or network, since R5a there are
-# two module rules and one allowlist between them. The map is EMPTY at R0 and
+# modules that one file may import -- ambient, network or the consumer's rule
+# engine, since R8 there are three module rules and one allowlist between them
+# (no-consumer-rules accepts it for `Rule`'s shape and must never be given an
+# entry: see its docstring). The map is EMPTY at R0 and
 # that is the point: no file in the package binds a default clock, sleep or
 # listener yet, so nothing needs an exemption yet.
 #
@@ -328,6 +356,34 @@ def no_network(
     )
 
 
+def no_consumer_rules(
+    path: str,
+    source: str,
+    tree: ast.AST,
+    *,
+    seams: Mapping[str, frozenset[str]] | None = None,
+) -> list[Violation]:
+    """No **static** import of the consumer's rule engine. No seam, ever.
+
+    The receiver hands graphs and deltas over; a consumer evaluates them
+    (`CLAUDE.md` standing rule 2, `SPEC.md` §1.2, §9.4). The showcase's
+    consumer lives in `tests/showcase.py` and `agentgolden` is a dev
+    dependency; this rule is what makes that a fact about the build rather
+    than a convention. `seams` is accepted so the rule has `Rule`'s shape, and
+    an entry naming `agentgolden` would exempt the one thing the rule is for --
+    so the real `SEAMS` has none and `tests/test_gates.py` holds it so.
+    """
+    return _banned_imports(
+        "no-consumer-rules",
+        CONSUMER_MODULES,
+        "the receiver carries no rules and no semantics -- a consumer "
+        "evaluates graphs, and the showcase's consumer is a test",
+        path,
+        tree,
+        seams,
+    )
+
+
 def _os_names_used(tree: ast.AST) -> Iterator[tuple[str, int]]:
     """Every `os.<name>` attribute read, and every `from os import <name>`."""
     for node in ast.walk(tree):
@@ -375,7 +431,12 @@ def no_ambient_os(
 
 Rule = Callable[[str, str, ast.AST], list[Violation]]
 
-ALL_RULES: tuple[Rule, ...] = (no_ambient_runtime, no_network, no_ambient_os)
+ALL_RULES: tuple[Rule, ...] = (
+    no_ambient_runtime,
+    no_network,
+    no_ambient_os,
+    no_consumer_rules,
+)
 
 
 def check_source(path: str, source: str, rules: Sequence[Rule]) -> list[Violation]:

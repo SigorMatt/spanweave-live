@@ -86,6 +86,18 @@ PLANTED_AMBIENT_OS = [
 ]
 
 
+# The showcase's rule engine (R8, `SPEC.md` §9.4). The consumer that evaluates
+# agentgolden's rules per delta is `tests/showcase.py`; the package must never
+# reach for it, and a showcase is the occasion on which one import drifts one
+# directory left and passes every other gate.
+PLANTED_CONSUMER_RULES = [
+    ("import agentgolden", "agentgolden"),
+    ("from agentgolden.rules import evaluate", "agentgolden.rules"),
+    ("from agentgolden.signature import signature", "agentgolden.signature"),
+    ("import agentgolden.rules as rules", "agentgolden.rules"),
+]
+
+
 @pytest.mark.parametrize(("source", "expected"), PLANTED_AMBIENT)
 def test_gate_fails_on_a_planted_violation(source, expected):
     found = gates.check_source("spanweave_live/planted.py", source, gates.ALL_RULES)
@@ -105,6 +117,25 @@ def test_gate_fails_on_a_planted_ambient_use_of_os(source, expected):
     found = gates.check_source("spanweave_live/planted.py", source, gates.ALL_RULES)
     assert [v.rule for v in found] == ["no-ambient-os"]
     assert expected in found[0].detail
+
+
+@pytest.mark.parametrize(("source", "expected"), PLANTED_CONSUMER_RULES)
+def test_gate_fails_on_a_planted_import_of_the_consumer_s_rule_engine(source, expected):
+    found = gates.check_source("spanweave_live/planted.py", source, gates.ALL_RULES)
+    assert [v.rule for v in found] == ["no-consumer-rules"]
+    assert expected in found[0].detail
+
+
+def test_the_consumer_rule_engine_has_no_seam_and_cannot_be_given_one():
+    """The one rule with no exemption, held where the allowlist is held.
+
+    Standing rule 2 is not a cost the way the clock is: no file of the package
+    has to bind a rule engine, because the package never evaluates anything. So
+    unlike `time` there is no caller at the edge to concede to, and the real
+    `SEAMS` names no `agentgolden` for any file (`SPEC.md` §9.4).
+    """
+    for allowed in gates.SEAMS.values():
+        assert "agentgolden" not in allowed
 
 
 def test_the_os_the_package_really_needs_is_not_banned():

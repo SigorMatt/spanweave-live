@@ -27,9 +27,12 @@ its batch lands:
 | 6 | `Subscriptions` | Who gets told, and what do they get? |
 | 7 | Ingest | Where do the bytes come from? |
 | 8 | CLI | What does a person type? |
+| 9 | The showcase | What does a consumer do with all this, and what does live buy over batch? |
 
 Sections 3 onward are written by the batch that builds them (`WORKPLAN.md`
-R1–R7). This document begins with the two sections that constrain all of them:
+R1–R8). §9 is the odd one: it specifies a **test**, not a piece of the
+receiver, because the showcase adds no library behaviour and the reason it adds
+none is itself a claim worth stating (§9.1). This document begins with the two sections that constrain all of them:
 what the receiver will never do, and the three properties of the library
 underneath it that it has to be designed around.
 
@@ -132,7 +135,11 @@ library gives.
 The consumer side of this is demonstrated rather than asserted: R8 runs
 `agentgolden`'s rules, **unchanged**, over per-record deltas, and gets the same
 verdicts as the same rules over the batch graph. Live and batch are one model,
-and no rule had to move into the receiver for that to be true.
+and no rule had to move into the receiver for that to be true. §9 is that
+showcase, and §9.4 is the gate that keeps it on the consumer's side of the
+seam: no module under `spanweave_live/` may import the rule engine, and
+`agentgolden` is a **dev** dependency so an installed receiver does not carry
+one.
 
 ### 1.3 No enforcement
 
@@ -2337,3 +2344,167 @@ that writes its `line` field as `line` instead of `framer_line`. It is the one
 mutation that leaves every graph, every exit code and every other event
 untouched and still makes the CLI say something false to a human — which is what
 R2b's line-number consequence is, one layer up.
+
+---
+
+## 9. The showcase — a consumer that evaluates per delta
+
+Everything in §3 through §8 is plumbing with nothing to say about meaning. This
+section is the one place the project shows what the plumbing is *for*, and it
+does so with somebody else's rules: `agentgolden`'s support-agent policy,
+evaluated on every per-record delta, with the first version at which each rule
+failed recorded as it goes.
+
+It is specified here because its claims are precise and falsifiable, and
+because one of them — the one `WORKPLAN.md` R8 and `spanweave`
+`OPEN_QUESTIONS.md` §19 both predicted — turned out to be **false**. A showcase
+that quietly matched itself to the prediction would be the worst artefact this
+repository could ship, so the prediction, the measurement and the difference
+are all written down (§9.3).
+
+### 9.1 It adds no library behaviour, and that is the finding
+
+R8 touches no module under `spanweave_live/`. The receiver already had
+everything the showcase needed: `Framer.push` (§3.2), `Router.route` (§4.1),
+`Subscriptions.subscribe` at `every=1` (§6.2) and `Update.builder.graph()`
+(§6.1). The showcase is a **test** — `tests/showcase.py` holds the consumer,
+`tests/test_showcase.py` measures it — plus one dev dependency and one
+submodule.
+
+That is the demonstration, not a shortfall of it. §1.2 says a consumer
+evaluates graphs and the receiver hands them over; if the showcase had needed a
+hook, a filter by meaning, a verdict type or a rules-aware delta, §1.2 would
+have been a wish rather than a design. It needed none, and the surface it used
+is the surface R4 shipped.
+
+### 9.2 What the consumer does
+
+1. Read `showcase/examples/support_agent/candidates/skipped_verification.openinference.jsonl`
+   — seven OpenInference spans of one trace, `run-0003` — and push it through
+   one `Framer` **one line at a time**, as a tail or a pipe delivers it,
+   routing each record through one `Router`.
+2. Subscribe one consumer at `every=1`, so there is one `Update` per absorbed
+   record and each window is one record wide: `since == version - 1`.
+3. On each `Update`, ask `update.builder.graph()` for the graph — the `Update`
+   carries none, by §6.1's design — compute `agentgolden.signature.signature`,
+   and evaluate `showcase/examples/support_agent/rules.toml`, **unchanged**,
+   with `agentgolden.rules.evaluate`.
+4. Keep every version's verdicts, so "the first version at which each rule
+   failed" is a lookup over what was observed rather than a second replay.
+
+The rules read a **whole graph**, not a delta. `OPEN_QUESTIONS.md` §19's
+refinement — evaluate "only the rules whose inputs the delta names" — is
+deliberately **not** implemented: it needs a map from rule to graph region,
+which is a consumer's optimisation and not the claim under test. What the delta
+contributes is the trigger and the version number, which is exactly what a
+first-failure table is indexed by. Saying this matters because "evaluates the
+delta" and "evaluates on each delta" are different claims and only the second
+one is made here.
+
+The rules file and the trace are read from `showcase/`, a git submodule of
+`SigorMatt/agentgolden` at the same sha the dev dependency names, because
+`agentgolden`'s wheel does not ship its `examples/` and a copy in this
+repository would be a second thing to keep at the pin (`CLAUDE.md`).
+`tests/test_pins.py` holds the pair equal, exactly as it holds the `spanweave`
+pair, and additionally asserts the resolution the two pins depend on:
+`agentgolden` requires `spanweave>=0.9.1,<1.0` and the pinned `spanweave` is
+`0.9.1`, so the **lower** bound is the one met exactly — a pin move to a
+`1.0` spanweave breaks the showcase, and that assertion is where it says so.
+
+### 9.3 The version table, and the premise that was wrong
+
+Nineteen rules are evaluated at each of seven versions. Four ever fail, and the
+version each first failed at is the table this section is tested against:
+
+| Rule | First failed at |
+|---|---|
+| `tools.required:verify_identity` | 1 |
+| `tools.required:issue_refund` | 1 |
+| `trajectory.all_calls_fulfilled` | 2 |
+| `order:verify_identity<issue_refund` | 6 |
+
+The other fifteen pass at every version.
+
+**What was predicted.** `WORKPLAN.md` R8, from `OPEN_QUESTIONS.md` §19: the
+`verify_identity → issue_refund` **order** rule fails "at the version that
+absorbs the `llm.plan` span carrying the `issue_refund` request — one version
+before the `issue_refund` tool span arrives". The mechanism offered was a
+property of the telemetry: an LLM span that requests a tool *ends* before the
+tool span *starts*, so the request is absorbed first.
+
+**The mechanism is true and the conclusion is false.** The request *is*
+absorbed first: at version 5 the graph already reports `issue_refund` as an
+`unpaired_call`, and `Signature.unfulfilled` names it. But `agentgolden`'s
+`OrderRule` asks `Signature.tool_calls("issue_refund")`, which is tool
+**nodes**, and `spanweave`'s `NodeKind` is closed (`spanweave` `SPEC.md` §3.2):
+a requested call with no span of its own is a *diagnostic*, not a node. So at
+version 5 the order rule has nothing to be about and returns a **vacuous
+pass**, with `basis="vacuous"`. It first fails at version **6**, the version
+`tool.issue_refund` arrives. The row's premise was wrong about the rule, not
+about the trace, and the test asserts 6 and says why (§9.5).
+
+**"When it almost happened" is real, and it is a different rule.**
+`trajectory.all_calls_fulfilled` reads exactly the diagnostic the order rule
+cannot see. It fails at version 2 (`lookup_order` requested, not yet run), at
+version 5 (`issue_refund` requested, not yet run), and **passes at every other
+version including the last**. It is therefore a verdict that exists *only*
+live: the batch graph of the whole trace shows `all_calls_fulfilled` passing,
+and no amount of re-reading the finished trace recovers version 5. That is what
+the live consumer buys, stated as the thing actually measured rather than as
+the thing that was hoped for.
+
+The honest summary of the difference: the live reading does not make the
+*ordering* violation visible earlier. It makes a *window* visible — the gap
+between a request and its fulfilment — that the finished graph closes. A gate
+(§1.3, which the receiver does not know exists) would act on that window; the
+receiver observes it and says nothing about what it means.
+
+**Batch and live are one model.** The same rules file over `spanweave.build` of
+the whole trace gives verdict for verdict, `as_dict` for `as_dict`, what the
+last live version gives; and the live final graph serializes **byte for byte**
+to the batch graph, compared through gate A's own `undigested` normalization
+(§4.7) rather than a second one.
+
+### 9.4 The gate: no rule engine under `spanweave_live/`
+
+A showcase is precisely the occasion on which a consumer's vocabulary drifts
+one directory to the left. So `tests/gates.py` grew a fourth rule,
+`no-consumer-rules`: no module under `spanweave_live/` may statically import
+`agentgolden`, and unlike the clock there is **no seam** — the package never
+evaluates anything, so no file at the edge has to bind a rule engine, and
+`tests/test_gates.py` holds the allowlist free of it.
+
+The rule's limit is stated rather than glossed: it bans a module, not a
+vocabulary, so a hand-written rule evaluator under `spanweave_live/` that
+imported nothing would pass it. That would also be a line of code nobody could
+miss in review; an `import agentgolden` added for convenience is the plausible
+accident, and this gate is for the accident.
+
+The packaging half is held separately, because source text cannot see it:
+`agentgolden` is in the `dev` extra and `tests/test_pins.py` asserts the
+receiver's runtime dependency list is exactly `["spanweave"]`. Someone who
+installs `spanweave-live` gets no rule engine with it.
+
+### 9.5 What this section is tested against
+
+`tests/test_showcase.py`, which asserts the §9.3 table **exactly** — the four
+rules and their four versions, and that the complement is the other fifteen
+passing at every version — plus: the premise correction (version 5 is a vacuous
+pass with empty `tool_calls`; version 6 fails), the `all_calls_fulfilled`
+failure set `(2, 5)` with the last version passing, verdict equality against
+the batch graph, byte equality of the final graph, and that the rules file and
+the trace are the pinned submodule's own committed blobs — because "unchanged"
+is the whole point and a rules file edited to make a verdict come out right
+would void the demonstration.
+
+The named mutation for this section is **a consumer that evaluates only the
+final graph**: `LiveRules.__call__` keeping the latest `Observation` instead of
+appending it. It reports every failure at version 7 and loses
+`trajectory.all_calls_fulfilled` entirely — which is the point of the whole
+section, since a showcase whose table survived that mutation would not be
+showing anything live.
+
+`make showcase` runs the test and prints the table; `python -m tests.showcase`
+prints it alone. There is no clock, no socket and no randomness in any of it:
+the bytes come from the submodule and the replay is the same `Framer` +
+`Router` gate A uses.
