@@ -13,7 +13,8 @@ decisions come back in, R2b the framer's cap and the event it reports, R3 the
 completion policies, the clock the caller supplies with them, and `Router.tick`,
 R4 `Subscriptions` and the `Update` one consumer is handed, R5 the two file
 ingests -- `tail` and `stdin` -- and the codes for what happens to a file that
-is not growth.
+is not growth, and R3a the code a router emits when the caller's bound on the
+completed-trace book makes it forget one.
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ from __future__ import annotations
 from spanweave_live.completion import (
     CAP,
     COMPLETED,
+    FORGOTTEN,
     LATE_ARRIVAL,
     NOT_WRITTEN,
     QUIET,
@@ -73,6 +75,7 @@ __all__ = [
     "DEFAULT_CHUNK_BYTES",
     "DELTA_UNAVAILABLE",
     "DELTA_UNSENT",
+    "FORGOTTEN",
     "FRAGMENT_TOO_LONG",
     "LATE_ARRIVAL",
     "NOT_WRITTEN",

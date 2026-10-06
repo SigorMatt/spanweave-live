@@ -58,6 +58,12 @@ RELEASED: Final = "released"
 #: the record is absorbed: the caller's policy said stop holding a builder, not
 #: stop receiving telemetry (`SPEC.md` §1.3, §5.5). `seconds` is the gap.
 LATE_ARRIVAL: Final = "late_arrival"
+#: A completed trace id was dropped from the router's book because the caller's
+#: `max_completed` bound was reached (`SPEC.md` §5.5). `at` is the clock reading
+#: at which that trace was completed. A record for it afterwards is a first
+#: sighting -- generation 1, and no `late_arrival` -- which is the trade the
+#: bound buys and the reason this event exists rather than nothing.
+FORGOTTEN: Final = "forgotten"
 
 #: The diagnostic that tells an orphan from a root. `spanweave`'s own code, read
 #: rather than redefined (`spanweave` `SPEC.md` §4.0).

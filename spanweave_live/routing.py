@@ -41,6 +41,7 @@ from spanweave.adapters import classify, get
 
 from spanweave_live.completion import (
     COMPLETED,
+    FORGOTTEN,
     LATE_ARRIVAL,
     NOT_WRITTEN,
     RELEASED,
@@ -115,6 +116,12 @@ class Event:
     #: truncated, rotated or could not reopen. `None` for every code that is
     #: not. Here for `seconds`' reason and no other (`SPEC.md` §4.1, §7.1).
     offset: int | None = None
+    #: The **clock reading** this event is about, where it is about one: today
+    #: `forgotten` alone, which is about the instant a trace was completed
+    #: (`SPEC.md` §5.5). Not `seconds`, which is declared as a *duration*: one
+    #: field meaning an instant on one code and an interval on another is a
+    #: field a caller cannot match on (`SPEC.md` §4.1).
+    at: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -165,11 +172,13 @@ class Completed:
 class _Book:
     """What the router remembers about one trace for completion's sake.
 
-    Not a public type and not a graph: four numbers, which is what `TraceState`
+    Not a public type and not a graph: five numbers, which is what `TraceState`
     (`SPEC.md` §5.6) and a generation's file name need. A book **outlives** the
     builder it was opened for, because the gap on a `late_arrival` and the file
     name of a second generation are both facts about a trace already completed
-    (`SPEC.md` §5.5), and that cost is stated there rather than hidden here.
+    (`SPEC.md` §5.5), and that cost is stated there rather than hidden here --
+    with the number, ~220 bytes an id, and with the caller's bound on it,
+    `max_completed`, which `Router._forget` applies.
     """
 
     first_record_at: float
@@ -228,9 +237,16 @@ class Router:
     without one holds every builder it ever made and reads no clock, which is
     what R2 was and what gate A still exercises.
 
-    All four settings are **keyword-only**, as `SPEC.md` §4.1 declares them:
-    they are independent knobs with no reading order, and a positional order
-    here would be a contract the spec never offered.
+    `max_completed` is the caller's bound on the book that outlives the builders
+    (`SPEC.md` §5.5): at a `tick` that pushes the number of remembered
+    completions past it, the oldest completions are forgotten, one `forgotten`
+    event each. `None` -- the default -- forgets nothing, which is exactly what
+    R3 shipped.
+
+    All **six** settings are keyword-only, as `SPEC.md` §4.1 declares them: they
+    are independent knobs with no reading order, and a positional order here
+    would be a contract the spec never offered. (The sentence said "four" from
+    R2 through R5a, which was two batches of settings out of date.)
 
     It keeps a **count** per event code and no event log: the events of one
     record ride on that record's `Routed`, and an accumulated list grows with
@@ -240,6 +256,11 @@ class Router:
     #: How many identified traces this router will hold builders for, or `None`
     #: for no cap (`SPEC.md` §4.5).
     max_traces: int | None = None
+    #: How many **completed** trace ids this router will remember, or `None` to
+    #: remember every one of them, which is what R3 shipped (`SPEC.md` §5.5).
+    #: Beside `max_traces` because the two are this router's two bounds: that
+    #: one bounds builders, this one bounds the book that outlives them.
+    max_completed: int | None = None
     adapter: str | None = None
     temporal: bool = True
     #: The caller's completion policy, with the caller's clock in it, or `None`
@@ -667,6 +688,11 @@ class Router:
         # (`SPEC.md` §5.5), so the window is applied to it afresh.
         self._retained.pop(trace_id, None)
         book.completed_at = now
+        # To the end of the book, so that `_books`' own order is **completion**
+        # order among the entries that have one and `_forget` needs no sort and
+        # no clock (`SPEC.md` §5.5). Nothing else reads this dict's order:
+        # `trace_ids` is the builders'.
+        self._books[trace_id] = self._books.pop(trace_id)
         events.append(
             self._counted(
                 Event(
@@ -683,6 +709,7 @@ class Router:
             )
         )
         events.extend(self._trailing(index, trace_id, builder, version))
+        events.extend(self._forget(index))
         return Completed(
             trace_id=trace_id,
             policy=policy,
@@ -730,6 +757,86 @@ class Router:
             ),
         )
         subscriptions.forget(trace_id)
+        return events
+
+    def _forget(self, index: int) -> list[Event]:
+        """Drop the oldest completions past the caller's bound (`SPEC.md` §5.5).
+
+        The book `_books` keeps outlives the builders it was opened for, because
+        the gap on a `late_arrival` and the file name of a second generation are
+        facts about a trace already completed -- and at ~220 bytes per id it is
+        unbounded in the traces a stream completes, which is what
+        `max_completed` is for. A **count** and not a horizon: memory is what the
+        bound buys, and seconds bound no bytes.
+
+        Three things make it predictable rather than merely bounded:
+
+        - Only entries whose builder is **gone** are eligible. A book the router
+          still holds a builder for is that open trace's own state -- `Quiet`
+          reads `last_record_at` off it -- so evicting one would complete a trace
+          early for a reason no caller could see. Those are bounded by the
+          builders held, which is `max_traces`' job.
+        - The **oldest completion** goes first, which is the order this router
+          completed them in and not a sort on the caller's clock: `_complete`
+          moves a book to the end of `_books` as it books the completion, so
+          this dict's own order is completion order among the entries that have
+          one. A clock that steps backwards therefore evicts nothing out of
+          turn, and what a bound of `N` throws away is a function of the stream
+          and never of a dict's hashing (`CLAUDE.md` 8).
+        - Every eviction is **one event**, counted, riding on the `Completed`
+          whose completion pushed the book over. That is why it is evaluated
+          here and not at the top of the next tick: a tick that completes nothing
+          has no `Completed` to report on, and an eviction nobody was told about
+          is exactly the silence `SPEC.md` §1.5 refuses.
+
+        A record for a forgotten id afterwards finds no book, so it is a first
+        sighting: generation 1, and no `late_arrival`. That is the trade the
+        bound buys and `SPEC.md` §5.5 states it.
+        """
+        bound = self.max_completed
+        if bound is None:
+            return []
+        # How many completions are remembered, in **constant** time and with no
+        # second counter to drift (`SPEC.md` §5.3's own argument): with a
+        # completion policy every builder this router holds has a book, so a
+        # book with no builder is exactly a trace whose completion is
+        # remembered. A scan per completion would make a bound of `N` cost `N`
+        # on every trace that ends, which is the kind of cost `SPEC.md` §2.3 is
+        # about.
+        over = len(self._books) - len(self._builders) - max(bound, 0)
+        if over <= 0:
+            return []
+        doomed: list[tuple[str, float]] = []
+        for trace_id, book in self._books.items():
+            completed_at = book.completed_at
+            if completed_at is None:
+                # An open trace, and never eligible. They are bounded by the
+                # builders held, so this skips a bounded number of entries.
+                continue
+            doomed.append((trace_id, completed_at))
+            if len(doomed) == over:
+                break
+        events: list[Event] = []
+        for trace_id, completed_at in doomed:
+            del self._books[trace_id]
+            events.append(
+                self._counted(
+                    Event(
+                        code=FORGOTTEN,
+                        index=index,
+                        trace_id=trace_id,
+                        spanweave_code=None,
+                        detail=(
+                            f"{trace_id!r} was completed at {completed_at!r} on "
+                            f"the caller's clock and is forgotten: this router "
+                            f"remembers {bound} completed traces, which is "
+                            f"max_completed, so a record for it now opens "
+                            f"generation 1 and is not a late arrival"
+                        ),
+                        at=completed_at,
+                    )
+                )
+            )
         return events
 
     def _unsent(

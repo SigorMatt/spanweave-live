@@ -738,6 +738,11 @@ def test_the_ingest_events_are_routings_event_and_carry_no_new_field() -> None:
     of a routing event's facts. Ingest is **above** routing, so there is no
     upward import to avoid and the facts do fit — and `offset` is the one field
     it needed, added as R3 added `seconds` and R4 added `version`.
+
+    The list is the whole of `Event`, so a field another section adds shows up
+    here too: `at` is R3a's, the clock reading a `forgotten` is about
+    (`SPEC.md` §5.5), and it is `None` on every ingest code. Ingest still added
+    exactly one field, which is what this test is named for.
     """
     assert [field.name for field in dataclasses.fields(Event)] == [
         "code",
@@ -748,6 +753,7 @@ def test_the_ingest_events_are_routings_event_and_carry_no_new_field() -> None:
         "seconds",
         "version",
         "offset",
+        "at",
     ]
 
 

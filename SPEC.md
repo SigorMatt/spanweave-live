@@ -529,6 +529,7 @@ class Event:
     seconds: float | None = None # the duration the event is about, if any (§5.1)
     version: int | None = None   # the version the event is about, if any (§6.1)
     offset: int | None = None    # the byte offset it is about, if any (§7.1)
+    at: float | None = None      # the clock reading it is about, if any (§5.5)
 
 @dataclass(frozen=True, slots=True)
 class Routed:
@@ -545,6 +546,7 @@ class Router:
         self,
         *,
         max_traces: int | None = None,
+        max_completed: int | None = None,  # §5.5
         adapter: str | None = None,
         temporal: bool = True,
         completion: Completion | None = None,   # §5
@@ -604,6 +606,17 @@ being written — `Routed.events` carries `= ()` in the code and carried none he
 row amended this block by hand and two of them got it wrong somewhere.
 `offset` is where in a file's content a tail had read to, so it is `None` for
 every code §4, §5 and §6 emit.
+
+R3a added `max_completed` — beside `max_traces`, because the two are the
+router's two bounds and a reader looking for what this router will not grow past
+should find both in one place — and `Event.at`, for the reason `seconds`,
+`version` and `offset` each exist. `at` is a **clock reading**, not a duration:
+`forgotten` (§5.5) is about the instant a trace was completed, which is the one
+fact a caller needs to tell a forgotten completion from one that never happened,
+and `seconds` is declared as the duration an event is about. Reusing it would
+have made one field mean two things wherever a caller matched on it. It is
+`None` for every other code, `late_arrival` included — that one is defined by
+its gap, and the gap is a duration.
 
 `Record` is `Any` and deliberately not a JSON type of the receiver's own:
 `spanweave`'s `JsonValue` is itself `Any` and is not exported, and a second,
@@ -809,6 +822,7 @@ WRITTEN = "written"
 NOT_WRITTEN = "not_written"
 RELEASED = "released"
 LATE_ARRIVAL = "late_arrival"
+FORGOTTEN = "forgotten"
 
 @dataclass(frozen=True, slots=True)
 class TraceState:
@@ -1004,9 +1018,11 @@ that identified none (§4.3) on a timeout that was about something else.
 
 ### 5.5 A late arrival is an event, and the written file is never touched again
 
-A record for a trace that was completed opens a **new builder** and is absorbed
-into it, and `route` reports `LATE_ARRIVAL` with the trace id and `seconds` =
-the gap between the completion and this arrival on the receiver's clock. The
+A record for a trace that was completed — and whose completion the router still
+remembers, which with the default `max_completed=None` is every one of them —
+opens a **new builder** and is absorbed into it, and `route` reports
+`LATE_ARRIVAL` with the trace id and `seconds` = the gap between the completion
+and this arrival on the receiver's clock. The
 record is not refused, not dropped and not held: the caller's policy said stop
 holding a builder, and it did not say stop receiving telemetry (§1.3).
 
@@ -1028,7 +1044,11 @@ the first file is a report the receiver already made about records it had, and
 editing it would make the receiver's output depend on what arrived *after* it
 said that. Two files are two honest statements; one overwritten file is a lost
 one. A reader who wants the whole trace folds them, and the gap in the
-`late_arrival` event is what tells them there is something to fold.
+`late_arrival` event is what tells them there is something to fold. This holds
+for as long as the completion is **remembered**, which with the default
+`max_completed=None` is forever; a caller that bounds the book has chosen
+otherwise, and the paragraph on `max_completed` below says exactly what that
+costs.
 
 **What remembering a completion costs, stated rather than hidden.** The gap and
 the generation are facts about a trace whose builder is gone, so the router keeps
@@ -1039,7 +1059,8 @@ floats. This paragraph said "four floats, an int and a flag" until R5a, which is
 six fields for a record that has five.) Releasing therefore returns the
 materialization and the absorbed records, which is where this project's cost is
 (§2.3), and not quite everything: that record is **unbounded in the number of
-distinct trace ids a stream completes**. A receiver running for a month would
+distinct trace ids a stream completes** unless the caller bounds it with
+`max_completed`, below. A receiver running for a month with the default would
 hold one per trace it ever saw.
 
 **And it is bigger than the field list reads.** Measured four ways over the real
@@ -1059,13 +1080,89 @@ Trace-id length moves the figure by under 10 %, so the cost is Python object
 overhead and not the id. At ten traces a second a receiver reaches 10^6 completed
 traces in **about 28 hours** (`patches/REVIEW-2026-10-06.md` §0(b), F1). The
 numbers are here rather than in the plan because a reader deciding what to do
-about this needs them, and the plan is deleted at series close. That is said here because `max_traces` (§4.5) does *not* bound it — it
-bounds builders — and because the fix is a policy for **forgetting** a completed
-trace, which is a number somebody has to choose and so is a decision rather than
-this section's to invent (§1.2, and the same reasoning R1 applied to the framer's
-cap before §3 decided it). A caller that cannot afford it today builds a new
-`Router` per window; what it loses by doing that is the `late_arrival` gap, which
-is the thing the record is for.
+about this needs them, and the plan is deleted at series close. `max_traces`
+(§4.5) bounds none of it — it bounds builders. The figures were measured before
+the bound below existed and they are what it is for, so they stay: they are how
+a caller turns a bound into bytes.
+
+**The bound is the caller's: `max_completed`.** `Router(max_completed=None)` is
+the default and is what the paragraphs above describe — **nothing is ever
+forgotten**, which is R3's behaviour unchanged, so a caller that upgrades gets no
+new silence it did not ask for. `max_completed=N` bounds the book at `N`
+**completed** trace ids:
+
+- It is a **count, not a time.** Memory is what the bound is for, and bytes are
+  counted in ids and not in seconds: a horizon of ten minutes bounds nothing at
+  all on a stream that completes ten thousand traces a minute, and the number a
+  caller can reason about from `~220 B` is how many it will keep. (`WORKPLAN.md`
+  §3, 2026-10-06.)
+- It bounds the **completed** entries only. A book whose builder the router still
+  holds is that open trace's own state — `Quiet` and the generation's file name
+  are read off it — and it is already bounded by the builders held (§4.5).
+  Evicting one would complete a trace early for a reason no caller could see.
+- The eviction happens at **`tick()`**, never at `route`: the book only ever
+  grows past the bound because a trace completed, completing is what a tick does
+  (§5.4), and a router whose caller never ticks never forgets. The **oldest
+  completion** goes first, where oldest is the order this router completed them
+  in and not a sort on the clock readings: a caller's clock that steps backwards
+  then evicts nothing out of turn, and traces that completed in one tick — all
+  of them at one reading, which is §5.2's rule — are forgotten in `trace_ids`
+  order. So what a bound of `N` throws away is a function of the stream, and
+  never of a dict's hashing. Nothing is scanned per completion to find it: with
+  a completion policy every builder has a book, so a book with no builder is a
+  remembered completion, and the count is a subtraction rather than a second
+  counter that could drift from the first (§5.3's own argument).
+- Each eviction is **one `forgotten` event** carrying the trace id and, in `at`,
+  the clock reading at which that trace was completed (§4.1). It is counted like
+  every other code (§4.6), and it rides on the `Completed` of the trace whose
+  completion pushed the book past the bound — after `released` and after the
+  fifth step, because it is bookkeeping and §5.4's four steps are the decision.
+  That is also *why* the eviction is evaluated there and not at the top of the
+  next tick: a tick that completes nothing has no `Completed` to report on, and
+  an eviction nobody was told about is the silence §1.5 exists to refuse.
+- `max_completed=0` is legal and means the book is emptied in the tick that
+  filled it: a completion is reported and then immediately forgotten. A negative
+  bound reads the same way, as a `max_traces` below zero reads as zero — the
+  number is the caller's and no record can cause it, so neither is validated.
+
+**Measured after eviction**, by the same method as the figures above and on the
+same `route` → advance the clock → `tick()` path, with 32-character ids and the
+book walked with a deep `getsizeof` after `gc.collect()`:
+
+| completions driven | `max_completed` | book held | retained book |
+|---|---|---|---|
+| 10^5 | `None` | 100,000 | 20,744,932 B (207.4 B/id) |
+| 10^5 | 10,000 | 10,000 | 2,105,220 B (210.5 B/id) |
+| 10^5 | 1,000 | 1,000 | 221,036 B (221.0 B/id) |
+
+The per-id cost is unchanged — this bounds how many ids there are, not what one
+costs — and the RSS delta over the bounded runs is 880 KB and **zero**: a
+receiver that completes traces forever past its bound stops growing. The ten
+millionth completion costs what the thousandth did.
+
+**What a forgotten trace costs, which is the whole of the trade.** A record for
+a forgotten trace id finds no book, so it is a **first sighting**, and two things
+follow that a caller has to have been told:
+
+- **No `late_arrival`.** The gap such an event would carry is exactly the fact
+  that was evicted, and the receiver does not invent one. It is not a cap, not a
+  refusal and not a drop — the record is absorbed, into a trace this router has
+  no memory of. A bound on the book is therefore a bound on how long a late
+  arrival stays recognizable, and a caller that sets `max_completed` has chosen
+  to stop recognizing them past `N` completions. The `forgotten` event is where
+  that choice is visible: a caller holding the events can still tell the two
+  apart afterwards, which is why the eviction is reported at all.
+- **Generation 1 again**, so where the caller named an `out_dir` the new
+  generation is written as `<trace_id>.json` — **over** the file the first
+  generation wrote, not beside it. That is the one place a bound costs more than
+  memory, and it is the honest consequence rather than a special case: the
+  generation lives in the book, and the receiver cannot number a generation it
+  does not remember. The alternative is remembering the number, which is the
+  thing the caller asked it to stop doing. A caller that wants every generation's
+  file kept has `max_completed=None`, which is the default, or an `out_dir` per
+  window.
+
+With the default `None` neither arises.
 
 ### 5.6 What a policy may look at, and what it may not
 
@@ -1204,6 +1301,7 @@ class Router:
         self,
         *,
         max_traces: int | None = None,
+        max_completed: int | None = None,  # §5.5
         adapter: str | None = None,
         temporal: bool = True,
         completion: Completion | None = None,      # §5

@@ -8,6 +8,50 @@ of change is a **batch** (`WORKPLAN.md`), and each entry names the batch.
 
 ## Unreleased
 
+### R3a — completed trace ids are forgotten by the caller's bound (2026-10-06)
+
+R5a's §5.5 stated the cost and said the fix was a decision rather than a
+section's to invent. The decision was made (`WORKPLAN.md` §3, 2026-10-06) and
+this is it: the book that outlives the builders gets a **caller-set bound**, and
+forgetting is an event like everything else here.
+
+Added
+
+- **`Router(max_completed=None)`.** `None` is the default and forgets nothing,
+  which is R3's behaviour unchanged — a caller that upgrades gets no new silence
+  it did not ask for. At `max_completed=N` a `tick` that pushes the number of
+  remembered completions past `N` evicts the oldest ones, **oldest by the order
+  this router completed them in** and not by a sort on the caller's clock, so a
+  clock that steps backwards evicts nothing out of turn. It is a **count, not a
+  horizon**: memory is what the bound buys, and a horizon of ten minutes bounds
+  nothing on a stream that completes ten thousand traces a minute.
+- **The `forgotten` event**, one per evicted id, carrying the trace id and — in
+  `Event.at`, R3a's one new field — the clock reading at which that trace was
+  completed. `at` is an **instant** and `seconds` is a duration, and one field
+  meaning both is a field a caller cannot match on, so §4.1 declares a second
+  one. The event rides on the `Completed` whose completion pushed the book over,
+  which is also why the eviction is evaluated there and not at the top of the
+  next tick: a tick that completes nothing has no `Completed` to report on, and
+  an eviction nobody was told about is the silence `SPEC.md` §1.5 refuses.
+- **`SPEC.md` §5.5 is rewritten from "unbounded"** to this policy, including the
+  consequence, which is the whole of the trade: a record for a **forgotten** id
+  is a new trace at **generation 1** and emits **no `late_arrival`**, because the
+  gap it would carry is the fact that was evicted. A bound on the book is a bound
+  on how long a late arrival stays recognizable. The second half of that trade is
+  the one place a bound costs more than memory and it is stated too: generation 1
+  is `<trace_id>.json`, so where the caller named an `out_dir` the new generation
+  is written **over** the forgotten one's file — §5.5's "the file already written
+  is not rewritten" holds while the completion is *remembered*, and the receiver
+  cannot number a generation it does not remember. Stated in the spec, asserted
+  in `tests/test_completion.py`, never discovered live.
+- Ten tests on the fake clock, eight of them red on the derived parent
+  (`c1e6946`): the eviction and its event, the forgotten id's first sighting, a
+  remembered id's `late_arrival` still carrying its gap, eviction order across
+  ticks and within one, an **open** trace never being forgotten however small
+  the bound, `max_completed=0`, and `None` forgetting nothing — that last one
+  across the whole suite, by reading the rest of the suite's source for a bound
+  no other test sets.
+
 ### R5a — the run-2 review's `next batch` items, closed (2026-10-06)
 
 One commit for the twelve findings `patches/REVIEW-2026-10-06.md` marks

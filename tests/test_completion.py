@@ -18,12 +18,20 @@ The load-bearing claims of this file:
 - **A policy sees no meaning.** `TraceState` is an id, a clock reading and four
   numbers, and the test that holds its field set is what keeps a completion
   policy from growing into a detector with a timeout (`SPEC.md` §5.6).
+- **Forgetting a completion is the caller's bound and an event.** At
+  `max_completed=N` the oldest completions are evicted with one `forgotten`
+  each, and a record for a forgotten id is a first sighting with **no**
+  `late_arrival` — which is the consequence of the policy, so it is asserted
+  here rather than discovered by somebody live (`SPEC.md` §5.5). With the
+  default `None` nothing is ever forgotten, and a test reads the rest of the
+  suite's source to keep that true of the whole suite.
 """
 
 from __future__ import annotations
 
 import dataclasses
 import json
+import pathlib
 
 import pytest
 import spanweave
@@ -31,6 +39,7 @@ import spanweave
 from spanweave_live import (
     CAP,
     COMPLETED,
+    FORGOTTEN,
     LATE_ARRIVAL,
     NOT_WRITTEN,
     QUIET,
@@ -735,6 +744,289 @@ def test_a_third_generation_is_written_beside_the_first_two(tmp_path):
         "t1.3.json",
         "t1.json",
     ]
+
+
+# --------------------------------------------------------------------------
+# The book is bounded by the caller's `max_completed`, and forgetting is an
+# event (`SPEC.md` §5.5, `WORKPLAN.md` §3's decision of 2026-10-06).
+# --------------------------------------------------------------------------
+
+
+def completed_ids(router: Router) -> list[str]:
+    """The trace ids this router still remembers a completion for.
+
+    The private book, read deliberately: `SPEC.md` §5.5 is a claim about memory,
+    and a test that only read the public surface could not tell a bound that
+    evicted from one that emitted an event and kept the entry.
+    """
+    return [
+        trace_id
+        for trace_id, book in router._books.items()
+        if book.completed_at is not None
+    ]
+
+
+def test_the_oldest_completion_is_forgotten_at_the_bound_and_says_so():
+    """`max_completed=2`, three completions: one `forgotten`, the oldest (§5.5).
+
+    The event carries the trace id and, in `at`, the clock reading at which that
+    trace was completed -- a field and not a sentence, for §4.1's reason. It
+    rides on the `Completed` of the trace whose completion pushed the book over,
+    because a tick that completes nothing has no `Completed` to report on.
+    """
+    clock = Clock()
+    router = router_with(Cap(1), clock=clock, max_completed=2)
+
+    completions = {}
+    for trace in ("t1", "t2", "t3"):
+        clock.tick(1.0)
+        router.route(openinference("a", trace=trace))
+        done = router.tick()
+        assert len(done) == 1
+        completions[trace] = clock.reading
+
+    assert completed_ids(router) == ["t2", "t3"], "the bound did not evict"
+    assert router.counts[FORGOTTEN] == 1
+
+    # One event, on the completion that pushed the book past the bound.
+    forgotten = [event for event in done[0].events if event.code == FORGOTTEN]
+    assert len(forgotten) == 1
+    assert forgotten[0].trace_id == "t1"
+    assert forgotten[0].at == completions["t1"]
+    assert forgotten[0].seconds is None, "a completion instant is not a duration"
+    # Bookkeeping after the decision: `released` stays §5.4's fourth event.
+    assert codes(done[0].events) == [COMPLETED, RELEASED, FORGOTTEN]
+
+
+def test_a_record_for_a_forgotten_trace_is_a_first_sighting(tmp_path):
+    """Generation 1, and **no `late_arrival`** -- the trade the bound buys.
+
+    The gap a late arrival would carry is the fact that was evicted, so there is
+    nothing to report and the receiver does not invent one (`SPEC.md` §5.5). The
+    file name is the proof it is generation 1: `t1.json`, not `t1.2.json` -- and
+    that is the second half of the trade, asserted here because it is the one
+    place the bound costs more than memory. §5.5's "the file already written is
+    not rewritten" holds while the completion is **remembered**; a generation the
+    receiver cannot number is written over the first one's file, and the
+    alternative is remembering the number the caller asked it to forget.
+    """
+    clock = Clock()
+    router = router_with(Cap(1), clock=clock, max_completed=1, out_dir=tmp_path)
+    router.route(openinference("a", trace="t1"))
+    first = router.tick()[0]
+    assert first.path == tmp_path / "t1.json"
+    before = first.path.read_bytes()
+
+    clock.tick(1.0)
+    router.route(openinference("a", trace="t2"))
+    assert codes(router.tick()[0].events) == [COMPLETED, WRITTEN, RELEASED, FORGOTTEN]
+    assert completed_ids(router) == ["t2"]
+
+    clock.tick(9.0)
+    again = router.route(openinference("b", trace="t1"))
+    assert again.events == (), "a forgotten trace was reported as a late arrival"
+    assert LATE_ARRIVAL not in router.counts
+    # Absorbed, into a trace this router has no memory of.
+    assert again.version == 1
+    # Generation 1 again, so this is written OVER the first generation's file.
+    assert router.tick()[0].path == tmp_path / "t1.json"
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["t1.json", "t2.json"]
+    assert (tmp_path / "t1.json").read_bytes() == batch(openinference("b", trace="t1"))
+    assert (tmp_path / "t1.json").read_bytes() != before
+
+
+def test_a_record_for_a_remembered_trace_is_still_a_late_arrival_with_the_gap():
+    """The bound changes nothing for a completion still in the book (§5.5)."""
+    clock = Clock()
+    router = router_with(Cap(1), clock=clock, max_completed=2)
+    router.route(openinference("a", trace="t1"))
+    assert len(router.tick()) == 1
+    clock.tick(1.0)
+    router.route(openinference("a", trace="t2"))
+    assert len(router.tick()) == 1
+    assert completed_ids(router) == ["t1", "t2"]
+
+    clock.tick(4.5)
+    late = router.route(openinference("b", trace="t1"))
+    assert codes(late.events) == [LATE_ARRIVAL]
+    assert late.events[0].trace_id == "t1"
+    assert late.events[0].seconds == 5.5, "the gap is from t1's own completion"
+    assert late.events[0].at is None
+
+
+def test_the_evictions_of_one_tick_are_oldest_first_and_one_event_each():
+    """Three traces completing in one tick at `max_completed=1` (§5.5).
+
+    Oldest completion first, ties broken by first-arrival order, so what a bound
+    throws away is a function of the stream and the clock -- never of a dict's
+    hashing (`CLAUDE.md` 8). Here the three complete against **one** clock
+    reading, so every `completed_at` is equal and only the tie-break orders
+    them: `t3` arrived first, so `t3` is forgotten first.
+    """
+    clock = Clock()
+    router = router_with(Quiet(1.0), clock=clock, max_completed=1)
+    for trace in ("t3", "t1", "t2"):
+        router.route(openinference("a", trace=trace))
+    clock.tick(5.0)
+
+    completed = router.tick()
+    assert [done.trace_id for done in completed] == ["t3", "t1", "t2"]
+    forgotten = [
+        (event.trace_id, event.at)
+        for done in completed
+        for event in done.events
+        if event.code == FORGOTTEN
+    ]
+    assert forgotten == [("t3", clock.reading), ("t1", clock.reading)]
+    assert completed_ids(router) == ["t2"]
+    assert router.counts[FORGOTTEN] == 2
+
+
+def test_oldest_means_oldest_completion_and_not_oldest_arrival():
+    """A trace that arrived first and completed last is forgotten last (§5.5).
+
+    The two orders differ here on purpose: `t1` arrives first and runs long,
+    `t2` and `t3` arrive later and end at once. "Oldest" is about the
+    completion, because the book is a record *of a completion* and the bound is
+    on how many of those are remembered.
+    """
+    clock = Clock()
+    router = router_with(Cap(2), clock=clock, max_completed=2)
+    router.route(openinference("a", trace="t1"))
+    for trace in ("t2", "t3"):
+        clock.tick(1.0)
+        router.route(openinference("a", trace=trace))
+        router.route(openinference("b", trace=trace))
+        assert len(router.tick()) == 1
+    assert completed_ids(router) == ["t2", "t3"]
+
+    # t1 ends last, so t2 -- the first *completion* -- is what goes.
+    clock.tick(1.0)
+    router.route(openinference("b", trace="t1"))
+    done = router.tick()[0]
+    assert [event.trace_id for event in done.events if event.code == FORGOTTEN] == [
+        "t2"
+    ]
+    assert completed_ids(router) == ["t3", "t1"]
+
+
+def test_the_remembered_completions_are_counted_and_not_recounted():
+    """The count is `len(_books) - len(_builders)`, and that identity holds.
+
+    `_forget` reads how many completions are remembered as a subtraction, so a
+    bound of `N` costs nothing per completion (`SPEC.md` §5.5, §2.3). What the
+    subtraction rests on is that every builder has a book, which this drives
+    from every side the router has: an open trace, a completion, a late arrival
+    that re-opens one, a record the cap refused, and a record with no trace id
+    at all.
+    """
+    clock = Clock()
+    router = router_with(Cap(1), clock=clock, max_traces=2)
+
+    def identity() -> None:
+        assert len(router._books) - len(router._builders) == len(completed_ids(router))
+
+    identity()
+    router.route(unclaimable("u"))
+    identity()
+    router.route(openinference("a", trace="t1"))
+    router.route(openinference("a", trace="t2"))
+    identity()
+    refused = router.route(openinference("a", trace="t3"))
+    assert codes(refused.events) == ["refused_at_cap"]
+    identity()
+    assert len(router.tick()) == 2
+    identity()
+
+    clock.tick(1.0)
+    late = router.route(openinference("b", trace="t1"))
+    assert codes(late.events) == [LATE_ARRIVAL]
+    identity()
+    assert len(router.tick()) == 1
+    identity()
+
+
+def test_an_open_trace_is_never_forgotten_however_small_the_bound():
+    """The bound is on **completed** ids, and an open book is live state (§5.5).
+
+    `Quiet` reads `last_record_at` off the book of a trace whose builder the
+    router still holds, so evicting one would complete a trace early for a
+    reason no caller could see. Those are bounded by `max_traces` instead.
+    """
+    clock = Clock()
+    router = router_with(Quiet(10.0), Cap(2), clock=clock, max_completed=0)
+    # t1 completes on `Cap(2)`; t2 and t3 stay open on `Quiet(10.0)`.
+    router.route(openinference("a", trace="t1"))
+    router.route(openinference("b", trace="t1"))
+    router.route(openinference("a", trace="t2"))
+    router.route(openinference("a", trace="t3"))
+    assert [done.trace_id for done in router.tick()] == ["t1"]
+    assert router.trace_ids == ("t2", "t3")
+    assert completed_ids(router) == []
+    assert sorted(router._books) == ["t2", "t3"], "an open trace was forgotten"
+
+    # And their silence is still measured from their own last record.
+    clock.tick(9.0)
+    assert router.tick() == ()
+    clock.tick(1.0)
+    assert [done.trace_id for done in router.tick()] == ["t2", "t3"]
+
+
+@pytest.mark.parametrize("bound", [0, -1])
+def test_a_bound_of_zero_forgets_in_the_tick_that_completed(bound):
+    """Legal, and the number is the caller's (`SPEC.md` §5.5, §1.2).
+
+    A completion is reported and then immediately forgotten, so the next record
+    for that trace is a first sighting. A negative bound reads as zero, as a
+    `max_traces` below zero does, and neither is validated: no record can cause
+    the number.
+    """
+    clock = Clock()
+    router = router_with(Cap(1), clock=clock, max_completed=bound)
+    router.route(openinference("a"))
+    done = router.tick()[0]
+    assert codes(done.events) == [COMPLETED, RELEASED, FORGOTTEN]
+    assert router._books == {}
+
+    clock.tick(3.0)
+    assert router.route(openinference("b")).events == ()
+
+
+def test_nothing_is_ever_forgotten_without_a_bound():
+    """`None` is the default and forgets nothing: R3's behaviour, unchanged.
+
+    The upgrade adds no silence a caller did not ask for, which is why the
+    default is the shipped one and not a number somebody guessed.
+    """
+    clock = Clock()
+    router = router_with(Cap(1), clock=clock)
+    assert router.max_completed is None
+    assert Router().max_completed is None
+
+    for index in range(200):
+        clock.tick(1.0)
+        router.route(openinference("a", trace=f"t{index}"))
+        assert codes(router.tick()[0].events) == [COMPLETED, RELEASED]
+    assert len(completed_ids(router)) == 200
+    assert FORGOTTEN not in router.counts
+
+
+def test_no_other_test_in_the_suite_sets_a_bound():
+    """With `None`, nothing is ever forgotten **across the whole suite**.
+
+    The claim is about every other test file, gate A included, so it is read off
+    the suite's own source rather than asserted one router at a time: if no test
+    outside this file constructs a `max_completed`, every router the rest of the
+    suite builds has the default and forgets nothing. A test that adds a bound
+    elsewhere has to come and say so here.
+    """
+    here = pathlib.Path(__file__).resolve()
+    elsewhere = sorted(
+        path.name
+        for path in here.parent.glob("*.py")
+        if path != here and "max_completed" in path.read_text(encoding="utf-8")
+    )
+    assert elsewhere == []
 
 
 # --------------------------------------------------------------------------
