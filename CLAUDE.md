@@ -5,9 +5,16 @@ every session, in full. `SPEC.md` is the source of truth for *what* to build;
 this file is the source of truth for *how*, and for the lines that must never be
 crossed. A cold session should be able to work here from this file alone.
 
-`WORKPLAN.md` is execution state for the series: which batch is next, what it
-must contain, what has been learned. **It is edited only by the orchestrator.** A
-sub-agent executing a batch never edits it.
+`TASKS.md` is the registry **between** series and the second file a cold session
+reads: one line per batch with the commit that closed it, the decisions the
+maintainer took, the facts the batches measured, and the disposition of every
+finding of every review. While a series is open there is also a `WORKPLAN.md` —
+the orchestrator's execution state, which batch is next and what it must
+contain. **It is edited only by the orchestrator**, and a sub-agent executing a
+batch never edits it. It exists only for the life of a series and is deleted at
+the close, with what outlives it folded into `TASKS.md`; the receiver series'
+last state is at `git show b500342:WORKPLAN.md`. No series is open at this tip,
+so there is no `WORKPLAN.md` here.
 
 ## What this project is
 
@@ -55,10 +62,13 @@ to find them. A change that violates one is wrong even if it passes tests.
 4. **The clock, sleeping and sockets are injected seams** — `now`, `sleep`, a
    listener factory — so every test runs on a fake clock and the conformance gate
    is deterministic. No module under `spanweave_live/` imports `time`,
-   `datetime`, `random`, `socket`, `threading` or `asyncio` outside a seam file
-   named in `tests/gates.py`'s `SEAMS` allowlist, which is **empty** until a
-   batch adds the one file that holds a default. The gate fails the build.
-   (`SPEC.md` §1.4.)
+   `datetime`, `random`, `socket`, `threading`, `asyncio` or `http.server`
+   (`tests/gates.py` bans a longer list than those seven) outside a seam file
+   named in that file's `SEAMS` allowlist. The allowlist has **one** entry,
+   added by R7 and still the only one —
+   `SEAMS = {"real.py": frozenset({"time", "http.server"})}`, one file and two
+   modules — because `real.py` is where a process binds the real world and
+   nothing else does. The gate fails the build. (`SPEC.md` §1.4, §8.2.)
 
 5. **Nothing is dropped silently.** A refusal, a cap, a late arrival or a
    consumer error is an **event with a code**, counted and reported.

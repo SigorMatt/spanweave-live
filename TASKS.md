@@ -69,7 +69,8 @@ plan would have nothing left to be the plan of.
 
 ## Decisions taken  *(`WORKPLAN.md` §3, folded)*
 
-Thirteen rows, moved here as they stood. These are the decisions the maintainer
+Twelve rows, moved here as they stood — counted in this table, where an earlier
+reading of this line said thirteen. These are the decisions the maintainer
 took during the series; a batch never took one of these itself, and a batch that
 needed one halted (`CONTRIBUTING.md`, "Halt, do not improvise").
 
@@ -314,10 +315,11 @@ drift and the spec is the one a reader of the library reaches first.
 
 ### R5a — the run-2 review's items (`c1e6946`, CI green, **7/7** — the job count is seven from here)
 
-- F1–F10 plus T10/T11 closed. Tests 447 → 492. Red on the code parent `a4ce94b`
-  was meaningful: **43 failed, 449 passed** there, including the
-  `records=7, every=2` fold, both `Router.flush` tests and the macOS-job
-  assertion.
+- F1–F10 plus T10/T11 closed. Tests 447 → 492. Red on the **derived** parent
+  `33364b4` (`git rev-parse c1e6946^`; the commit body named `a4ce94b`, which is
+  the previous *code* commit and two back — see **T7**) was meaningful:
+  **43 failed, 449 passed** there, including the `records=7, every=2` fold, both
+  `Router.flush` tests and the macOS-job assertion.
 - **The decision in §3 named the wrong entry point.** The trailing delta ships as
   **`Router.flush(trace_id)`**, not `Subscriptions.flush(trace_id)`: producing a
   delta needs a builder and reporting a refusal needs an event, and by `SPEC.md`
@@ -347,17 +349,47 @@ drift and the spec is the one a reader of the library reaches first.
 
 - The series' only unbounded cost is bounded: `Router(max_completed=None)`
   forgets the oldest-completed trace ids past the caller's count, one `forgotten`
-  event per id. Tests 492 → 503. Red on the code parent `c1e6946`: **11
-  failures**, of which **two pass there and are guards rather than new
-  behaviour** (that `max_completed` appears in no other test file, and the
-  `len(_books) - len(_builders)` identity, which already held) — worth knowing so
-  the 9 is not read as 11.
+  event per id. Tests 492 → 503.
+- **The parent run, with the step the record left out.** The derived parent is
+  `afc6a7a` (`git rev-parse baa32cb^`); the commit body named `c1e6946`, the
+  previous *code* commit, two back (**T7**). The recorded figure is
+  **11 failed / 492 passed** there, of which **two pass and are guards rather
+  than new behaviour** (that `max_completed` appears in no other test file, and
+  the `len(_books) - len(_builders)` identity, which already held) — so the real
+  new-behaviour count is 9 and not 11. **That run is not reproducible as it was
+  described.** R3a's tests import `FORGOTTEN` from `spanweave_live`, and no
+  `FORGOTTEN` exists anywhere in the package at `afc6a7a` (`git show
+  afc6a7a:spanweave_live/__init__.py` and `:spanweave_live/routing.py` both have
+  none, against ten references in `baa32cb:tests/test_completion.py`), so
+  carrying the tests onto the parent tree aborts collection with
+  `ImportError: cannot import name 'FORGOTTEN'` and collects **0** tests. The
+  11/492 is reachable only after first **adding the `FORGOTTEN` constant to the
+  parent tree**, and with that step the 2026-10-07 review re-derived it exactly.
+  This is recorded as an **undisclosed step** rather than as a slip in a number:
+  a figure nobody can re-run from what was written is not evidence, and it is the
+  worst of the six discrepancies that review found for exactly that reason.
 - **The measurement, so the policy's number is a number.** It is in
   **`SPEC.md` §5.5**, which carries the table: ~**221 B/id**, unchanged by the
   bound — the bound simply stops the growth. 10⁵ completions at
-  `max_completed=1000` hold 1 000 ids for 221 036 B with **RSS delta 0**;
-  unbounded, the same 10⁵ is 20.7 MB and **10⁶ is 230.5 MB**, which is R3's
-  ~210 MB estimate confirmed rather than assumed.
+  `max_completed=1000` hold 1 000 ids for 221 036 B with **RSS delta 0**. Two
+  figures in this entry are **R3a's own measurement and are not in §5.5**, so
+  they are attributed here rather than cited there: unbounded, the same 10⁵ is
+  20.7 MB, and **10⁶ is 230.5 MB** — re-measured independently at
+  **230 516 588 B** on 2026-10-07 by the same method §5.5 names (`route` →
+  advance the clock → `tick()`, 32-character ids, a deep `getsizeof` over the
+  book after `gc.collect()`, deduped by object identity), which reproduces
+  §5.5's three rows to within one float object (24 B low on each). §5.5 has no
+  10⁶ row and says **~210 MB** for it, which is R3's estimate and what that
+  section should be read as saying; the 230.5 MB is the confirmation of it, not a
+  quotation of it. The earlier wording sourced 230.5 MB to §5.5 and so pointed a
+  reader at a section stating a different figure.
+- **One figure here is a machine's and not the method's.** §5.5's "RSS delta …
+  880 KB and **zero**" re-derives on a second machine as **888 832 B** at
+  `max_completed=10000` and **exactly 0** at `1000` — so the load-bearing half,
+  zero growth at the bound, is reproducible and the ~880 KB is right as written.
+  A re-run reported 1 511 424 B for that delta; it did not reproduce, and RSS is
+  an allocator's number rather than a determinate one. The deep-`getsizeof` rows
+  are the re-derivable part of §5.5 and the RSS column is corroboration.
 - **The decision's "at the next tick" was underspecified and R3a settled it.**
   Eviction happens in the tick whose completion pushes the book past the bound,
   and the `forgotten` rides on that `Completed`: a tick that completes nothing
@@ -376,10 +408,11 @@ drift and the spec is the one a reader of the library reaches first.
 
 ### R6 — the OTLP/HTTP endpoint (`8ae7a5d`, CI green, 7/7)
 
-- Tests 503 → 547. Red on the code parent `baa32cb` was **total rather than
-  meaningful** — the new file is a collection `ImportError` there, so all 44 are
-  red for one reason; the **mutation** is what carries this batch, and the
-  parent's own 503 passing is the part worth having.
+- Tests 503 → 547. Red on the derived parent `e033f6c` (`git rev-parse
+  8ae7a5d^`; the body named `baa32cb`, the previous code commit — **T7**) was
+  **total rather than meaningful** — the new file is a collection `ImportError`
+  there, so all 44 are red for one reason; the **mutation** is what carries this
+  batch, and the parent's own 503 passing is the part worth having.
 - **The seam allowlist was still `{}`, and that made three declined predictions
   in a row** (R0 predicted R3, R3 predicted R5/R6, R5 predicted R6). The listener
   is injected as two parameters with no defaults: `handler_class(base, endpoint, /)`
@@ -406,12 +439,25 @@ drift and the spec is the one a reader of the library reaches first.
 ### R7 — the CLI (`d21859d`, CI green, 7/7)
 
 - Two commands, `SPEC.md` §8.1–§8.7 new. Tests 547 → 628, of which
-  `tests/test_cli.py` has **81, all through `subprocess`**. Red on the code
-  parent `8ae7a5d`: **76 failed, 3 passed**, and the 3 are meant to pass (the
-  "no new surface" assertions: usage exit 2, `real` not in `__all__`, no new
-  dataclasses). The central test is gate A's own comparison **through a
-  process** — 51 `.jsonl` renderings via `tail -`, 2 OTLP documents via
-  `serve --port 0`, gate A's loader, byte for byte.
+  `tests/test_cli.py` has **81 collected items, 72 of them through
+  `subprocess`** — measured, where this row and §8.7 both used to say all 81.
+  The other **nine** read the package in-process, which is the only way to ask
+  what they ask (the parser, `real.py`'s bindings and the allowlist, §8.3's codes
+  and layers, the gate's rules over `cli.py`, and that no dataclass was
+  reinvented); `tests/test_cli.py`'s own docstring always carried the exception,
+  so the spec and this row overclaimed past a file that did not.
+- The parent run: red on the derived parent `3f593a6` (`git rev-parse
+  d21859d^`; the body named `8ae7a5d`, the previous code commit, and called it
+  "the derived parent" — **T7**), **77 failed / 4 passed** (re-run at that parent
+  in a clean worktree by the 2026-10-07 review, whose figure is taken here rather
+  than the row's own; the correction commit made no worktree, having no new test
+  to run). An earlier reading of this row said 76/3 and listed three passers meant
+  to pass (usage exit 2, `real` not in `__all__`, no new dataclasses); the
+  **fourth** is `test_version_and_help_both_say_nothing_is_frozen`, which exists
+  at `tests/test_cli.py` and which the record left unnamed. The central test is
+  gate A's own comparison **through a process** —
+  51 `.jsonl` renderings via `tail -`, 2 OTLP documents via `serve --port 0`,
+  gate A's loader, byte for byte.
 - **The seam allowlist is no longer empty, and this is the one entry the series
   predicted three times and refused twice.**
   `SEAMS = {"real.py": frozenset({"time", "http.server"})}` — one file, two
@@ -431,12 +477,15 @@ drift and the spec is the one a reader of the library reaches first.
   holding the **second** generation's graph, while the default leaves `t1.json`
   **and** `t1.2.json`.
 - **The mutation was chosen against the corpus, not in spite of it.**
-  `framer_line=event.line` → `line=event.line` is caught (1 failed / 79 passed,
-  `KeyError: 'framer_line'`), and the test **holds its own premise**: every
-  corpus rendering's lines end in `\n`, so the cap never bites there, and the
-  input that does bite is 70 000 newline-free bytes — zero input lines, two
-  framer lines. R2b's line-number consequence honoured, and R2/R6's lesson
-  applied before the fact rather than discovered after it.
+  `framer_line=event.line` → `line=event.line` is caught — re-run at this tip:
+  **1 failed / 80 passed** in `tests/test_cli.py` and 1 failed / 650 passed
+  across the suite, `KeyError: 'framer_line'` at `tests/test_cli.py:392`, so
+  nothing else is touched (an earlier reading of this row said 1/79) — and the
+  test **holds its own premise**: every corpus rendering's lines end in `\n`, so
+  the cap never bites there, and the input that does bite is 70 000 newline-free
+  bytes — zero input lines, two framer lines. R2b's line-number consequence
+  honoured, and R2/R6's lesson applied before the fact rather than discovered
+  after it.
 - Two judgement calls the row did not settle, both in `SPEC.md` §8.5/§8.6.
   End-of-input finalisation **reassigns `router.completion`** to
   `Completion(policies=(Cap(0),), …)` and ticks once, so a replay always leaves
@@ -459,9 +508,16 @@ drift and the spec is the one a reader of the library reaches first.
   absorbed first, and at version 5 the graph already reports `issue_refund` as
   an `unpaired_call`. The verdict it predicted is not.
 - The showcase is in, and **the row's central claim was false.** Tests 628 → 651.
-  Red on the code parent `d21859d`: `tests/test_showcase.py` alone is a
-  collection error there (`No module named 'agentgolden'`), and with the new
-  pins/gates files carried over, **4 failed / 635 passed**.
+  Red on the derived parent `0acbed7` (`git rev-parse c3dcab0^`; the body named
+  `d21859d`, the previous code commit — **T7**): `tests/test_showcase.py` alone
+  is a collection error there (`No module named 'agentgolden'`), and with the new
+  pins/gates files carried over, **5 failed / 634 passed** (re-run at that parent
+  by the 2026-10-07 review; that figure is taken here rather than the row's own).
+  An earlier reading of this row said 4/635 and named four; the **fifth** failure
+  is
+  `tests/test_pins.py::test_every_submodule_is_cloned_over_https_too`, which R8
+  broadened to cover `showcase/` (**R0-3 / P-5**) and which therefore cannot pass
+  on a tree with no `showcase/` submodule.
 - **The actual first-failure table** (7 versions, 19 rules, 4 ever fail):
   `tools.required:verify_identity` **1**, `tools.required:issue_refund` **1**,
   `trajectory.all_calls_fulfilled` **2**, `order:verify_identity < issue_refund`
@@ -489,8 +545,14 @@ drift and the spec is the one a reader of the library reaches first.
   `no-consumer-rules` with 4 planted violations watched failing, and a pin test
   holding the runtime dependencies to exactly `["spanweave"]`. The mutation
   (evaluate only the final graph) took **6 of 12** tests down and flattened the
-  table to "everything at version 7 with `all_calls_fulfilled` gone" — which is
-  precisely the showcase's own point failing when the per-delta loop is removed.
+  table to two rules, both at version 7 — which is precisely the showcase's own
+  point failing when the per-delta loop is removed. It erases **two**
+  first-failures, not one: re-measured off the replay's own observations, the
+  final graph fails `order:verify_identity<issue_refund` and
+  `tools.required:verify_identity` only, so **`trajectory.all_calls_fulfilled`
+  *and* `tools.required:issue_refund`** both vanish from the table. An earlier
+  reading of this row named only `all_calls_fulfilled`. The per-version verdicts
+  of `all_calls_fulfilled` are `pass, FAIL, pass, pass, FAIL, pass, pass`.
 - **Two facts for whoever moves the `spanweave` pin next.** agentgolden's
   `spanweave>=0.9.1,<1.0` does resolve against the pinned spanweave, but it meets
   the **lower** bound exactly (`0.9.1`), **so a future spanweave `1.0` pin breaks
@@ -511,9 +573,16 @@ drift and the spec is the one a reader of the library reaches first.
   batch at which every claim it could make is true.
 - Every live citation of `WORKPLAN.md` in `SPEC.md`, `spanweave_live/`,
   `tests/`, `CONTRIBUTING.md` and `.github/workflows/ci.yml` re-pointed at this
-  file. `CHANGELOG.md`'s **plan** citations are left as they stand: each sits
-  inside a dated batch entry, so it is a statement about what was true when that
-  batch landed, and `git show b500342:WORKPLAN.md` resolves it.
+  file. `CHANGELOG.md`'s **plan** citations are left as they stand: fourteen
+  survive in tracked files, and **thirteen** of them sit inside a dated batch
+  entry, so each is a statement about what was true when that batch landed and
+  `git show b500342:WORKPLAN.md` resolves it. The **fourteenth** did not:
+  `CHANGELOG.md:7` was in the preamble, two lines above the first heading and
+  inside no entry, and read "the unit of change is a **batch**
+  (`WORKPLAN.md`)" — present tense, in the library's own voice, pointing a
+  reader at a file this commit had deleted. R9's exception as first stated did
+  not cover it. It is re-pointed at this file, with the dated-history rule for
+  the other thirteen said out loud in the same preamble (2026-10-07).
 - Every citation of `patches/REVIEW-<date>.md` re-pointed at its `reviews/`
   archive — in `SPEC.md`, `spanweave_live/ingest.py`, eight modules under
   `tests/`,
@@ -521,33 +590,49 @@ drift and the spec is the one a reader of the library reaches first.
   anyone but the author since they were written, because `patches/` is
   `.gitignore`d; the archived bytes are identical, so the citations name the
   same text they always did.
-- **One thing R9 did not do, and the orchestrator must:** `CLAUDE.md:8` still
-  describes `WORKPLAN.md` as live execution state ("which batch is next … edited
-  only by the orchestrator"), which is false at this tip. `CLAUDE.md:38`'s
-  "these are `WORKPLAN.md` §0.6, which is where they were first written" remains
-  true as history, and the rules themselves are repeated in full in `CLAUDE.md`
-  so nothing is lost. The paragraph was left for its owner rather than edited
-  from inside a batch.
+- **One thing R9 did not do, and the orchestrator has since done:**
+  `CLAUDE.md`'s second paragraph described `WORKPLAN.md` as live execution state
+  ("which batch is next … edited only by the orchestrator"), which was false the
+  moment R9 deleted it. `CLAUDE.md:45`'s "these are `WORKPLAN.md` §0.6, which is
+  where they were first written" remains true as history, and the rules
+  themselves are repeated in full in `CLAUDE.md` so nothing was lost. The
+  paragraph was left for its owner rather than edited from inside a batch — which
+  was the protocol working, since the paragraph's own rule and R9's brief both
+  forbade a batch from editing the orchestrator's text. **Closed 2026-10-07**,
+  outside the series, by the paragraph that now names **this file** as the
+  registry between series and
+  says that a `WORKPLAN.md` exists only while a series is open. The aggravator
+  that fix was really for: before it, `grep -n "TASKS.md" CLAUDE.md` returned
+  nothing, so `CLAUDE.md:6`'s "a cold session should be able to work here from
+  this file alone" sent a cold reader to a deleted file and never named the one
+  that replaced it.
 
 ---
 
 ## The reviews, archived and dispositioned
 
-Two cold reviews were run, each by an aux session that **edited no tracked file
-and committed nothing** — by design, so that a finding is made by the builder
-from the review file and never by the reviewer. Both are here **byte for byte**,
-under the names they were written with recorded beside their archive paths:
+**Three** cold reviews were run, each by an aux session that **edited no tracked
+file and committed nothing** — by design, so that a finding is made by the
+builder from the review file and never by the reviewer. All three are here
+**byte for byte**, under the names they were written with recorded beside their
+archive paths:
 
 | archived as | written as | sha256 |
 |---|---|---|
 | `reviews/2026-10-04-run1.md` | `patches/REVIEW-2026-10-04.md` | `6d1a20e6c3527cb287ff3d32d13787958212084670c4a5dfb7e338afe830df39` |
 | `reviews/2026-10-06-run2.md` | `patches/REVIEW-2026-10-06.md` | `0de625ddb817a0217f487bc87f5e9a39586445865422501500a93480e9f365f0` |
+| `reviews/2026-10-07-close.md` | `patches/REVIEW-2026-10-07.md` | `f6678782069d7d13adc74167e48551fafab3f345357397e74c60443da3e9d8ae` |
+
+The third is the scoped review of the close itself, run over
+`63cbcca..86183b0`; it is archived by the same commit that closed its findings
+(*The record made true*, below), for the reason the first two were — a tracked
+citation must resolve in a stranger's checkout.
 
 `patches/` is gitignored and holds the `git format-patch` output of the runs, so
-the reviews lived there untracked until this close. The copies are unedited:
-they contain their own errors, their own stale premises, and their citations of
-a `WORKPLAN.md` that no longer exists at the tip. That is the point of an
-archive. Two things to know before reading them:
+the reviews lived there untracked until they were archived. The copies are
+unedited: they contain their own errors, their own stale premises, and their
+citations of a `WORKPLAN.md` that no longer exists at the tip. That is the point
+of an archive. Three things to know before reading them:
 
 - **Review 2's header miscounts its own body.** Its preamble says "Eight
   findings are `next batch`, thirteen are `thread`"; §1 lists **twelve**
@@ -558,6 +643,17 @@ archive. Two things to know before reading them:
   `install-check`" sentence as correct, two other reviewers reported it false,
   and the review verified it independently and sided with them rather than with
   the majority. The finding stands as **R0-1**.
+- **Review 3 has four figures of its own that did not re-derive**, found while
+  closing its findings and recorded here because it audited this registry for
+  exactly this. Its `tests/gates.py:209` for the `SEAMS` literal is `:237`; its
+  re-measured RSS delta of 1 511 424 B did not reproduce (888 832 B here, which
+  is `SPEC.md` §5.5's ~880 KB as written); it attributes that RSS figure to
+  `TASKS.md`, where it has never appeared — it is `SPEC.md:1156`; and its "twice
+  the body uses the word *derived*" is four times (**T7**). Its §5.5 book figures
+  and its `230 516 612 B` re-derive to within one float object (24 B, the same
+  offset on every row, which is a difference in the walk and not in the finding),
+  and its `9 of 81`, its six derived parents and its first-failure tables
+  re-derived exactly. An archive keeps its errors.
 
 ### Run 1 — `reviews/2026-10-04-run1.md`, eight `next batch` findings
 
@@ -612,19 +708,86 @@ Nothing blocked run 3.
 
 | # | Thread | Disposition |
 |---|---|---|
-| T1 | `Router.completion` is a mutable public field, and a completion attached **after** records have been routed measures `Quiet` from the tick rather than from the records: `route` creates a `_Book` only when `now is not None`, so `tick` builds it with `first_record_at = last_record_at = now` and `Completed.seconds` reports 0 for a trace open for an hour | **reached, and harmless where it is reached.** The thread judged it "not urgent: R7's CLI constructs the router with its policy" — but R7's CLI **does** reassign `router.completion`, at end-of-input finalisation, to `Completion(policies=(Cap(0),), …)` before one final tick (`SPEC.md` §8.5). `Cap(0)` completes immediately and reads no accumulated silence, so nothing is mismeasured; the thread's *prediction* about its caller is what was wrong, not its mechanism. **Still open** as the thread states it: no §5 sentence says what happens when a policy is added mid-stream, and no test covers the `Quiet` case. Either state it in §5.2 or make `completion` constructor-only |
+| T1 | `Router.completion` is a mutable public field, and a completion attached **after** records have been routed measures `Quiet` from the tick rather than from the records: `route` creates a `_Book` only when `now is not None`, so `tick` builds it with `first_record_at = last_record_at = now` and `Completed.seconds` reports 0 for a trace open for an hour | **reached, and harmless where it is reached — but not for the reason first recorded here.** R7's CLI **does** reassign `router.completion` at end-of-input finalisation, to `Completion(policies=(Cap(0),), …)`, before one final tick (`spanweave_live/cli.py:274`, `SPEC.md` §8.5). An earlier reading of this disposition said "`Cap(0)` completes immediately and reads no accumulated silence, **so** nothing is mismeasured". That is a **non-sequitur**, and three fake-clock probes separate the cause from the claim: (A) the CLI's own shape — router built with its policy, one record, clock +3600 s, `completion` reassigned to `Cap(0)`, tick — reports `seconds=3600.0`; (B) the thread's own precondition, routing with `completion=None` and attaching `Quiet(1.0)` afterwards, does not fire at +3600 and reports `seconds=1.0` one second later; (C) **the same `Cap(0)` reassignment onto B's router reports `seconds=0.0`**. So the reassignment *does* mismeasure when the router was routed without a policy. What makes the CLI safe is the other half of the thread's sentence: **the CLI constructs the router with its policy**, so `route` opens a `_Book` on the first record and the books carry a true `first_record_at` for the final tick to subtract from. The thread's *prediction* was right about the fact, and this disposition had credited the wrong cause. **Still open** as the thread states it, which was never in doubt: no §5 sentence says what happens when a policy is added mid-stream, and no test covers the `Quiet` case. Either state it in §5.2 or make `completion` constructor-only |
 | T2 | §5.4's "unreachable today" claim rests on spanweave's current refusal set, and R2c is a pin move | **open, and the claim survived the move.** The review probed the one live-looking route (`Router(adapter="otel_genai")` against an OpenInference record) and the pinned `Builder` **absorbs** it as a `NodeKind.UNKNOWN` node rather than refusing. Nothing fails if a future pin move adds a refusal that makes the branch reachable; a synthetic `Builder` stub whose `graph()` raises would close it for one test |
 | T3 | The forgetting policy is due **before** R7, not after it: R7's `tail`/`serve` is the first caller that runs unbounded in wall-clock time and has no window to build | **closed: decided and built as R3a** (`baa32cb`), before R7 (`d21859d`). The decision is the 2026-10-06 `forgetting` row above; the measurement is in `SPEC.md` §5.5; and the thread's second requirement — that a late arrival after the horizon be distinguishable from a first sighting — is why a record for a forgotten id emits **no** `late_arrival` and opens generation 1, stated in §5.5 rather than left to be discovered |
 | T4 | The cursor's advance on `delta_unavailable` is unspecified: `due()` advances before the consumer is called, so a window lost to a refusal is never retried and never re-reported | **open**, and benign: §6.2 states this explicitly for the *raising* case ("a subscriber that raised still advances") and §6.5 is silent for the *unavailable* case. The behaviour looks right — the consumer's first received update starts its own fold from `builder.graph()`. One sentence in §6.5, not a defect |
-| T5 | R3's `released` still carries its version in `detail` only, now that `Event.version` exists | **open.** §4.1 and §6.1 both say so and both say it is §5's edit to make. Registered so it is not lost; `released` has since been joined by `flush`/`forget` (R5a, §6.5), so the edit should take all of them together |
+| T5 | R3's `released` still carries its version in `detail` only, now that `Event.version` exists | **open.** §4.1 and §6.1 both say so and both say it is §5's edit to make. Registered so it is not lost. An earlier reading of this disposition said `released` "has since been joined by `flush`/`forget` (R5a, §6.5)", which names two things that are not event codes: `released` **is** a code (`spanweave_live/completion.py:56`, `RELEASED: Final = "released"`), while `flush` and `forget` are **`Subscriptions` methods** (`spanweave_live/subscriptions.py:222` and `:251`) — neither appears as a code literal anywhere under `spanweave_live/`. What R5a actually did is replace R4's `released` *on `Subscriptions`* with those two methods, declared in **§6.1** and not §6.5 (§6.5 is the three codes, `consumer_error`/`delta_unavailable`/`delta_unsent`), and §6.1 is also where "R3's `released` keeps its version in `detail`; moving it is §5's edit" is written down. So the edit this thread asks for is **one code**, `released`, moving its version out of `detail` into `Event.version`; the two method names were never part of it, and the instruction to "take all of them together" was unfollowable as written |
 | T6 | The R2b row's mutation criterion named the wrong assertion (the drop-mutation is caught by the diagnostic-code and byte-reconstruction assertions before `skipped_records`), the second run in which a row's criterion was imprecise — so: **a row should name the mutation, not predict which assertion fires** | **moot as a row, kept as a convention.** There are no rows left: `WORKPLAN.md` is deleted and the batch-row form went with it. `CONTRIBUTING.md`'s bar already asks for a named *mutation* ("a framer that hands partial lines over") and never for a predicted assertion, which is the convention the thread asked for. Recorded because the next series inherits the shape, not the file |
-| T7 | R2b's commit body stated a parent sha that is not the parent (`7fdbff3`, which is `d152c3b~2`); harmless only by luck, since the two trees differed solely in `WORKPLAN.md` | **closed by this commit**, in the place that outlives the plan: `CONTRIBUTING.md`'s "confirmed red on the parent" bullet now asks for the sha `<sha>^` **resolved to**, recorded in the commit body. §0.3 of the deleted plan was the other home |
+| T7 | R2b's commit body stated a parent sha that is not the parent (`7fdbff3`, which is `d152c3b~2`); harmless only by luck, since the two trees differed solely in `WORKPLAN.md` | **closed about the rule, not about the history.** The rule *is* fixed going forward, in the place that outlives the plan: `CONTRIBUTING.md`'s "confirmed red on the parent" bullet asks for the sha `<sha>^` **resolved to**, recorded in the commit body (§0.3 of the deleted plan was the other home). But this row recorded **once** what happened **six times of the seven code commits of run 3**, every one of the six landing after the review that named T7 (`63cbcca`, the run-2 review decision, is their common ancestor) — and **four** of the six bodies use the word "**derived**" for a sha that is not. Commit bodies are immutable, so the history cannot be repaired; it is written out here instead. Each parent below was re-resolved with `git rev-parse <sha>^` on 2026-10-07: `a4ce94b`→**`63cbcca`** (R2c; body says "red on the derived parent (704ce6a"), `c1e6946`→**`33364b4`** (R5a; body says "the derived parent `33364b4^` = `a4ce94b`" — right arithmetic, wrong subject: `33364b4^` *is* `a4ce94b`, but `33364b4` is the `plan:` commit that *follows* R5a, so it is R5a's own parent and not something to take `^` of), `baa32cb`→**`afc6a7a`** (R3a; "the derived parent `c1e6946`", repeated in `CHANGELOG.md`), `8ae7a5d`→**`e033f6c`** (R6; "the code parent `baa32cb`", disclosed as such), `d21859d`→**`3f593a6`** (R7; "the derived parent `8ae7a5d`"), `c3dcab0`→**`0acbed7`** (R8; "red on parent (`d21859d`"). In every case the cited sha is `^^` — the previous **code** commit, with a `plan:` commit in between — and harmless only because the two trees differed in `WORKPLAN.md` alone; only `86183b0`, which cites no parent at all, is clean. The R5a, R3a, R6, R7 and R8 entries above printed the uncorrected sha and now print the derived one |
 | T8 | `WORKPLAN.md:213` still read "§3.4 records that the remainder has no cap", correct as dated history but a reversed claim with no forward pointer for a reader hitting it first | **moot at close** — the file is deleted — and answered here: the R1 entry above states the "no cap" position *and* the decision that replaced it, in that order, in one place |
 | T9 | R2a's commit body said "69/69 green with R2a's tests deselected", which is not reproducible: the parent tree under the same mutation is 125 passed, and deselecting R2a's framing additions gives 68 | **open as a correction of the record.** The claim's substance was confirmed by a stronger run; only the number is off. Registered because run 1 raised the same class of thing (P-3, the factor of two) and the series' credibility rests on its numbers being re-derivable |
-| T10 | "a `Tail` … *is* the iterator" is literally false in four places; and §7.1's "the asymmetry is **forced**" is *chosen*, not forced — a caller-supplied event sink would let `tail` stay a generator | **closed by R5a**: all four read "a single-use iterable, not an iterator", with §3.1's reason kept, and the overclaiming word corrected. It is a precision defect *inside a correction*, which is the one place a project that strikes through its own premises cannot afford one |
+| T10 | "a `Tail` … *is* the iterator" is literally false in four places; and §7.1's "the asymmetry is **forced**" is *chosen*, not forced — a caller-supplied event sink would let `tail` stay a generator | **closed**, and the overclaiming word corrected, with §3.1's reason kept. Not "all four by R5a", which is what this disposition used to say and is wrong twice over. **Three** places carry the corrected wording at the tip, and R5a (`c1e6946`) is the commit that wrote all three: `SPEC.md:1629`, `spanweave_live/ingest.py:431` and `CHANGELOG.md:519` (measured, `grep -n "single-use iterable"`). The **fourth** was the `WORKPLAN.md` row, and R5a did not touch it: `git show --name-only c1e6946` does not list that file, and `git log -S"single-use iterable" -- WORKPLAN.md` returns `63cbcca` and `86183b0` only. So the fourth was changed by a `plan:` commit, to words that do not contain the phrase, and then deleted with the file by `86183b0`. This thread is the finding that a *correction* contained a precision defect — "the one place a project that strikes through its own premises cannot afford one" — so a disposition repeating the defect it closes was the worst available place for one. Corrected 2026-10-07 |
 | T11 | Dynamic import escapes the gate: `importlib.import_module("time")` and `__import__("time")` both pass, so the gate's claim should be stated as "no **static** ambient import" | **closed by R5a**, as the finding's first option: the claim is stated as static. Nothing in the package imports `importlib`, and either form is conspicuous in review |
 | T12 | §4.2's measurement is load-bearing spec text with no artifact: no benchmark script or test exists, so no later reader can re-derive it, and the quoted µs ranges taken as independent bounds give a wider interval than the stated one | **open.** §4.2's conclusion — optimisation, not necessity, no batch — does not depend on the precision, so this is provenance rather than correctness. A re-runnable benchmark under `tests/` would close it; the series did not add one |
-| T13 | Three protocol-text lags: §0.1 step 6's stop list did not authorize the `awaiting PR #4` stop that §3 and the R2c row did; `awaiting <batch>` bookkeeping was applied inconsistently; and one plan subject read alone misleads about which commit closed an item | **moot at close**: all three are text in a deleted file, and none affected behaviour. Recorded because the next series inherits the protocol: a stop list should name every stop its decisions authorize, and a status convention should say which convention it follows |
+| T13 | Three protocol-text lags: §0.1 step 6's stop list did not authorize the `awaiting PR #4` stop that §3 and the R2c row did; `awaiting <batch>` bookkeeping was applied inconsistently; and one plan subject read alone misleads about which commit closed an item | **moot at close**, and none of the three affected behaviour. The status is right; "all three are text in a deleted file" was not. It holds for (i) and (ii), both `WORKPLAN.md` text. Item (iii) is an **immutable commit subject** — `7a6e6a6 plan: R2a done, and one of its items was closed by the plan commit` — which reads alone as though `7a6e6a6` closed the item, where the commit that did is `9a2e40f` (**R0-1**). A subject cannot be edited, so that one is moot because it is unreachable, not because its text was deleted; `7a6e6a6` itself changed `WORKPLAN.md` and nothing else. Recorded because the next series inherits the protocol: a stop list should name every stop its decisions authorize, a status convention should say which convention it follows, and a `plan:` subject should name the commit that closed the item |
+
+### The record made true — the close review's eight blocking findings (2026-10-07)
+
+**Not a batch of the series.** The series closed at `86183b0`; this is one
+follow-up commit on `receiver`, derived parent `86183b0`, made by the
+orchestrator after the scoped review of the close
+(`reviews/2026-10-07-close.md`). It changed **no behaviour and no test**, so the
+bar's *red on the parent* and *named mutation* lines do not apply to it and no
+worktree or parent run was made; its evidence is the measurements below.
+
+The review found the code merge-ready and the **record** untrue in eight places,
+none of them a code defect. All eight are closed above, in place, where the false
+sentence was:
+
+| # | what was false | where it is now true |
+|---|---|---|
+| B1 | T10's "all four, closed by R5a" | **T10** — three places, R5a wrote all three; the fourth was the `WORKPLAN.md` row a `plan:` commit changed and `86183b0` deleted |
+| B2 | T5 naming `flush`/`forget` as event codes, and §6.5 | **T5** — they are `Subscriptions` methods; the surface is §6.1 |
+| B3 | "Thirteen rows" in the decisions log, twice | *Decisions taken*, and `CHANGELOG.md` — **twelve**, counted |
+| B4 | "each [plan citation] sits inside a dated batch entry" | **R9** — fourteen survive, thirteen are dated, and the fourteenth (`CHANGELOG.md:7`) is re-pointed at this file |
+| B5 | five present-tense "the seam allowlist is empty" claims | `CLAUDE.md` rule 4, `SPEC.md` §5.2, `spanweave_live/ingest.py`, `endpoint.py` ×2 — each states the one entry, and `CLAUDE.md`'s module list gains `http.server` |
+| B6 | §8.7's "every test in it runs the CLI as a process" | `SPEC.md` §8.7 and the **R7** entry — 72 of 81 collected items spawn a process, nine read the package |
+| B7 | six recorded figures that did not re-derive | **R5a**, **R3a**, **R6**, **R7**, **R8** entries, each with the derived parent and the corrected number |
+| B8 | "10⁶ is 230.5 MB" sourced to `SPEC.md` §5.5 | **R3a** — attributed to R3a's own measurement; §5.5 is cited only for what it says |
+
+**Every figure that could be taken at the tip was re-measured for this commit
+rather than copied from the review**, and four of the review's own figures did
+not re-derive (listed with the archives above). Three could not be: R7's
+`77 / 4`, R8's `5 / 634` and R3a's `11 / 492` are parent runs, and a parent run
+needs a worktree this commit had no reason to make, so those three are the
+review's re-derivation and are attributed as such where they appear. What was
+measured here, and how:
+
+- **81 collected items in `tests/test_cli.py`, 72 spawning a process, 9 not** —
+  `subprocess.Popen`/`run` wrapped by a pytest plugin that records the running
+  item's nodeid, so the count is of what each test *did* and not of what its
+  source looks like.
+- **The R7 mutation** (`framer_line=event.line` → `line=event.line`) —
+  re-planted at the tip: **1 failed / 80 passed** in the file,
+  **1 failed / 650 passed** across the suite, `KeyError: 'framer_line'`, then
+  reverted.
+- **The R8 mutation's effect** — computed from the replay's own observations: the
+  final graph fails two rules, so the mutation erases **two** first-failures.
+- **`SPEC.md` §5.5's book figures and the 10⁶ extrapolation** — re-run by the
+  method §5.5 names, reproducing all three rows to within one float object and
+  giving **230 516 588 B** at 10⁶.
+- **T1's three probes** — A `seconds=3600.0`, B `seconds=1.0` one second late,
+  C `seconds=0.0`, on a fake clock.
+- **The six derived parents** — `git rev-parse <sha>^`, each against the sha its
+  own commit body names.
+- **`FORGOTTEN`'s absence at `afc6a7a`** — `git show`, no worktree needed.
+
+**What this commit did not close, and why.** Its scope was prose, and three
+files under `spanweave_live/` plus no test at all. So four more sentences of
+B5's shape are still standing, disclosed here rather than left to be found:
+`spanweave_live/completion.py:19` still says the allowlist "stays empty" in the
+present tense, which is the same defect as the three that were fixed and was
+missed by the review's own table of five; and `tests/test_completion.py:166`,
+`tests/test_ingest.py:764` and `tests/test_gates.py:263` each carry a looser
+version of it in a docstring or comment, two of them dated to their own batch and
+one not. `CHANGELOG.md:511`, `:607` and `:766` say it too, and so do
+`SPEC.md:1672` and `:1676`; all five of those are **correct**, because each sits
+inside a dated entry or a section dated to its own batch. The two behaviour
+threads the review raised (`serve` re-yielding the previous request's `Records`;
+a client that aborts before reading leaking an uncounted `socketserver`
+traceback) are **`SPEC.md` §7.2 decisions, not patches**, and are left for the
+maintainer under `CONTRIBUTING.md`'s "Halt, do not improvise".
 
 ---
 
@@ -636,7 +799,7 @@ Nothing blocked run 3.
 | R8 | §19 "The live consumer, and why it needs no new rules". |
 
 The inserted batches have their own origins, all of them findings rather than
-plans: **R2a** and **R5a** are the two cold reviews archived above; **R2b**,
+plans: **R2a** and **R5a** are the first two cold reviews archived above; **R2b**,
 **R2c** and **R3a** are the three decisions those reviews forced (the framer's
 cap, the upstream `py.typed`, and the forgetting policy), each taken by the
 maintainer in the decisions log and built by one batch afterwards.

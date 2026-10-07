@@ -9,11 +9,13 @@ knows what a record is, what a trace is or what a graph is: each hands chunks to
 
 **No clock here, and no sleeping of its own.** `now` and `sleep` are the
 caller's callables, with no defaults, exactly as `Completion.now` is
-(`SPEC.md` §5.2): nothing under `spanweave_live/` imports `time`, the seam
-allowlist in `tests/gates.py` stays empty, and the real `time.monotonic` and
-`time.sleep` are bound by R7's CLI. A tail driven on a fake clock is a tail a
-test can state facts about -- "it read the bytes appended between these two
-polls" -- which is not a thing a real `sleep` lets anybody assert.
+(`SPEC.md` §5.2): this module imports no `time`, and the real `time.monotonic`
+and `time.sleep` are bound by R7's CLI. The seam allowlist in `tests/gates.py`
+has one entry -- `real.py`, for `time` and `http.server` (`SPEC.md` §8.2) -- and
+this file is not it, which is the whole of what the no-default buys here. A tail
+driven on a fake clock is a tail a test can state facts about -- "it read the
+bytes appended between these two polls" -- which is not a thing a real `sleep`
+lets anybody assert.
 
 **No socket here either.** The HTTP endpoint is §7.2 and R6's, behind an
 injected listener factory. This module opens files and reads a stream, which is

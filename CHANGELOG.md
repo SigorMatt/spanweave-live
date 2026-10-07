@@ -4,9 +4,94 @@ All notable changes to this project. **Nothing here is frozen**: the version is
 `0.0.x`, and until that changes any entry below may be undone by the next one.
 
 The format is loosely [Keep a Changelog](https://keepachangelog.com/); the unit
-of change is a **batch** (`WORKPLAN.md`), and each entry names the batch.
+of change is a **batch**, each entry names the batch, and `TASKS.md` is the
+registry that lists them one line apiece. Entries below the R9 heading may still
+cite the series' `WORKPLAN.md`; that file was deleted at the close and each such
+citation is dated history, resolvable at `git show b500342:WORKPLAN.md`.
 
 ## Unreleased
+
+### The record made true — the close review's eight blocking findings (2026-10-07)
+
+**Prose only.** No behaviour changed, no test changed, and nothing was added to
+or removed from the library's surface — so the bar's *confirmed red on the
+parent* and *named mutation* lines do not apply to this entry, and no worktree or
+parent run was made. The scoped cold review of the series' close
+(`reviews/2026-10-07-close.md`, archived here byte for byte with its sha256 in
+`TASKS.md`) found the code merge-ready and the **record** untrue in eight places.
+All eight are closed where the false sentence was.
+
+Fixed
+
+- **`TASKS.md`'s dispositions of T1, T5, T7, T10 and T13**, each of which said
+  something that does not hold. T10 claimed R5a closed "all four" places that
+  called a `Tail` the iterator: there are **three** at this tip and R5a wrote all
+  three, while the fourth was the `WORKPLAN.md` row a `plan:` commit changed and
+  `86183b0` deleted. T5 named `flush` and `forget` as event codes: they are
+  `Subscriptions` **methods**, and the surface they are declared in is `SPEC.md`
+  §6.1, not §6.5. T13 called all three of its items "text in a deleted file":
+  item (iii) is an immutable commit subject. T1's reasoning was a non-sequitur —
+  what makes the CLI's `Cap(0)` reassignment safe is that the CLI **constructs**
+  the router with its policy, not that `Cap(0)` reads no silence; the same
+  reassignment reports `seconds: 0.0` on a router routed without one. T1's status
+  (**open**) and T13's (**moot**) were right and are unchanged.
+- **Five present-tense claims that the seam allowlist is empty**, false since R7
+  put its one entry in: `CLAUDE.md`'s standing rule 4, `SPEC.md` §5.2, and
+  docstrings in `spanweave_live/ingest.py` and `spanweave_live/endpoint.py`
+  (two). Each now states the true shape —
+  `SEAMS = {"real.py": frozenset({"time", "http.server"})}`, one file and two
+  modules — and the two that were "after this batch" claims are dated to R3 and
+  R6 as history, the way `SPEC.md` §7.1's already were. `CLAUDE.md`'s
+  banned-module list gains **`http.server`**, the second module that entry
+  exempts. Four looser instances remain under `tests/` and in
+  `spanweave_live/completion.py`; they are disclosed in `TASKS.md` rather than
+  silently left, because this entry's scope was three docstrings.
+- **`SPEC.md` §8.7** claimed every test in `tests/test_cli.py` runs the CLI as a
+  process. Measured: **72 of 81 collected items** spawn one; **nine** read the
+  package in-process, and the file's own docstring always said so. The
+  `TASKS.md` R7 row repeated the overclaim as "81, all through `subprocess`" and
+  now carries the measured split.
+- **Six recorded figures** in `TASKS.md` that did not re-derive as written: R7's
+  parent run (**77 failed / 4 passed**, and the fourth passer,
+  `test_version_and_help_both_say_nothing_is_frozen`, is now named), R7's
+  mutation (**1 failed / 80 passed**), R8's parent run (**5 failed / 634
+  passed**, with `test_every_submodule_is_cloned_over_https_too` named as the
+  fifth failure), R8's mutation (it erases **two** first-failures —
+  `trajectory.all_calls_fulfilled` *and* `tools.required:issue_refund`), and —
+  the one that is not a slip in a number — **R3a's parent run is not reproducible
+  as described**: it aborts with `ImportError: cannot import name 'FORGOTTEN'`
+  and collects 0 tests unless the `FORGOTTEN` constant is first added to the
+  parent tree, a step no record mentioned. It is now recorded as part of the
+  evidence.
+- **The citation of "10⁶ is 230.5 MB"**, which `TASKS.md` sourced to `SPEC.md`
+  §5.5 — a section with no 10⁶ row that says ~210 MB. The figure is real
+  (re-measured at **230 516 588 B**) and is now attributed to R3a's own
+  measurement, with §5.5 cited only for what §5.5 says. No spec measurement
+  changed.
+- **The decisions log's count**: twelve rows, not thirteen, here and in
+  `TASKS.md`.
+- **`CHANGELOG.md`'s preamble**, which named `WORKPLAN.md` in the present tense,
+  in no dated entry, as the unit of change. It names `TASKS.md` instead and says
+  how to read the dated citations below it. `TASKS.md`'s claim that every
+  surviving plan citation sits inside a dated batch entry is corrected to the
+  measured fourteen-of-which-thirteen.
+- **`CLAUDE.md:8–10`**, which still described `WORKPLAN.md` as live execution
+  state four lines under a promise that a cold session can work from that file
+  alone. It now names **`TASKS.md`** as the registry between series — `grep -n
+  "TASKS.md" CLAUDE.md` returned nothing before this — and keeps the rule it was
+  carrying: a `WORKPLAN.md` exists only while a series is open, is the
+  orchestrator's, and is never edited by a batch.
+
+Added
+
+- **`reviews/2026-10-07-close.md`**, the third cold review, archived byte for
+  byte with its sha256 in `TASKS.md`'s table, so that the citations this entry
+  and `TASKS.md` make resolve in a stranger's checkout. `patches/` is
+  `.gitignore`d; the archive is the same practice R9 established for the first
+  two.
+- **A `TASKS.md` section recording this commit**, with every number in it
+  re-measured rather than copied from the review, the method for each, and the
+  four of the review's own figures that did not re-derive.
 
 ### R9 — the receiver series closes, and its execution state is deleted (2026-10-06)
 
@@ -18,7 +103,7 @@ does rather than what it is going to do.
 Added
 
 - **`TASKS.md`**, the item registry: one line per batch for R0–R9 with the
-  commit that closed it, the series' **decisions log** (thirteen rows, the
+  commit that closed it, the series' **decisions log** (twelve rows, the
   deleted plan's §3) and its **resume note** (the deleted plan's §4) folded in
   per batch, the disposition of every finding of both reviews, and the origins
   table. The fold is both sections and not one, which was itself a review

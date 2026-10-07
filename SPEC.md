@@ -906,13 +906,14 @@ emits events, writes files and releases builders.
 ### 5.2 The clock is the caller's, and no module here reads one
 
 `now: Callable[[], float]` is handed to `Completion` by whoever constructs it,
-and **nothing under `spanweave_live/` imports `time`** (§1.4). The seam
-allowlist in `tests/gates.py` is still empty after this batch, which was the
-design goal rather than an accident: a module holding `time.monotonic` as a
-default would have earned an allowlist entry, and `now` with no default costs
-the caller one argument and costs the test suite nothing. R7's CLI is where the
-real clock is bound, in `spanweave_live/real.py` — the allowlist's one entry
-(§8.2).
+and **no module in this layer imports `time`** (§1.4). The seam allowlist in
+`tests/gates.py` was **still empty after R3**, which was the design goal rather
+than an accident: a module holding `time.monotonic` as a default would have
+earned an allowlist entry, and `now` with no default costs the caller one
+argument and costs the test suite nothing. The allowlist's one entry arrived with
+R7, which is where the real clock is bound: it is
+`{"real.py": frozenset({"time", "http.server"})}` — one file, two modules — and
+`completion.py` is not in it (§8.2).
 
 Three rules make the reading deterministic:
 
@@ -2319,9 +2320,17 @@ EOF are the two stops that **are** end of input, and only those two flush
 
 ### 8.7 What this section is tested against
 
-`tests/test_cli.py`, and every test in it runs the CLI as a **process** —
-`subprocess`, a pipe, an exit status — because an in-process call would test the
-functions and not the thing a human runs.
+`tests/test_cli.py`, and **72 of its 81 collected items run the CLI as a
+process** — `subprocess`, a pipe, an exit status — because an in-process call
+would test the functions and not the thing a human runs. The other **nine** read
+the package in-process, because that is the only way to ask what they ask: the
+parser, so §8.1's usage block can be held against it flag by flag and its two
+commands against §8's two (two items); `real.py`'s four bindings, its absence
+from `__all__`, and the allowlist naming it and not `cli.py` (four); §8.3's codes
+and layers against the module (one); the gate's own rules run over `cli.py`
+against an **empty** allowlist (one); and that no dataclass was reinvented for
+the CLI (one). The file's own docstring states the same exception — the counts
+here are the measured ones, not a round claim about all of them.
 
 Its central test is **gate A's comparison reached through a process**: every
 line-delimited corpus rendering is piped to `spanweave-live tail - --out <dir>`,

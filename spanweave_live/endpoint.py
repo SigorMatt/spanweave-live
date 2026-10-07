@@ -35,11 +35,13 @@ above all four (`CLAUDE.md`, standing rule 4):
 - `serve(endpoint, listener=...)` drives a listener the caller's factory built
   and yields one `spanweave.Records` per request handled.
 
-So the seam allowlist in `tests/gates.py` is still empty after this batch, as it
-was after R3, R4 and R5: `import http.server` lives in the caller, which is
+So the seam allowlist in `tests/gates.py` was **still empty after R6**, as it was
+after R3, R4 and R5: `import http.server` lives in the caller, which is
 R7's CLI, and in the tests -- where a loopback socket on port 0 and a
 single-threaded `handle_request()` make the whole thing a thing a test can
-state facts about rather than a race it hopes to win.
+state facts about rather than a race it hopes to win. R7 then added the
+allowlist's one and only entry, `real.py` for `time` and `http.server`
+(`SPEC.md` §8.2); this module is not in it and needs no exemption.
 """
 
 from __future__ import annotations
@@ -484,9 +486,10 @@ def handler_class(base: type[Any], endpoint: Endpoint, /) -> type[Any]:
 
     `base` is `http.server.BaseHTTPRequestHandler`, and it is an **injected
     seam with no default**, exactly as `Completion.now` and `tail`'s `sleep`
-    are (`SPEC.md` §5.2, §7.1): the import lives in the caller, so the seam
-    allowlist in `tests/gates.py` stays empty and this module can be read
-    without wondering what it opens.
+    are (`SPEC.md` §5.2, §7.1): the import lives in the caller, so this module
+    needs **no** entry in `tests/gates.py`'s seam allowlist -- whose one entry
+    is `real.py`, for `time` and `http.server` (`SPEC.md` §8.2) -- and can be
+    read without wondering what it opens.
 
     The class is built with `type` rather than written with a `class`
     statement because a `class` statement needs the base at import time, which
