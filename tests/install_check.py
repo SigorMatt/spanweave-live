@@ -26,6 +26,7 @@ import json
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 import zipfile
 from pathlib import Path
@@ -73,10 +74,34 @@ def audit_wheel(wheel: Path) -> None:
     """The wheel ships the library and nothing else."""
     names = zipfile.ZipFile(wheel).namelist()
     assert any(n.startswith("spanweave_live/") for n in names), names
-    for forbidden in ("corpus/", "tests/", "WORKPLAN.md"):
+    for forbidden in ("corpus/", "showcase/", "tests/", "reviews/"):
         leaked = [n for n in names if n.startswith(forbidden)]
         assert not leaked, f"wheel ships {forbidden}: {leaked}"
     print(f"  wheel ships {len(names)} entries, library only")
+
+
+def audit_sdist(sdist: Path) -> None:
+    """The sdist ships this project's own content, at a sha for everything else.
+
+    `[tool.hatch.build.targets.sdist].include` is an allowlist, so a directory
+    added to the repository is absent from the sdist until someone lists it --
+    which is the right default and the reason it is asserted rather than
+    assumed. Three things must hold at once: the documents a reader needs are
+    in (`TASKS.md` among them, because it is where the series' decisions and
+    every review's disposition live); the two submodules are out, since each is
+    another repository's working tree and an sdist carrying one would be a copy
+    nothing holds at a sha; and `reviews/` is out, because it is a tracked
+    archive of this repository's process and not part of what installs.
+    """
+    with tarfile.open(sdist) as archive:
+        members = archive.getnames()
+    inside = {name.split("/", 1)[1] for name in members if "/" in name}
+    for required in ("spanweave_live/__init__.py", "README.md", "TASKS.md", "SPEC.md"):
+        assert required in inside, f"sdist is missing {required}"
+    for forbidden in ("corpus/", "showcase/", "reviews/"):
+        leaked = sorted(n for n in inside if n.startswith(forbidden))
+        assert not leaked, f"sdist ships {forbidden}: {leaked}"
+    print(f"  sdist ships {len(members)} entries, no submodule and no reviews/")
 
 
 def check_installed(wheel: Path) -> None:
@@ -114,6 +139,33 @@ def check_installed(wheel: Path) -> None:
         print(f"  console script says   : {version.stdout.strip()}")
         assert facts["spanweave_live_version"] in version.stdout
 
+        # And it runs a **command**, not just `--version` (R7, `SPEC.md` §8):
+        # one corpus record piped to `tail -`, from outside the repo, and the
+        # graph has to land as `<trace_id>.json`. `--version` proves the console
+        # script exists; this proves the thing a human runs works in what ships.
+        record = (
+            REPO
+            / "corpus"
+            / "fixtures"
+            / "conformance"
+            / "single_tool_call"
+            / "dialects"
+            / "openinference.jsonl"
+        ).read_bytes()
+        out = Path(tmp) / "graphs"
+        tailed = subprocess.run(
+            [str(script), "tail", "-", "--out", str(out)],
+            cwd=outside,
+            input=record,
+            capture_output=True,
+        )
+        if tailed.returncode != 0:
+            sys.stderr.write(tailed.stderr.decode())
+            raise SystemExit(f"FAILED ({tailed.returncode}): the shipped `tail`")
+        written = sorted(path.name for path in out.iterdir())
+        print(f"  shipped tail wrote    : {written}")
+        assert written == ["t1.json"], written
+
 
 def main() -> int:
     print("install-check: building what ships")
@@ -121,6 +173,7 @@ def main() -> int:
     print(f"  wheel : {wheel.name}")
     print(f"  sdist : {sdist.name}")
     audit_wheel(wheel)
+    audit_sdist(sdist)
     print("install-check: installing the wheel into a throwaway venv, outside the repo")
     check_installed(wheel)
     print("install-check: OK -- what ships imports, resolves spanweave, and runs")

@@ -1,0 +1,1047 @@
+"""Routing: one `spanweave.Builder` per trace (`SPEC.md` §4).
+
+The second piece of the receiver, and the one with the sharpest invariant. It
+answers "which builder does this record belong to?" and holds a `Builder` per
+trace id, created the first time that trace is seen. It does not evaluate a
+record, score it, hold it, or read what the graph came to say: it partitions,
+and the graphs are the caller's (`SPEC.md` §1.2, §1.3).
+
+**It never reads a dialect.** A record's trace id comes from
+`spanweave.adapters.classify` and the claiming adapter's `parse`, and from
+nowhere else -- no key table, no `record["trace_id"]`, no container walk
+(`SPEC.md` §1.1, §4.2). The cheap-looking alternative works on every fixture
+anyone would write and is a second dialect reader that can disagree with the
+library about the same bytes, for reasons no fixture of the receiver's own can
+pin. The cost of doing it properly is a second parse per record, measured at
+15.5-17.1% of per-record routing: it is paid deliberately and registered as a
+thread in `SPEC.md` §4.2 -- which is where the number is, and which outlives
+the plan -- not worked around.
+
+It also **hands deltas over and concludes nothing about them** (`SPEC.md` §6):
+after every absorbed record, each due subscriber is called, in registration
+order; a callback that raises is isolated into a `consumer_error` event and the
+next subscriber is still called; and a builder's journal is retained to exactly
+the longest window a subscriber asked for.
+
+Nothing here reads the clock, sleeps, opens a socket or shuffles anything. The
+clock `tick` evaluates completion against is the caller's `now`, handed to the
+`Completion` it was given (`SPEC.md` §5.2); a router without a completion policy
+never reads one at all.
+"""
+
+from __future__ import annotations
+
+import pathlib
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field
+from typing import Any, Final
+
+from spanweave import Builder, Delta, Graph, SpanweaveError
+from spanweave.adapters import classify, get
+
+from spanweave_live.completion import (
+    COMPLETED,
+    FORGOTTEN,
+    LATE_ARRIVAL,
+    NOT_WRITTEN,
+    RELEASED,
+    WRITTEN,
+    Completion,
+    Policy,
+    TraceState,
+    root_ended,
+    write,
+)
+from spanweave_live.subscriptions import (
+    CONSUMER_ERROR,
+    DELTA_UNAVAILABLE,
+    DELTA_UNSENT,
+    Delivery,
+    Subscriptions,
+    Update,
+)
+
+#: One record, as `spanweave.read_records` yielded it.
+#:
+#: `Any` on purpose, and deliberately not a JSON type of the receiver's own:
+#: `spanweave`'s `JsonValue` *is* `Any` and is not exported, so a narrower
+#: alias here would be a shape the library never promised and that the next
+#: adapter could falsify.
+Record = Any
+
+#: A `spanweave.Builder` refused the record -- most often a span re-sent under
+#: at-least-once export, which is a node-id collision and costs nothing else
+#: (`SPEC.md` §2.2). Routine, and loud: counted, and routing continues.
+REFUSED: Final = "refused"
+
+#: A record named a trace the router has no room for (`SPEC.md` §4.5). Refused
+#: in the open rather than dropped: silence was the alternative.
+REFUSED_AT_CAP: Final = "refused_at_cap"
+
+
+@dataclass(frozen=True, slots=True)
+class Event:
+    """One decision the router made that a caller is entitled to know about.
+
+    Every refusal, cap hit and anything else the receiver did not handle is one
+    of these, with a code (`SPEC.md` §1.5). `spanweave_code` is the library's
+    own code where the library is what refused, kept as a field rather than
+    folded into `detail` so a caller can match on it instead of on a sentence.
+    """
+
+    code: str
+    #: The record's 1-based arrival index in this router. Arrival order, not a
+    #: line number: the router never saw the bytes. On an event a **tick**
+    #: emitted (`SPEC.md` §5.4) there is no record to index, so it is the
+    #: router's arrival count when the tick ran -- the honest nearest thing, and
+    #: what places the tick in the stream. On an event an **ingest** emitted
+    #: (`SPEC.md` §7.1) there is no router at all, so it is how many chunks that
+    #: source had handed to its framer: the same rule, read one layer down.
+    index: int
+    trace_id: str | None
+    spanweave_code: str | None
+    detail: str
+    #: The duration this event is about, where it is about one: the gap for a
+    #: `late_arrival`, the trace's open lifetime for a `completed`. `None` for
+    #: `refused` and `refused_at_cap`, which are about no duration. A field
+    #: rather than a sentence because `SPEC.md` §1.5 is only true if a caller
+    #: can match on the number (`SPEC.md` §4.1, §5.1).
+    seconds: float | None = None
+    #: The version this event is about, where it is about one: §6's three codes
+    #: each are. `None` for every code that is not. Here for `seconds`' reason
+    #: and no other (`SPEC.md` §4.1, §6.1).
+    version: int | None = None
+    #: The byte offset this event is about, where it is about one: §7.1's ingest
+    #: codes each are -- where in the content the tail had read to when it was
+    #: truncated, rotated or could not reopen. `None` for every code that is
+    #: not. Here for `seconds`' reason and no other (`SPEC.md` §4.1, §7.1).
+    offset: int | None = None
+    #: The **clock reading** this event is about, where it is about one: today
+    #: `forgotten` alone, which is about the instant a trace was completed
+    #: (`SPEC.md` §5.5). Not `seconds`, which is declared as a *duration*: one
+    #: field meaning an instant on one code and an interval on another is a
+    #: field a caller cannot match on (`SPEC.md` §4.1).
+    at: float | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class Routed:
+    """Where one record went, and what that cost.
+
+    `builder` is `None` only when nothing absorbed the record, which today is
+    the cap and nothing else. `version` is the builder's version **after** the
+    attempt: a refused record is not absorbed and the builder is left exactly
+    as it was (`spanweave` `SPEC.md` §10.5), so this is the unchanged version
+    rather than the one the record would have produced.
+    """
+
+    index: int
+    trace_id: str | None
+    builder: Builder | None
+    version: int | None
+    events: tuple[Event, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class Completed:
+    """One trace a `tick` completed, and what completing it did (`§5.4`).
+
+    Here beside `Routed` rather than in `completion.py` for one reason, and it
+    is layering rather than taste: this carries routing `Event`s, so declaring
+    it over there would make completion import routing while routing imports
+    completion. `completion.py` is the lower layer and holds values and pure
+    functions only (`SPEC.md` §5.1).
+
+    `graph` is `None` only where the library refused to materialize it, and
+    `path` is `None` wherever nothing was written -- including the ordinary case
+    of a caller that named no directory. `events` says which of those it was.
+    """
+
+    trace_id: str
+    #: The value that fired. A caller tells `Quiet` from `Cap` by this, not by
+    #: parsing a sentence.
+    policy: Policy
+    #: The builder's version at the instant it was released.
+    version: int
+    graph: Graph | None
+    path: pathlib.Path | None
+    events: tuple[Event, ...] = ()
+
+
+@dataclass(slots=True)
+class _Book:
+    """What the router remembers about one trace for completion's sake.
+
+    Not a public type and not a graph: five numbers, which is what `TraceState`
+    (`SPEC.md` §5.6) and a generation's file name need. A book **outlives** the
+    builder it was opened for, because the gap on a `late_arrival` and the file
+    name of a second generation are both facts about a trace already completed
+    (`SPEC.md` §5.5), and that cost is stated there rather than hidden here --
+    with the number, ~220 bytes an id, and with the caller's bound on it,
+    `max_completed`, which `Router._forget` applies.
+    """
+
+    first_record_at: float
+    last_record_at: float
+    #: When an ended root was first *seen*, never the span's own `ended_at`.
+    root_ended_at: float | None = None
+    #: 1 for the first builder of this trace, 2 for the one a late arrival
+    #: opened, and so on. It is in the file name from 2 onward (`§5.5`).
+    generation: int = 1
+    #: When this trace was completed, while no builder is held for it.
+    completed_at: float | None = None
+
+
+def trace_id_of(record: Record) -> str | None:
+    """The trace a record belongs to, through the adapter surface alone.
+
+    `classify` says which adapters claim this one record; the single claimant's
+    `parse` translates it; the trace id is what the resulting spans report.
+    That is the whole mechanism, and there is no other branch in it
+    (`SPEC.md` §4.2).
+
+    `None` -- "no trace id" -- for each of the four ways the library declines
+    to say: nobody claimed the record, more than one adapter claimed it, the
+    claimant reported no trace id, or it reported more than one distinct id
+    across the spans of one record. §1.1 fixes that answer: an id that cannot
+    be had through the adapter surface is absent, not looked up.
+
+    A `SpanweaveError` is also `None`, and is not swallowed by it: the record
+    goes to the no-trace builder, whose `feed` reaches the same code and raises
+    the same refusal, and `Router.route` reports it with the library's own code.
+    """
+    try:
+        claimants = classify(record)
+        if len(claimants) != 1:
+            return None
+        reported = {
+            span.trace_id for span in get(claimants[0]).parse([record]) if span.trace_id
+        }
+    except SpanweaveError:
+        return None
+    if len(reported) != 1:
+        return None
+    return next(iter(reported))
+
+
+@dataclass(slots=True, kw_only=True)
+class Router:
+    """One `spanweave.Builder` per trace id (`SPEC.md` §4).
+
+    `adapter` and `temporal` are handed to every `Builder` it makes, so a
+    caller that names a dialect or turns temporal edges off gets live what
+    `spanweave.build` gives it in batch. The router reads neither.
+
+    `completion` is the caller's policy and the caller's clock (`SPEC.md` §5).
+    `tick` evaluates it; `route` keeps the two numbers it needs. A router
+    without one holds every builder it ever made and reads no clock, which is
+    what R2 was and what gate A still exercises.
+
+    `max_completed` is the caller's bound on the book that outlives the builders
+    (`SPEC.md` §5.5): at a `tick` that pushes the number of remembered
+    completions past it, the oldest completions are forgotten, one `forgotten`
+    event each. `None` -- the default -- forgets nothing, which is exactly what
+    R3 shipped.
+
+    All **six** settings are keyword-only, as `SPEC.md` §4.1 declares them: they
+    are independent knobs with no reading order, and a positional order here
+    would be a contract the spec never offered. (The sentence said "four" from
+    R2 through R5a, which was two batches of settings out of date.)
+
+    It keeps a **count** per event code and no event log: the events of one
+    record ride on that record's `Routed`, and an accumulated list grows with
+    the stream, which is the cost `SPEC.md` §2.3 is about.
+    """
+
+    #: How many identified traces this router will hold builders for, or `None`
+    #: for no cap (`SPEC.md` §4.5).
+    max_traces: int | None = None
+    #: How many **completed** trace ids this router will remember, or `None` to
+    #: remember every one of them, which is what R3 shipped (`SPEC.md` §5.5).
+    #: Beside `max_traces` because the two are this router's two bounds: that
+    #: one bounds builders, this one bounds the book that outlives them.
+    max_completed: int | None = None
+    adapter: str | None = None
+    temporal: bool = True
+    #: The caller's completion policy, with the caller's clock in it, or `None`
+    #: for a router that completes nothing and reads no clock (`SPEC.md` §5).
+    completion: Completion | None = None
+    #: The consumers to hand deltas to, or `None` for a router that fans nothing
+    #: out, computes no delta and touches no builder's retention -- which is
+    #: exactly what R2 and R3 were, and why gate A is untouched (`SPEC.md` §6).
+    subscriptions: Subscriptions | None = None
+
+    _builders: dict[str, Builder] = field(default_factory=dict, init=False)
+    _no_trace: Builder | None = field(default=None, init=False)
+    _counts: dict[str, int] = field(default_factory=dict, init=False)
+    _index: int = field(default=0, init=False)
+    _books: dict[str, _Book] = field(default_factory=dict, init=False)
+    #: The retention this router has applied to each builder it holds, so the
+    #: window is re-asserted when it *changes* and not once per record
+    #: (`SPEC.md` §6.4). Dropped with the builder, so it is bounded by the
+    #: builders held.
+    _retained: dict[str | None, int] = field(default_factory=dict, init=False)
+
+    @property
+    def trace_ids(self) -> tuple[str, ...]:
+        """The identified traces, in **first arrival order**.
+
+        The order traces were first seen is a fact about the stream; sorting it
+        would throw that away. Nothing in any graph depends on it.
+        """
+        return tuple(self._builders)
+
+    @property
+    def no_trace(self) -> Builder:
+        """The builder for records that identify no trace (`SPEC.md` §4.3).
+
+        A `Builder` like any other, which is the point: it carries the library's
+        own `missing_trace_id` and `unclaimed_record`, so the receiver invents
+        no code for either. Made on first use rather than in `__init__` so a
+        router that never needed one never built one.
+        """
+        if self._no_trace is None:
+            self._no_trace = Builder(adapter=self.adapter, temporal=self.temporal)
+        return self._no_trace
+
+    @property
+    def counts(self) -> Mapping[str, int]:
+        """How many of each event code, bounded by the number of codes."""
+        return dict(self._counts)
+
+    @property
+    def routed(self) -> int:
+        """How many records have been handed to `route`."""
+        return self._index
+
+    def builder(self, trace_id: str | None) -> Builder | None:
+        """The builder for `trace_id`, or `None` if this router has none.
+
+        `trace_id=None` is the no-trace builder, which always exists.
+        """
+        if trace_id is None:
+            return self.no_trace
+        return self._builders.get(trace_id)
+
+    def route(self, record: Record) -> Routed:
+        """Hand one record to its trace's builder; say what happened.
+
+        Never raises for anything the record can cause. A `Builder` refusal --
+        the ordinary outcome of a span re-sent under at-least-once export
+        (`SPEC.md` §2.2) -- is an `Event` with code `refused` carrying the
+        arrival index and the library's `code`, counted, and routing continues
+        with the next record.
+        """
+        self._index += 1
+        index = self._index
+        trace_id = trace_id_of(record)
+        # One reading, and only where there is a policy to measure against: a
+        # router with no completion reads no clock at all, which is why R2's
+        # behaviour -- gate A included -- is untouched by R3 (`SPEC.md` §5.2).
+        now = None if self.completion is None else self.completion.now()
+        events: tuple[Event, ...] = ()
+
+        if trace_id is None:
+            builder = self.no_trace
+        else:
+            existing = self._builders.get(trace_id)
+            if existing is None:
+                if (
+                    self.max_traces is not None
+                    and len(self._builders) >= self.max_traces
+                ):
+                    return self._at_cap(index, trace_id)
+                existing = Builder(adapter=self.adapter, temporal=self.temporal)
+                self._builders[trace_id] = existing
+                events += self._began(index, trace_id, now)
+            builder = existing
+            if now is not None:
+                self._activity(trace_id, now)
+
+        try:
+            version = builder.feed(record)
+        except SpanweaveError as refusal:
+            events += (
+                self._counted(
+                    Event(
+                        code=REFUSED,
+                        index=index,
+                        trace_id=trace_id,
+                        spanweave_code=refusal.code,
+                        detail=str(refusal),
+                    )
+                ),
+            )
+            # The builder is left exactly as it was (`spanweave` §10.5), so the
+            # version reported is the one it already had.
+            return Routed(
+                index=index,
+                trace_id=trace_id,
+                builder=builder,
+                version=builder.version,
+                events=events,
+            )
+        # Only an absorbed record fans out: a refusal returned above, because
+        # the version did not move and there is nothing that changed to report
+        # (`SPEC.md` §6.2).
+        events += self._fan_out(index, trace_id, builder, version)
+        return Routed(
+            index=index,
+            trace_id=trace_id,
+            builder=builder,
+            version=version,
+            events=events,
+        )
+
+    def _fan_out(
+        self, index: int, trace_id: str | None, builder: Builder, version: int
+    ) -> tuple[Event, ...]:
+        """Hand this version's difference to every subscriber due for it (`§6`).
+
+        Registration order, every record, in every process (`SPEC.md` §6.2). One
+        delta per distinct `since`, shared because a `Delta` is a frozen value
+        and two subscribers at one window would otherwise pay for the same fold
+        twice (`SPEC.md` §2.3).
+
+        It raises nothing a consumer can cause: a callback that raises is an
+        event and the **next subscriber is still called** (`SPEC.md` §6.5).
+        Retention is narrowed afterwards, never before, so the window a
+        subscriber is being handed cannot be trimmed out from under it
+        (`SPEC.md` §6.4).
+        """
+        subscriptions = self.subscriptions
+        if subscriptions is None:
+            return ()
+        events = self._hand_over(
+            index,
+            trace_id,
+            builder,
+            version,
+            subscriptions.due(trace_id, version),
+            on_refusal=lambda since, refusal: self._unavailable(
+                index, trace_id, version, since, refusal
+            ),
+        )
+        window = subscriptions.window(trace_id)
+        if window is not None and self._retained.get(trace_id) != window:
+            # Applied when the window *changes*, not every record. Retention is
+            # the router's or the caller's and not both: a caller that narrows a
+            # `Routed.builder`'s own journal has taken the policy over, and the
+            # router widening it back would claim entries that caller already
+            # dropped (`SPEC.md` §6.4). The library's refusal, reported above, is
+            # what such a caller gets instead.
+            builder.retain(window)
+            self._retained[trace_id] = window
+        return tuple(events)
+
+    def _hand_over(
+        self,
+        index: int,
+        trace_id: str | None,
+        builder: Builder,
+        version: int,
+        deliveries: tuple[Delivery, ...],
+        *,
+        on_refusal: Callable[[int, SpanweaveError], Event],
+    ) -> list[Event]:
+        """Call these subscribers with this version's difference (`§6.2`).
+
+        The one delivery path, used by the per-record fan-out and by the
+        trailing flush of §5.4's fifth step: "per-record and `every=N` are one
+        mechanism" (`SPEC.md` §6.2) is only true if the tail of a trace goes out
+        through the same code as the rest of it.
+
+        One delta per distinct `since`, shared because a `Delta` is a frozen
+        value and two subscribers at one window would otherwise pay for the same
+        fold twice (`SPEC.md` §2.3). It raises nothing a consumer can cause: a
+        callback that raises is an event and the **next subscriber is still
+        called** (`SPEC.md` §6.5). `on_refusal` is what a window the journal can
+        no longer produce is reported as, which is the one thing the two callers
+        do not share: mid-stream it is `delta_unavailable` and there will be a
+        later delivery, and at a flush it is `delta_unsent` and there will not.
+        """
+        events: list[Event] = []
+        deltas: dict[int, Delta] = {}
+        for delivery in deliveries:
+            since = delivery.since
+            if since not in deltas:
+                try:
+                    deltas[since] = builder.delta(since=since)
+                except SpanweaveError as refusal:
+                    events.append(on_refusal(since, refusal))
+                    continue
+            try:
+                delivery.subscription.consumer(
+                    Update(
+                        trace_id=trace_id,
+                        version=version,
+                        since=since,
+                        delta=deltas[since],
+                        builder=builder,
+                    )
+                )
+            except Exception as error:
+                # Isolation is not suppression: recorded with the trace id and
+                # the version, counted, and the fan-out continues. `Exception`
+                # and not `BaseException`: a `KeyboardInterrupt` is not a
+                # consumer's failure to isolate, and catching it would make the
+                # receiver un-interruptible (`SPEC.md` §6.5).
+                events.append(
+                    self._consumer_error(index, trace_id, version, delivery, error)
+                )
+        return events
+
+    def _unavailable(
+        self,
+        index: int,
+        trace_id: str | None,
+        version: int,
+        since: int,
+        refusal: SpanweaveError,
+    ) -> Event:
+        """The journal no longer holds `since`, so there is nothing to hand over.
+
+        Unreachable for a builder whose retention the router sets (`SPEC.md`
+        §6.4) and reachable two ways that are both legal: a caller narrowing a
+        `Routed.builder`'s own retention, and a consumer joining a trace already
+        in flight with a window wider than the one the journal is kept at, since
+        retention is widened only after a fan-out. The event carries the
+        library's code; nothing approximate is offered in its place, for the
+        library's own reason.
+        """
+        return self._counted(
+            Event(
+                code=DELTA_UNAVAILABLE,
+                index=index,
+                trace_id=trace_id,
+                spanweave_code=refusal.code,
+                detail=(
+                    f"the delta since version {since} of {trace_id!r} could not "
+                    f"be produced, so no subscriber due for that window was "
+                    f"called: {refusal}"
+                ),
+                version=version,
+            )
+        )
+
+    def flush(self, trace_id: str | None) -> tuple[Event, ...]:
+        """Hand every subscriber behind this trace its tail, now (`SPEC.md` §6.6).
+
+        The caller's explicit half of the trailing delta. An `every=N`
+        subscriber is delivered to at versions `N`, `2N`, … so the records after
+        the last multiple are a residue no window covers; a caller that knows
+        the stream has gone quiet, or that is about to stop, asks for it here.
+        Completion (`SPEC.md` §5.4, fifth step) asks for the same thing on the
+        caller's policy instead.
+
+        It returns **events**, which for a flush that went out cleanly is `()`:
+        a delivery is not an event (`SPEC.md` §1.5 is about what *did not*
+        happen). A trace this router holds no builder for has nothing to flush
+        and is `()` too -- nothing was absorbed, so no window was dropped -- and
+        a router with no subscriptions has nobody to flush to. `trace_id=None`
+        is the no-trace builder (`SPEC.md` §6.3), and asking for it does not
+        make one.
+
+        The cursors are **not** forgotten: the trace goes on, and the next
+        record continues from the version flushed. Only a release forgets them.
+        """
+        subscriptions = self.subscriptions
+        if subscriptions is None:
+            return ()
+        builder = self._no_trace if trace_id is None else self._builders.get(trace_id)
+        if builder is None:
+            return ()
+        return tuple(
+            self._hand_over(
+                self._index,
+                trace_id,
+                builder,
+                builder.version,
+                subscriptions.flush(trace_id, builder.version),
+                on_refusal=lambda since, refusal: self._unsent(
+                    self._index, trace_id, builder.version, since, refusal
+                ),
+            )
+        )
+
+    def _consumer_error(
+        self,
+        index: int,
+        trace_id: str | None,
+        version: int,
+        delivery: Delivery,
+        error: Exception,
+    ) -> Event:
+        """A callback raised. Recorded, counted, and never swallowed (`§6.5`)."""
+        return self._counted(
+            Event(
+                code=CONSUMER_ERROR,
+                index=index,
+                trace_id=trace_id,
+                spanweave_code=None,
+                detail=(
+                    f"subscriber {delivery.subscription.order} raised "
+                    f"{type(error).__name__} on the delta since version "
+                    f"{delivery.since} of {trace_id!r}: {error}. The remaining "
+                    f"subscribers were called and the record stays absorbed"
+                ),
+                version=version,
+            )
+        )
+
+    def tick(self) -> tuple[Completed, ...]:
+        """Evaluate the completion policies against the clock; complete what is
+        due, and return the traces this tick completed (`SPEC.md` §5.4).
+
+        One clock reading for the whole tick, and the traces are evaluated in
+        `trace_ids` order, so what a tick does is a function of the stream and
+        the reading. Two readings inside one tick could complete one trace and
+        not the next for a reason no caller could see.
+
+        With no completion policy it returns `()` and reads nothing: a tick is
+        not a thing the receiver wanted, it is a thing the caller asked for.
+
+        The **no-trace builder is never completed**, for the cap's reason
+        (`SPEC.md` §4.5): it is not a trace, and releasing it would throw away
+        the library's own account of the records that identified none on a
+        timeout that was about something else.
+
+        It raises nothing a record can cause, as `route` does not: a graph the
+        library refuses is reported, not raised (`SPEC.md` §5.4).
+        """
+        completion = self.completion
+        if completion is None:
+            return ()
+        now = completion.now()
+        watching = completion.watches_root
+        completed: list[Completed] = []
+        # A tuple snapshot, because completing releases builders out of the dict
+        # this iterates.
+        for trace_id in self.trace_ids:
+            builder = self._builders[trace_id]
+            book = self._book(trace_id, now)
+            if watching and book.root_ended_at is None and self._root_ended(builder):
+                # First *seen*, and recorded once: the grace runs from here, not
+                # from the span's own `ended_at` (`SPEC.md` §5.2, §5.6).
+                book.root_ended_at = now
+            state = TraceState(
+                trace_id=trace_id,
+                now=now,
+                records=builder.version,
+                first_record_at=book.first_record_at,
+                last_record_at=book.last_record_at,
+                root_ended_at=book.root_ended_at,
+            )
+            policy = completion.fired(state)
+            if policy is not None:
+                completed.append(
+                    self._complete(completion, trace_id, builder, book, policy, now)
+                )
+        return tuple(completed)
+
+    def _complete(
+        self,
+        completion: Completion,
+        trace_id: str,
+        builder: Builder,
+        book: _Book,
+        policy: Policy,
+        now: float,
+    ) -> Completed:
+        """Say so, materialize, write, release -- each of them reported (§5.4)."""
+        index = self._index
+        events: list[Event] = [
+            self._counted(
+                Event(
+                    code=COMPLETED,
+                    index=index,
+                    trace_id=trace_id,
+                    spanweave_code=None,
+                    detail=(
+                        f"the {policy.code} policy fired on {policy!r}: this "
+                        f"trace had absorbed {builder.version} records and was "
+                        f"last fed at {book.last_record_at!r} on the caller's "
+                        f"clock, which now reads {now!r}"
+                    ),
+                    seconds=now - book.first_record_at,
+                )
+            )
+        ]
+
+        graph: Graph | None = None
+        refusal: SpanweaveError | None = None
+        try:
+            graph = builder.graph()
+        except SpanweaveError as error:
+            refusal = error
+
+        path: pathlib.Path | None = None
+        if completion.out_dir is not None:
+            path, written = self._write(
+                completion, index, trace_id, book.generation, graph, refusal
+            )
+            events.append(written)
+
+        version = builder.version
+        del self._builders[trace_id]
+        # The next generation is a different builder with a journal of its own
+        # (`SPEC.md` §5.5), so the window is applied to it afresh.
+        self._retained.pop(trace_id, None)
+        book.completed_at = now
+        # To the end of the book, so that `_books`' own order is **completion**
+        # order among the entries that have one and `_forget` needs no sort and
+        # no clock (`SPEC.md` §5.5). Nothing else reads this dict's order:
+        # `trace_ids` is the builders'.
+        self._books[trace_id] = self._books.pop(trace_id)
+        events.append(
+            self._counted(
+                Event(
+                    code=RELEASED,
+                    index=index,
+                    trace_id=trace_id,
+                    spanweave_code=None,
+                    detail=(
+                        f"the builder for {trace_id!r} was released at version "
+                        f"{version}; the router holds {len(self._builders)} "
+                        f"identified traces"
+                    ),
+                )
+            )
+        )
+        events.extend(self._trailing(index, trace_id, builder, version))
+        events.extend(self._forget(index))
+        return Completed(
+            trace_id=trace_id,
+            policy=policy,
+            version=version,
+            graph=graph,
+            path=path,
+            events=tuple(events),
+        )
+
+    def _trailing(
+        self, index: int, trace_id: str, builder: Builder, version: int
+    ) -> list[Event]:
+        """The fifth step, where there are subscribers: hand over every tail,
+        then forget this trace's cursors (`SPEC.md` §5.4, §6.5, §6.6).
+
+        A subscriber whose cursor is behind the released version has a window
+        nothing is ever going to deliver otherwise, because the journal goes
+        with the builder. Until the run-2 review that was a `delta_unsent`
+        *report* and nothing more, on the reasoning that flushing a final
+        partial window would be a policy the caller never asked for; the
+        measurement that changed it is that an `every=N` subscriber then never
+        sees the end of any trace whose length is not a multiple of `N`, which
+        is a **dropped delta** and not a policy (`TASKS.md`, 2026-10-06).
+        So it goes out, through the same `_hand_over` the per-record fan-out
+        uses, and `delta_unsent` is kept for the one case where the window
+        cannot be produced at all.
+
+        The builder has already left `self._builders` by the time this runs --
+        the local is the released builder, and `Update.builder.graph()` is
+        therefore the final graph. That ordering is deliberate: §5.4's four
+        steps are the decision and this is bookkeeping after them, so `released`
+        stays the fourth event rather than moving behind a delivery.
+        """
+        subscriptions = self.subscriptions
+        if subscriptions is None:
+            return []
+        events = self._hand_over(
+            index,
+            trace_id,
+            builder,
+            version,
+            subscriptions.flush(trace_id, version),
+            on_refusal=lambda since, refusal: self._unsent(
+                index, trace_id, version, since, refusal
+            ),
+        )
+        subscriptions.forget(trace_id)
+        return events
+
+    def _forget(self, index: int) -> list[Event]:
+        """Drop the oldest completions past the caller's bound (`SPEC.md` §5.5).
+
+        The book `_books` keeps outlives the builders it was opened for, because
+        the gap on a `late_arrival` and the file name of a second generation are
+        facts about a trace already completed -- and at ~220 bytes per id it is
+        unbounded in the traces a stream completes, which is what
+        `max_completed` is for. A **count** and not a horizon: memory is what the
+        bound buys, and seconds bound no bytes.
+
+        Three things make it predictable rather than merely bounded:
+
+        - Only entries whose builder is **gone** are eligible. A book the router
+          still holds a builder for is that open trace's own state -- `Quiet`
+          reads `last_record_at` off it -- so evicting one would complete a trace
+          early for a reason no caller could see. Those are bounded by the
+          builders held, which is `max_traces`' job.
+        - The **oldest completion** goes first, which is the order this router
+          completed them in and not a sort on the caller's clock: `_complete`
+          moves a book to the end of `_books` as it books the completion, so
+          this dict's own order is completion order among the entries that have
+          one. A clock that steps backwards therefore evicts nothing out of
+          turn, and what a bound of `N` throws away is a function of the stream
+          and never of a dict's hashing (`CLAUDE.md` 8).
+        - Every eviction is **one event**, counted, riding on the `Completed`
+          whose completion pushed the book over. That is why it is evaluated
+          here and not at the top of the next tick: a tick that completes nothing
+          has no `Completed` to report on, and an eviction nobody was told about
+          is exactly the silence `SPEC.md` §1.5 refuses.
+
+        A record for a forgotten id afterwards finds no book, so it is a first
+        sighting: generation 1, and no `late_arrival`. That is the trade the
+        bound buys and `SPEC.md` §5.5 states it.
+        """
+        bound = self.max_completed
+        if bound is None:
+            return []
+        # How many completions are remembered, in **constant** time and with no
+        # second counter to drift (`SPEC.md` §5.3's own argument): with a
+        # completion policy every builder this router holds has a book, so a
+        # book with no builder is exactly a trace whose completion is
+        # remembered. A scan per completion would make a bound of `N` cost `N`
+        # on every trace that ends, which is the kind of cost `SPEC.md` §2.3 is
+        # about.
+        over = len(self._books) - len(self._builders) - max(bound, 0)
+        if over <= 0:
+            return []
+        doomed: list[tuple[str, float]] = []
+        for trace_id, book in self._books.items():
+            completed_at = book.completed_at
+            if completed_at is None:
+                # An open trace, and never eligible. They are bounded by the
+                # builders held, so this skips a bounded number of entries.
+                continue
+            doomed.append((trace_id, completed_at))
+            if len(doomed) == over:
+                break
+        events: list[Event] = []
+        for trace_id, completed_at in doomed:
+            del self._books[trace_id]
+            events.append(
+                self._counted(
+                    Event(
+                        code=FORGOTTEN,
+                        index=index,
+                        trace_id=trace_id,
+                        spanweave_code=None,
+                        detail=(
+                            f"{trace_id!r} was completed at {completed_at!r} on "
+                            f"the caller's clock and is forgotten: this router "
+                            f"remembers {bound} completed traces, which is "
+                            f"max_completed, so a record for it now opens "
+                            f"generation 1 and is not a late arrival"
+                        ),
+                        at=completed_at,
+                    )
+                )
+            )
+        return events
+
+    def _unsent(
+        self,
+        index: int,
+        trace_id: str | None,
+        version: int,
+        since: int,
+        refusal: SpanweaveError,
+    ) -> Event:
+        """A tail that could not be handed over, and there is no second chance.
+
+        The journal no longer holds `since` -- a caller that narrowed a
+        `Routed.builder`'s own retention has taken that policy over (`SPEC.md`
+        §6.4) -- so the window is lost with the builder. `delta_unavailable`
+        would be the wrong code for it: that one says "not this time", and this
+        one says "not ever" (`SPEC.md` §6.5).
+        """
+        return self._counted(
+            Event(
+                code=DELTA_UNSENT,
+                index=index,
+                trace_id=trace_id,
+                spanweave_code=refusal.code,
+                detail=(
+                    f"the window since version {since} of {trace_id!r} was a "
+                    f"subscriber's tail at version {version} and could not be "
+                    f"produced, so it was not sent and there is no later "
+                    f"delivery to carry it: {refusal}"
+                ),
+                version=version,
+            )
+        )
+
+    def _write(
+        self,
+        completion: Completion,
+        index: int,
+        trace_id: str,
+        generation: int,
+        graph: Graph | None,
+        refusal: SpanweaveError | None,
+    ) -> tuple[pathlib.Path | None, Event]:
+        """Write the final graph, or say why there is no file (`SPEC.md` §5.4).
+
+        Three things stop a write and each is one `not_written`: the library
+        refused the graph, the trace id is not usable as one path component, or
+        the filesystem refused. None of them raises -- a receiver that died on
+        one unwritable file would lose every other trace it was holding.
+
+        The first of the three is **unreachable** through the public surface
+        today and kept deliberately (`SPEC.md` §5.4): a builder refuses a graph
+        only when nothing in it was claimed, and an identified trace has a
+        claimed record by construction. `graph()`'s refusals are the library's to
+        define and a pin move can add one.
+        """
+        if graph is None:
+            return None, self._counted(
+                Event(
+                    code=NOT_WRITTEN,
+                    index=index,
+                    trace_id=trace_id,
+                    spanweave_code=None if refusal is None else refusal.code,
+                    detail=(
+                        f"the library refused to materialize the graph of "
+                        f"{trace_id!r}, so there is nothing to write: {refusal}"
+                    ),
+                )
+            )
+        path = completion.path_for(trace_id, generation)
+        if path is None:
+            return None, self._counted(
+                Event(
+                    code=NOT_WRITTEN,
+                    index=index,
+                    trace_id=trace_id,
+                    spanweave_code=None,
+                    detail=(
+                        f"{trace_id!r} is not usable as one path component, so "
+                        f"no file was named from it; a trace id is untrusted "
+                        f"input and a file named from it must not be able to "
+                        f"leave the directory the caller named"
+                    ),
+                )
+            )
+        try:
+            write(graph, path)
+        except OSError as error:
+            return None, self._counted(
+                Event(
+                    code=NOT_WRITTEN,
+                    index=index,
+                    trace_id=trace_id,
+                    spanweave_code=None,
+                    detail=f"writing {str(path)!r} failed: {error}",
+                )
+            )
+        return path, self._counted(
+            Event(
+                code=WRITTEN,
+                index=index,
+                trace_id=trace_id,
+                spanweave_code=None,
+                detail=str(path),
+            )
+        )
+
+    def _root_ended(self, builder: Builder) -> bool:
+        """Has this trace's root ended, as far as the graph says (`§5.6`)?
+
+        A graph the library **refuses** is "no root seen yet" and no event: the
+        alternative is one event per tick for the life of the stream, which is
+        the unbounded accumulation §4.6 exists to avoid, and the condition is
+        permanent and reaches the caller the moment it asks for the graph
+        (`SPEC.md` §5.7). Nothing was dropped -- a decision was not made.
+
+        Unreachable today for `_write`'s reason, and kept for the same one.
+        """
+        try:
+            graph = builder.graph()
+        except SpanweaveError:
+            return False
+        return root_ended(graph)
+
+    def _book(self, trace_id: str, now: float) -> _Book:
+        book = self._books.get(trace_id)
+        if book is None:
+            book = _Book(first_record_at=now, last_record_at=now)
+            self._books[trace_id] = book
+        return book
+
+    def _began(self, index: int, trace_id: str, now: float | None) -> tuple[Event, ...]:
+        """A builder was just made for this trace; is it a **second** one?
+
+        A book that outlived its builder is a trace the caller's policy
+        completed, so this record is late: a new builder is opened, the record
+        is absorbed into it, and the gap is reported (`SPEC.md` §5.5). The
+        record is not refused, not dropped and not held -- the policy said stop
+        holding a builder, not stop receiving telemetry (`SPEC.md` §1.3).
+        """
+        if now is None:
+            return ()
+        book = self._books.get(trace_id)
+        if book is None:
+            self._books[trace_id] = _Book(first_record_at=now, last_record_at=now)
+            return ()
+        completed_at = book.completed_at
+        # This generation's records and this generation's silence.
+        book.first_record_at = now
+        book.last_record_at = now
+        book.root_ended_at = None
+        if completed_at is None:
+            return ()
+        book.completed_at = None
+        book.generation += 1
+        return (
+            self._counted(
+                Event(
+                    code=LATE_ARRIVAL,
+                    index=index,
+                    trace_id=trace_id,
+                    spanweave_code=None,
+                    detail=(
+                        f"{trace_id!r} was completed at {completed_at!r} on the "
+                        f"caller's clock and a record for it arrived at {now!r}; "
+                        f"generation {book.generation} of its builder is open "
+                        f"and the record is absorbed into it"
+                    ),
+                    seconds=now - completed_at,
+                )
+            ),
+        )
+
+    def _activity(self, trace_id: str, now: float) -> None:
+        """A record reached this trace's builder, absorbed or refused (`§5.3`).
+
+        Either way it is activity: a re-sent span is the exporter still talking
+        about this trace, and counting a refusal as silence would complete a
+        trace that is plainly still arriving.
+        """
+        self._book(trace_id, now).last_record_at = now
+
+    def _at_cap(self, index: int, trace_id: str) -> Routed:
+        """A new trace the router has no room for. Refused, in the open."""
+        event = self._counted(
+            Event(
+                code=REFUSED_AT_CAP,
+                index=index,
+                trace_id=trace_id,
+                spanweave_code=None,
+                detail=(
+                    f"this router already holds {len(self._builders)} traces, "
+                    f"which is max_traces, so no builder was made for "
+                    f"{trace_id!r} and the record was not absorbed"
+                ),
+            )
+        )
+        return Routed(
+            index=index,
+            trace_id=trace_id,
+            builder=None,
+            version=None,
+            events=(event,),
+        )
+
+    def _counted(self, event: Event) -> Event:
+        self._counts[event.code] = self._counts.get(event.code, 0) + 1
+        return event

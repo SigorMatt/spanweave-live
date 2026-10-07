@@ -1,9 +1,12 @@
 # Contributing to spanweave-live
 
 Work here arrives in **batches**: one batch is one concern, one commit, and one
-agent or person's sitting. The bar below is what every batch must clear. It is
-`WORKPLAN.md` §0.3 written out, with the reason for each line, because a bar
-whose reasons are not written gets negotiated away one batch at a time.
+agent or person's sitting. The bar below is what every batch must clear. It
+began as the receiver series' batch brief written out, with the reason for each
+line, because a bar whose reasons are not written gets negotiated away one batch
+at a time — and it is now the only copy: the series' execution state
+(`WORKPLAN.md`) was deleted at its close, and `TASKS.md` registers what that
+series did.
 
 Read first: `CLAUDE.md` (the invariants — the standing rules are not style
 preferences), then the part of `SPEC.md` you are touching.
@@ -33,6 +36,13 @@ A batch is done when all of these hold.
       Never a relative path, and never inside the repo: a worktree under the
       working tree gets picked up by `rglob`, by pytest collection and by the
       gates, and then the parent run is measuring both trees at once.
+
+      **Record the sha `<sha>^` resolved to** in the commit body, not the sha
+      you started from. One commit in the receiver series claimed a parent that
+      was two commits back and was right only by luck, because the two trees
+      differed solely in the series' plan file; the next time the intervening
+      commit touches code or tests, the same mistake makes the evidence worthless
+      (`TASKS.md`, thread T7).
 
 - [ ] **A named mutation, shown caught.** Name one specific wrong
       implementation — "a framer that hands partial lines over", "a `Quiet` that
@@ -84,6 +94,13 @@ the same repository at the same sha; `uv.lock` records it a third time.
 `tests/test_pins.py` holds all three equal. Moving the pin is therefore one edit
 in three places and one commit — and `make install-check` afterwards, because a
 pin move is a dependency move.
+
+Since R8 there is a **second pin of the same shape**: `agentgolden` by git sha in
+the `dev` extra, `showcase/` a submodule of that repository at that sha, and
+`uv.lock` again. It is a *dev* pin and its consumer is a test, because the
+receiver carries no rules (`SPEC.md` §1.2, §9.4); a gate fails the build if any
+module under `spanweave_live/` imports it. Moving it moves the first-failure
+table the showcase asserts, so the new table belongs in the same commit.
 
 ## Reporting a bug
 

@@ -5,9 +5,16 @@ every session, in full. `SPEC.md` is the source of truth for *what* to build;
 this file is the source of truth for *how*, and for the lines that must never be
 crossed. A cold session should be able to work here from this file alone.
 
-`WORKPLAN.md` is execution state for the series: which batch is next, what it
-must contain, what has been learned. **It is edited only by the orchestrator.** A
-sub-agent executing a batch never edits it.
+`TASKS.md` is the registry **between** series and the second file a cold session
+reads: one line per batch with the commit that closed it, the decisions the
+maintainer took, the facts the batches measured, and the disposition of every
+finding of every review. While a series is open there is also a `WORKPLAN.md` —
+the orchestrator's execution state, which batch is next and what it must
+contain. **It is edited only by the orchestrator**, and a sub-agent executing a
+batch never edits it. It exists only for the life of a series and is deleted at
+the close, with what outlives it folded into `TASKS.md`; the receiver series'
+last state is at `git show b500342:WORKPLAN.md`. No series is open at this tip,
+so there is no `WORKPLAN.md` here.
 
 ## What this project is
 
@@ -24,6 +31,14 @@ policy. **The receiver owns plumbing and policy and nothing else.**
 that same repository at the same commit, read-only, used only to build
 `fixtures/conformance/`. Nothing in this repo changes `spanweave`; if a batch
 seems to need a change there, that is a halt point (below).
+
+The showcase (`SPEC.md` §9) has the same shape one directory over: `agentgolden`
+is a **dev** dependency pinned to one commit, and `showcase/` is a submodule of
+that repository at the same commit, read-only, where the rules file and the
+trace are read from. It is a dev dependency and its consumer is a **test**
+because the receiver carries no rules; a gate fails the build if any module
+under `spanweave_live/` imports it. Nothing in this repo changes `agentgolden`
+either, and that too is a halt point.
 
 ## Standing rules — non-negotiable
 
@@ -47,10 +62,13 @@ to find them. A change that violates one is wrong even if it passes tests.
 4. **The clock, sleeping and sockets are injected seams** — `now`, `sleep`, a
    listener factory — so every test runs on a fake clock and the conformance gate
    is deterministic. No module under `spanweave_live/` imports `time`,
-   `datetime`, `random`, `socket`, `threading` or `asyncio` outside a seam file
-   named in `tests/gates.py`'s `SEAMS` allowlist, which is **empty** until a
-   batch adds the one file that holds a default. The gate fails the build.
-   (`SPEC.md` §1.4.)
+   `datetime`, `random`, `socket`, `threading`, `asyncio` or `http.server`
+   (`tests/gates.py` bans a longer list than those seven) outside a seam file
+   named in that file's `SEAMS` allowlist. The allowlist has **one** entry,
+   added by R7 and still the only one —
+   `SEAMS = {"real.py": frozenset({"time", "http.server"})}`, one file and two
+   modules — because `real.py` is where a process binds the real world and
+   nothing else does. The gate fails the build. (`SPEC.md` §1.4, §8.2.)
 
 5. **Nothing is dropped silently.** A refusal, a cap, a late arrival or a
    consumer error is an **event with a code**, counted and reported.
@@ -59,7 +77,9 @@ to find them. A change that violates one is wrong even if it passes tests.
 6. **The two pins are one pin.** `spanweave` is pinned to one commit in
    `pyproject.toml`, the `corpus/` submodule is at the same commit, and
    `tests/test_pins.py` holds the two equal (and `uv.lock` with them). Moving one
-   without the others is the failure that test exists to catch.
+   without the others is the failure that test exists to catch. Since R8 there is
+   a second pair of the same shape: the `agentgolden` dev pin and the `showcase/`
+   submodule, held equal by the same file.
 
 7. **Nothing is frozen.** Pre-1.0, by `0.0.x`, said out loud in the version
    number, in `--help`, in `README.md` and at the top of `SPEC.md`. Publishing is
@@ -90,10 +110,12 @@ bytes ──► Framer ──► spanweave.read_records ──► Router ──�
   `tests/test_gates.py` watches it fail against planted violations. A gate nobody
   has watched fail is a gate nobody knows works.
 - `corpus/` is the pinned `spanweave` repository. Read it; never write it.
-- `fixtures/conformance/` is built from the corpus. The cross-interleaving
-  equivalence test (gate A, R2) is this project's central claim: records of two
-  traces, shuffled together and framed in arbitrary chunks, produce each trace's
-  graph **byte for byte** as `spanweave.build` of that trace alone.
+- The corpus' own `fixtures/conformance/` is read in place, through `corpus/`,
+  rather than copied into a `fixtures/` of this repo's own: a copy is a second
+  thing to keep at the pin. The cross-interleaving equivalence test (gate A,
+  `tests/test_conformance.py`, R2) is this project's central claim: records of
+  two traces, shuffled together and framed in arbitrary chunks, produce each
+  trace's graph **byte for byte** as `spanweave.build` of that trace alone.
 
 ## Commands
 
@@ -102,7 +124,8 @@ Tooling is `uv`. The `Makefile` is the source of truth for the gates.
 ```bash
 make check            # THE gate: ruff, ruff format --check, mypy --strict, pytest, gates
 make gates            # the invariant gate and the pin test alone
-make conformance      # gate A (a no-op that says so until R2)
+make conformance      # gate A (real from R2: tests/test_conformance.py, ~25s)
+make showcase         # the showcase: prints the first-failure table, then asserts it
 make install-check    # wheel into a throwaway venv, run from OUTSIDE the repo (needs network once)
 uv run pytest tests/test_gates.py::test_the_package_reaches_for_no_ambient_runtime
 ```
@@ -113,7 +136,8 @@ only gate that can catch a packaging break. CI runs both, on 3.11–3.14, plus
 `make conformance` on ubuntu and macos. Run both locally before calling a change
 done.
 
-First time in a fresh clone: `git submodule update --init` then `uv sync --extra dev`.
+First time in a fresh clone: `git submodule update --init` (both `corpus/` and
+`showcase/`) then `uv sync --extra dev`.
 
 ## Definition of done (per change)
 

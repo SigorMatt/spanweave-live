@@ -1,3 +1,6 @@
 [submodule "corpus"]
 	path = corpus
 	url = https://github.com/SigorMatt/spanweave.git
+[submodule "showcase"]
+	path = showcase
+	url = https://github.com/SigorMatt/agentgolden.git

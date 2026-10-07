@@ -7,6 +7,14 @@ resolution-markers = [
 ]
 
 [[package]]
+name = "agentgolden"
+version = "0.1.0"
+source = { git = "https://github.com/SigorMatt/agentgolden?rev=aa1847f2a2ad51a95b98ab3e180bc5d211e6b138#aa1847f2a2ad51a95b98ab3e180bc5d211e6b138" }
+dependencies = [
+    { name = "spanweave" },
+]
+
+[[package]]
 name = "ast-serialize"
 version = "0.12.1"
 source = { registry = "https://pypi.org/simple" }
@@ -353,7 +361,7 @@ wheels = [
 [[package]]
 name = "spanweave"
 version = "0.9.1"
-source = { git = "https://github.com/SigorMatt/spanweave?rev=e42f257b91be1bd9c7be6bcdbd31313947401288#e42f257b91be1bd9c7be6bcdbd31313947401288" }
+source = { git = "https://github.com/SigorMatt/spanweave?rev=fec7da27af517ad8b58ae3ec57827916aae60674#fec7da27af517ad8b58ae3ec57827916aae60674" }
 
 [[package]]
 name = "spanweave-live"
@@ -365,6 +373,7 @@ dependencies = [
 
 [package.optional-dependencies]
 dev = [
+    { name = "agentgolden" },
     { name = "mypy" },
     { name = "pytest" },
     { name = "ruff" },
@@ -372,10 +381,11 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "agentgolden", marker = "extra == 'dev'", git = "https://github.com/SigorMatt/agentgolden?rev=aa1847f2a2ad51a95b98ab3e180bc5d211e6b138" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.11" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.6" },
-    { name = "spanweave", git = "https://github.com/SigorMatt/spanweave?rev=e42f257b91be1bd9c7be6bcdbd31313947401288" },
+    { name = "spanweave", git = "https://github.com/SigorMatt/spanweave?rev=fec7da27af517ad8b58ae3ec57827916aae60674" },
 ]
 provides-extras = ["dev"]
 
