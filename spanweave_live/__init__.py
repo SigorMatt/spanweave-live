@@ -15,7 +15,10 @@ R4 `Subscriptions` and the `Update` one consumer is handed, R5 the two file
 ingests -- `tail` and `stdin` -- and the codes for what happens to a file that
 is not growth, R3a the code a router emits when the caller's bound on the
 completed-trace book makes it forget one, and R6 the OTLP/HTTP endpoint and the
-two codes it refuses with.
+two codes it refuses with. The endpoint's **third** code, `CLIENT_ABORTED`, was
+added after the series closed and is not a refusal: a poster that goes away
+before reading its answer is an event with a code, not a traceback nobody
+counted (`SPEC.md` §7.2).
 
 **R7 adds nothing here**, which is the shape of that batch rather than an
 omission: the CLI (`SPEC.md` §8) is a *caller* of everything above, and its one
@@ -48,6 +51,7 @@ from spanweave_live.completion import (
     root_ended,
 )
 from spanweave_live.endpoint import (
+    CLIENT_ABORTED,
     GZIP_ENCODING,
     JSON_MEDIA_TYPE,
     TRACES_TARGET,
@@ -96,6 +100,7 @@ from spanweave_live.subscriptions import (
 
 __all__ = [
     "CAP",
+    "CLIENT_ABORTED",
     "COMPLETED",
     "CONSUMER_ERROR",
     "DEFAULT_CHUNK_BYTES",

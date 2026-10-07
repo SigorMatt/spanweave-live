@@ -1821,6 +1821,7 @@ JSON_MEDIA_TYPE = "application/json"
 GZIP_ENCODING = "gzip"
 UNSUPPORTED_MEDIA_TYPE = "unsupported_media_type"
 UNREADABLE_BODY = "unreadable_body"
+CLIENT_ABORTED = "client_aborted"
 
 @dataclass(frozen=True, slots=True)
 class Request:
@@ -1847,6 +1848,7 @@ class Exchange:
 class Endpoint:
     def __init__(self, *, framer: Framer | None = None) -> None: ...
     def handle(self, request: Request) -> Exchange: ...
+    def aborted(self, exchange: Exchange, error: ConnectionError) -> Exchange: ...
     @property
     def framer(self) -> Framer: ...
     @property
@@ -1972,6 +1974,32 @@ body that is not JSON, not one that is not UTF-8, not a `Content-Length` that is
 not a number, not an absent header. That is §4.4's rule one layer up: a refusal
 is an event and the endpoint keeps serving.
 
+**And a third code, for the answer that was never read: `client_aborted`.** A
+poster that writes its request and closes before reading the reply makes the
+write-back fail — `BrokenPipeError`, `ConnectionResetError` or
+`ConnectionAbortedError`, the three spellings of "the peer is gone", with
+`ConnectionError` as their common base and a builtin, so the family is caught by
+name and this module still imports no `socket` (§1.4). `respond` catches it
+around the **write-back only** and never around `endpoint.handle`, and calls
+`Endpoint.aborted(exchange, error)`: the event goes on `counts` and onto the
+exchange that becomes `last`, the failure is named in `detail`, and `respond`
+returns rather than raising.
+
+There is **no status** for this one, which is what makes it an event and not a
+refusal: nobody is listening for a status, the request *was* the one this
+endpoint serves, and its body *was* read — so the exchange's records still reach
+the consumer and `serve` still yields for it. What this code reports is the one
+fact that would otherwise be lost: the answer never arrived.
+
+It exists because of §1.5 and for no other reason. Before it, the exception
+escaped `respond`, `socketserver.BaseServer.handle_error` printed a traceback to
+**stderr**, and `Endpoint.counts` recorded nothing — an uncounted traceback on
+the error stream, which is precisely the shape §1.5 exists to prevent, and which
+this section's own `400` path had been handling correctly since R6. Nothing was
+dropped in substance, because the records came out anyway; what was dropped was
+the receiver's account of itself (`reviews/2026-10-07-close.md`, T-R6-5, decided
+by the maintainer 2026-10-07).
+
 #### Four layers, and `http.server` is imported above all four
 
 `CLAUDE.md`'s standing rule 4 names a **listener factory** as one of the three
@@ -2016,13 +2044,43 @@ paragraph says so rather than leaving a reader to assume a type checker did it.
 
 `serve` calls its factory once, drives `listener.handle_request()` — which
 serves exactly **one** request and returns — and yields one
-`spanweave.Records` per request handled, refusals included, empty rather than
-absent. That is §7.1's rule for a poll that read nothing, for the same reason:
-"nothing arrived" and "nothing was readable" are different answers, and
-`Endpoint.last` is where the second is visible beside the yield. The listener is
-closed when the iteration ends, however it ends. `until` is the caller's stop
-condition, asked once before each request, `None` serving forever — a policy
-(§1.2), and a stop a test can state.
+`spanweave.Records` per request **handled**. There are **three** answers here
+and not two:
+
+- a request whose body was read yields that body's records;
+- a **refusal** is a request handled and yields too, with `Records` that is
+  empty rather than absent. That is §7.1's rule for a poll that read nothing,
+  for the same reason: "nothing arrived" and "nothing was readable" are
+  different answers, and `Endpoint.last` is where the second is visible beside
+  the yield;
+- a connection that carried **no request** — a bare TCP connect and close, which
+  the stdlib handler answers by reading an empty request line and returning —
+  yields **nothing at all**: not a stale object, and not an empty placeholder
+  either, because there is nothing for an empty `Records` to be empty *about*.
+
+"Was a request handled" is read from `Endpoint.requests` **moving**, and that
+detail is the whole of this rule. It used to be read from `Endpoint.last` being
+non-`None`, and that was wrong in the one way that mattered: `last` holds the
+*previous* exchange, so a `handle_request()` that handled nothing re-yielded
+that request's `Records` and the consumer absorbed the same records twice. The
+empty placeholder only ever appeared before the **first** request, which is why
+it looked like the rule. Nothing visible broke, because routing the same records
+twice happens to be graph-idempotent — luck, not design, and the kind of luck a
+spec should not be resting on (`reviews/2026-10-07-close.md`, T-R6-4, decided by
+the maintainer 2026-10-07).
+
+A skipped yield does not skip the stop: `until` is asked again before the next
+`handle_request()`, which is also what keeps this from being a loop with no
+exit. A real `handle_request()` blocks until a connection arrives, so "that
+connection carried no request" means "wait for the next one" — and `until` is
+where the waiting stops. A listener that returns immediately without handling
+anything and a caller that passed `until=None` is therefore an infinite loop, as
+a `tail` of a file that never grows is: the stop is the caller's, by design
+(§1.2).
+
+The listener is closed when the iteration ends, however it ends. `until` is the
+caller's stop condition, asked once before each request, `None` serving
+forever — a policy (§1.2), and a stop a test can state.
 
 There is no thread and no timeout anywhere in this section, which is what makes
 its tests facts rather than races. A test binds `127.0.0.1` on port **0**, lets
@@ -2053,6 +2111,34 @@ no line and reads nothing at all. A suite whose bodies were only the corpus' own
 bytes would have been green, which is why `spellings()` has three entries and
 why one test in that file asserts, at the framer and with no socket in it, that
 the three really do differ.
+
+The two rules added on 2026-10-07 have a named mutation each, both shown caught:
+**a `serve` that yields the previous exchange when nothing was handled** — the
+behaviour that was there, which takes down the three `serve` tests above — and
+**a `respond` that counts the abort but still lets it escape**, which takes down
+the four abort tests. The second one is the interesting half: counting without
+catching looks like a fix and still leaves the traceback on stderr, so a test
+that asserted only `counts` would have passed it.
+
+**Which kind of test holds which fact, said plainly.** The bare connection is
+held by a **real socket**: the test connects to the live loopback listener,
+writes not one byte, closes, and shows no yield and `Endpoint.requests`
+unchanged — deterministic, because a close is a FIN and data before a FIN is
+always delivered. The abort is held by a **raising stream** instead: `respond` is
+driven with a handler whose `wfile.write` raises each of the three
+`ConnectionError` subclasses, which is what a real abort surfaces as, since
+`socketserver`'s `wfile` is an unbuffered `_SocketWriter`. A real client abort
+*was* measured on this section's own loopback shape — `SO_LINGER (1, 0)` and
+close, forcing an RST — and it gives exactly `counts == {"client_aborted": 1}`
+with nothing on stderr, 200 runs out of 200 on Linux. It is not the test,
+because whether an RST discards the request bytes already queued for the
+server's *read* is the operating system's answer and not this library's:
+BSD-derived stacks discard them, which would turn the probe into the bare
+connection's scenario with the read raising instead of the write. `make check`
+runs this whole suite on macOS as well as Linux, so that test would be one whose
+result depends on the machine running it — which `CONTRIBUTING.md` bans, and
+which §7.1 already refused to claim portability for when the fact was the
+platform's rather than the library's.
 
 ## 8. The CLI — the one place the real world is bound
 
@@ -2289,8 +2375,8 @@ nothing is ever forgotten and no file is ever written over.
 
 The code is about **what the receiver could not do**, and never about what the
 telemetry said. A `refused`, a `refused_at_cap`, a `late_arrival`, a
-`truncated`, a `415`, a `400` and every reader diagnostic are observations
-(§1.3): a run full of them exits `0`, and the events and `counts` on stderr are
+`truncated`, a `415`, a `400`, a `client_aborted` and every reader diagnostic
+are observations (§1.3): a run full of them exits `0`, and the events and `counts` on stderr are
 where a caller reads them. A receiver that exited non-zero because a span was
 re-sent would be a gate, and the receiver enforces nothing.
 

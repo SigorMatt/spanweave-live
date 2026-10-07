@@ -30,6 +30,7 @@ from __future__ import annotations
 import dataclasses
 import gzip
 import json
+import socket
 from http.client import HTTPConnection
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
@@ -39,6 +40,7 @@ import pytest
 import spanweave
 
 from spanweave_live import (
+    CLIENT_ABORTED,
     GZIP_ENCODING,
     JSON_MEDIA_TYPE,
     TRACES_TARGET,
@@ -107,6 +109,8 @@ class Posting:
         )
         self.factories = 0
         self.closed = 0
+        #: How many more `handle_request()` calls `serve` is allowed. One per
+        #: `post`, and a test that drives a bare connection sets it by hand.
         self.pending = 0
         self.asked = 0
         self.iterator = serve(self.endpoint, listener=self._listener, until=self._until)
@@ -132,8 +136,29 @@ class Posting:
         return Counting()
 
     def _until(self) -> bool:
+        """Stop unless the test has said that something is arriving.
+
+        `pending` is a **budget**, spent one request at a time by the ask that
+        precedes it, rather than a flag the caller clears afterwards. That is
+        what lets a test drive a connection which carries no request: `serve`
+        yields nothing for one of those and loops, so the stop condition is
+        what the test must hold rather than the yield (`SPEC.md` §7.2).
+        """
         self.asked += 1
-        return self.pending == 0
+        if self.pending == 0:
+            return True
+        self.pending -= 1
+        return False
+
+    def connect_and_close(self) -> None:
+        """Open a plain TCP connection to the listener, write nothing, close.
+
+        The outside reach of T-R6-4 (`reviews/2026-10-07-close.md`): no bytes,
+        so the stdlib handler reads an empty request line and returns without
+        routing anything to `respond`, and `Endpoint.requests` does not move.
+        """
+        connection = socket.create_connection(self.address)
+        connection.close()
 
     def post(
         self,
@@ -153,7 +178,9 @@ class Posting:
         )
         self.pending = 1
         records = next(self.iterator)
-        self.pending = 0
+        # `_until` spent the budget on the way in, so there is nothing to
+        # clear here: one request was allowed and one was served.
+        assert self.pending == 0
         reply = connection.getresponse()
         status, payload = reply.status, reply.read()
         connection.close()
@@ -627,10 +654,28 @@ def test_serve_with_no_until_is_not_asked_and_the_listener_still_closes() -> Non
     assert endpoint.requests == 2
 
 
-def test_a_listener_that_handled_nothing_still_yields() -> None:
-    """`Endpoint.last` is `None` before the first request, and the yield is
-    empty rather than absent (`SPEC.md` §1.5, §7.2)."""
+def test_a_listener_that_handled_nothing_yields_nothing() -> None:
+    """The third answer, and it is an absence of a yield (`SPEC.md` §7.2).
+
+    **This test asserted the opposite until 2026-10-07.** It was
+    `test_a_listener_that_handled_nothing_still_yields`, and what it asserted
+    -- "the yield is empty rather than absent" -- was a defect rather than the
+    rule: `serve` yielded `endpoint.last.records` after *every*
+    `handle_request()`, so one that handled nothing re-yielded the **previous**
+    request's object, and `Endpoint.last is None` was the only case that
+    produced the empty placeholder this test happened to take for the rule
+    (`reviews/2026-10-07-close.md`, T-R6-4). A refusal is still a request
+    handled and still yields empty (§1.5); "nothing arrived on this
+    connection" is the third answer and yields nothing at all.
+
+    Its other point is kept: `Endpoint.last` is `None` before the first
+    request. So is the hazard it sits next to -- a listener that returns
+    without handling anything must not spin `serve` forever, which is why
+    `until` is asked again before each `handle_request()` and why this test
+    counts the asks.
+    """
     endpoint = Endpoint()
+    asked: list[int] = []
 
     class Idle:
         def handle_request(self) -> None:
@@ -639,12 +684,62 @@ def test_a_listener_that_handled_nothing_still_yields() -> None:
         def server_close(self) -> None:
             return None
 
-    iterator = serve(endpoint, listener=Idle)
-    assert next(iterator) == spanweave.Records(
-        records=(), diagnostics=(), skipped_records=0
-    )
+    def until() -> bool:
+        asked.append(1)
+        return len(asked) > 2
+
+    iterator = serve(endpoint, listener=Idle, until=until)
+    with pytest.raises(StopIteration):
+        next(iterator)
     assert endpoint.last is None
+    assert endpoint.requests == 0
+    assert endpoint.counts == {}
+    # Two `handle_request()` calls that handled nothing, each preceded by an
+    # ask, and a third ask that stopped the loop: a skipped yield does not
+    # skip the stop condition.
+    assert len(asked) == 3
     iterator.close()
+
+
+def test_a_bare_connection_carries_no_request_and_yields_nothing(
+    posting: Posting,
+) -> None:
+    """T-R6-4's outside reach, over the real socket (`SPEC.md` §7.2).
+
+    Connect, write not one byte, close. The stdlib handler reads an empty
+    request line and returns, so nothing reaches `respond`: no request, no
+    event, no yield, and `Endpoint.last` still `None`.
+    """
+    posting.connect_and_close()
+    posting.pending = 1
+    with pytest.raises(StopIteration):
+        next(posting.iterator)
+    assert posting.endpoint.requests == 0
+    assert posting.endpoint.last is None
+    assert posting.endpoint.counts == {}
+    assert posting.asked == 2, "`until` got its turn again before the next request"
+
+
+def test_a_bare_connection_does_not_re_yield_the_previous_records(
+    posting: Posting,
+) -> None:
+    """The defect in its own words (`reviews/2026-10-07-close.md`, T-R6-4).
+
+    A successful POST, then a bare connection: the consumer must not be handed
+    that POST's `Records` a second time. Double-routing the same records
+    happens to be graph-idempotent, which is luck and not design -- so the
+    assertion is on the yield and not on a graph.
+    """
+    status, _reply, records = posting.post(b'{"name": "a"}')
+    assert (status, len(records.records)) == (200, 1)
+    posting.connect_and_close()
+    posting.pending = 1
+    with pytest.raises(StopIteration):
+        next(posting.iterator)
+    assert posting.endpoint.requests == 1, "the bare connection was not a request"
+    assert posting.endpoint.last is not None
+    assert len(posting.endpoint.last.records.records) == 1
+    assert posting.endpoint.counts == {}
 
 
 # --------------------------------------------------------------------------
@@ -702,6 +797,131 @@ def test_a_content_length_that_is_not_a_number_is_no_body_and_not_a_traceback(le
     exchange = respond(handler, Endpoint())  # type: ignore[arg-type]
     assert exchange.response.status == 200
     assert exchange.records.records == ()
+
+
+# --------------------------------------------------------------------------
+# A client that aborts before reading is an event (`SPEC.md` §7.2).
+# --------------------------------------------------------------------------
+
+
+class Gone:
+    """A response stream whose peer is not there: every write raises.
+
+    **Why the fact below is held by a raising stream and not by a real client**
+    (the same reason `FakeHandler` exists, said for a harder case). A real
+    abort was probed on this file's own loopback shape: a client that writes
+    the whole request, sets `SO_LINGER` to `(1, 0)` and closes forces an RST,
+    and on Linux the queued request bytes are still delivered to the server's
+    read while the response write fails `ConnectionResetError` -- 200 runs out
+    of 200. But whether an RST discards the data already queued for a read is
+    the operating system's answer, not this library's: BSD-derived stacks
+    discard it, which would turn the probe into the *previous* test's scenario
+    with the read raising instead of the write. `make check` runs this whole
+    suite on macOS as well as Linux (`.github/workflows/ci.yml`, added by
+    R5a), so a real-socket abort here would be a test whose result depends on
+    the machine running it, and `CONTRIBUTING.md` bans exactly that.
+
+    `socketserver`'s `wfile` is an unbuffered `_SocketWriter`, so a real
+    abort surfaces as `write` raising inside `respond` -- which is precisely
+    what this stands in for, on every platform, with no race.
+    """
+
+    def __init__(self, error: BaseException) -> None:
+        self.error = error
+        self.writes = 0
+
+    def write(self, data: bytes) -> int:
+        self.writes += 1
+        raise self.error
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        BrokenPipeError(32, "Broken pipe"),
+        ConnectionResetError(104, "Connection reset by peer"),
+        ConnectionAbortedError(103, "Software caused connection abort"),
+    ],
+    ids=["broken_pipe", "reset", "aborted"],
+)
+def test_a_client_that_aborts_before_reading_is_a_counted_event(error, capfd) -> None:
+    """T-R6-5 (`reviews/2026-10-07-close.md`), closed as `SPEC.md` §7.2 states.
+
+    The write-back fails because the poster is gone. Before 2026-10-07 the
+    exception escaped `respond`, `socketserver.BaseServer.handle_error` printed
+    a traceback to stderr, and `Endpoint.counts` recorded nothing -- an
+    uncounted traceback on the error stream, which is the shape standing rule 5
+    exists to prevent and which this module's own `400` path already handled
+    correctly. Now it is a `client_aborted` event with a code, counted, and
+    `respond` returns rather than raising.
+
+    The body reads cleanly, so `client_aborted` is the **only** event and the
+    whole `counts` mapping is asserted rather than a lookup in it.
+    """
+    endpoint = Endpoint()
+    handler = FakeHandler({"Content-Length": "13", **JSON}, b'{"name": "a"}')
+    handler.wfile = Gone(error)
+    exchange = respond(handler, endpoint)  # type: ignore[arg-type]
+
+    assert endpoint.counts == {CLIENT_ABORTED: 1}
+    # `FakeHandler` records the status and the headers instead of writing them,
+    # so the one write attempted here is the body's -- and it raised.
+    assert handler.wfile.writes == 1
+    assert handler.sent == [
+        ("status", 200),
+        ("Content-Type", JSON_MEDIA_TYPE),
+        ("Content-Length", "2"),
+        ("end", None),
+    ]
+    # The request *was* handled, and its records still reach the consumer:
+    # nothing is dropped, which is why this is an event and not a refusal.
+    assert exchange.response.status == 200
+    assert len(exchange.records.records) == 1
+    assert endpoint.requests == 1
+
+    (event,) = endpoint.events
+    assert event.code == CLIENT_ABORTED
+    assert event.index == 1
+    assert event.trace_id is None
+    assert event.spanweave_code is None
+    assert type(error).__name__ in event.detail
+    # `last.events` and `counts` stay consistent with each other, as they are
+    # for every other code here: the exchange on `last` carries the event.
+    assert endpoint.last is not None
+    assert endpoint.last.events == (event,)
+    assert len(endpoint.last.records.records) == 1
+
+    out, err = capfd.readouterr()
+    assert (out, err) == ("", ""), "no traceback, and nothing else either"
+
+
+def test_an_aborted_request_still_yields_its_records() -> None:
+    """A request was handled, so `serve` yields -- the records are not lost.
+
+    The two halves of this batch meet here: the yield is keyed on
+    `Endpoint.requests` moving, and an abort does not unmove it. A `serve` that
+    decided "handled" by anything the abort touches would drop a body that was
+    read (`SPEC.md` §1.5).
+    """
+    endpoint = Endpoint()
+    handled: list[int] = []
+
+    class Aborting:
+        def handle_request(self) -> None:
+            handler = FakeHandler({"Content-Length": "13", **JSON}, b'{"name": "a"}')
+            handler.wfile = Gone(BrokenPipeError(32, "Broken pipe"))
+            respond(handler, endpoint)  # type: ignore[arg-type]
+            handled.append(1)
+
+        def server_close(self) -> None:
+            return None
+
+    iterator = serve(endpoint, listener=Aborting, until=lambda: len(handled) > 0)
+    records = next(iterator)
+    assert len(records.records) == 1
+    with pytest.raises(StopIteration):
+        next(iterator)
+    assert endpoint.counts == {CLIENT_ABORTED: 1}
 
 
 # --------------------------------------------------------------------------

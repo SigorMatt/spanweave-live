@@ -27,13 +27,17 @@ above all four (`CLAUDE.md`, standing rule 4):
   `http.server.BaseHTTPRequestHandler`-shaped object: it reads
   `Content-Length` bytes, calls `handle`, and writes the status, the headers and
   the body back. The shape is a `Protocol` here, satisfied structurally by the
-  stdlib class the caller holds.
+  stdlib class the caller holds. A poster that closed before reading makes that
+  write-back fail, and that is a counted `client_aborted` event rather than a
+  traceback `socketserver` would print and nobody would count.
 - `handler_class(base, endpoint)` builds the handler **class** from the base the
   caller passes in, with every method routed to `respond`. The base class is an
   injected seam with no default, exactly as `Completion.now` and `tail`'s
   `sleep` are.
 - `serve(endpoint, listener=...)` drives a listener the caller's factory built
-  and yields one `spanweave.Records` per request handled.
+  and yields one `spanweave.Records` per request **handled** -- and nothing at
+  all for a `handle_request()` that handled none, which a bare TCP connect and
+  close is.
 
 So the seam allowlist in `tests/gates.py` was **still empty after R6**, as it was
 after R3, R4 and R5: `import http.server` lives in the caller, which is
@@ -50,7 +54,7 @@ import gzip
 import json
 import zlib
 from collections.abc import Callable, Iterator, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, BinaryIO, Final, Protocol
 
 from spanweave import Records
@@ -80,14 +84,24 @@ UNSUPPORTED_MEDIA_TYPE: Final = "unsupported_media_type"
 #: `spanweave_code` where the library is the one that said so.
 UNREADABLE_BODY: Final = "unreadable_body"
 
+#: The request was handled and the poster was gone before the answer could be
+#: written: the write-back raised a `ConnectionError`. There is no status to
+#: send -- nobody is listening for one -- so this is counted and nothing else,
+#: with the failure named in `detail`. The exchange's records still reach the
+#: consumer, because the body *was* read; what would be dropped without this
+#: code is the fact that the answer never arrived (`SPEC.md` §1.5, §7.2).
+CLIENT_ABORTED: Final = "client_aborted"
+
 #: What an accepted body answers. `{}` and not OTLP's `partialSuccess` envelope:
 #: see `SPEC.md` §7.2 for why an empty one would be a claim this receiver cannot
 #: make and a filled one would be a dialect read.
 _ACCEPTED_BODY: Final = b"{}"
 
-#: Read nothing, and said so. A request that was refused still yields, as a poll
-#: that read nothing still yields in §7.1: "nothing arrived" and "nothing was
-#: readable" are different answers and neither is an absence (`SPEC.md` §1.5).
+#: Read nothing, and said so. A request that was refused still yields one of
+#: these, as a poll that read nothing still yields in §7.1: "nothing arrived"
+#: and "nothing was readable" are different answers and neither is an absence
+#: (`SPEC.md` §1.5). It is **not** what a connection carrying no request gets:
+#: that one gets no yield at all, which is `serve`'s third answer.
 _NOTHING: Final = Records(records=(), diagnostics=(), skipped_records=0)
 
 
@@ -195,6 +209,11 @@ class Endpoint:
         The number `Event.index` counts, which is §4.1's "1-based arrival
         index" read one layer up: a request here, a chunk in §7.1, a record in
         §4.
+
+        It is also what `serve` keys its yield on -- a `handle_request()` that
+        left this number where it was handled no request and gets no yield --
+        so a caller that drives `respond` itself should know that this is the
+        only place "a request happened" is recorded.
         """
         return self._requests
 
@@ -203,7 +222,9 @@ class Endpoint:
         """The most recent exchange, or `None` before the first request.
 
         One stored object rather than a response, a records and an events
-        property that could drift apart. `serve` yields `last.records`.
+        property that could drift apart. `serve` yields `last.records` -- but
+        only when `requests` moved, because this holds the *previous* exchange
+        for a `handle_request()` that handled nothing.
         """
         return self._last
 
@@ -238,8 +259,38 @@ class Endpoint:
         exchange = self._decide(request)
         self._last = exchange
         for event in exchange.events:
-            self._counts[event.code] = self._counts.get(event.code, 0) + 1
+            self._count(event)
         return exchange
+
+    def aborted(self, exchange: Exchange, error: ConnectionError) -> Exchange:
+        """Record that the poster was gone before the answer was written.
+
+        `respond` calls this when the write-back fails, and nothing else does:
+        `handle` has already decided and counted, the body has already been
+        read, and the one fact left to report is that the answer went nowhere.
+        It is a method here rather than a branch in `respond` because
+        `Exchange` is frozen and the event has to reach `counts` *and* the
+        `events` of `last`, which are the two surfaces this class keeps
+        consistent with each other.
+
+        The returned `Exchange` is the one handed in with the `client_aborted`
+        event appended, and it becomes `last`. The records are carried through
+        untouched: the request was handled, so `serve` still yields for it and
+        nothing the reader read is lost (`SPEC.md` §1.5, §7.2).
+        """
+        event = self._event(
+            CLIENT_ABORTED,
+            f"the response could not be written: the client closed before "
+            f"reading it ({type(error).__name__}: {error})",
+        )
+        counted = replace(exchange, events=(*exchange.events, event))
+        self._last = counted
+        self._count(event)
+        return counted
+
+    def _count(self, event: Event) -> None:
+        """One event on the running total, which is bounded by the codes."""
+        self._counts[event.code] = self._counts.get(event.code, 0) + 1
 
     def _decide(self, request: Request) -> Exchange:
         refusal = self._unsupported(request)
@@ -443,9 +494,17 @@ def respond(handler: HttpHandler, endpoint: Endpoint) -> Exchange:
     touches a stream, and it still opens no socket: the handler is the caller's
     and the socket is underneath it.
 
-    It does not catch exceptions of its own, because `Endpoint.handle` raises
-    for nothing a request can carry: a body that is not JSON, not gzip, not
-    UTF-8 or not there at all is a status and an event, never a traceback.
+    It catches nothing around `endpoint.handle`, because that call raises for
+    nothing a request can carry: a body that is not JSON, not gzip, not UTF-8
+    or not there at all is a status and an event, never a traceback.
+
+    It catches `ConnectionError` around the **write-back**, because that one is
+    not about the request at all: a poster that closed before reading makes the
+    write fail, and the exception escaping here would reach
+    `socketserver.BaseServer.handle_error`, which prints a traceback to stderr
+    and counts nothing. That is `client_aborted` instead -- counted, and the
+    exchange still returned so its records reach the consumer (`SPEC.md` §1.5,
+    §7.2).
     """
     request = Request(
         method=handler.command,
@@ -457,11 +516,21 @@ def respond(handler: HttpHandler, endpoint: Endpoint) -> Exchange:
     )
     exchange = endpoint.handle(request)
     response = exchange.response
-    handler.send_response(response.status)
-    handler.send_header("Content-Type", response.content_type)
-    handler.send_header("Content-Length", str(len(response.body)))
-    handler.end_headers()
-    handler.wfile.write(response.body)
+    try:
+        handler.send_response(response.status)
+        handler.send_header("Content-Type", response.content_type)
+        handler.send_header("Content-Length", str(len(response.body)))
+        handler.end_headers()
+        handler.wfile.write(response.body)
+    except ConnectionError as error:
+        # `BrokenPipeError`, `ConnectionResetError` and
+        # `ConnectionAbortedError` are the three the peer's disappearance comes
+        # back as, and `ConnectionError` is their common base and a builtin --
+        # so the family is caught by name with no `socket` import, which
+        # standing rule 4 bans under this package. The headers are flushed by
+        # `end_headers` on the stdlib handler, so either call can be the one
+        # that raises; both are inside.
+        return endpoint.aborted(exchange, error)
     return exchange
 
 
@@ -549,22 +618,40 @@ def serve(
     CLI binds the port a human asked for. It is called once, and the listener
     is closed when the iteration ends, however it ends.
 
-    **One yield per request handled**, refusals included, with
-    `spanweave.Records` that is empty rather than absent -- §7.1's rule for a
-    poll that read nothing, for the same reason: "nothing arrived" and "nothing
-    was readable" are different answers, and `Endpoint.last` is where the
-    second one is visible beside the yield.
+    **One yield per request handled, and nothing at all for a
+    `handle_request()` that handled none.** Three answers, not two: a request
+    that was read yields its records; a refusal is a request handled and yields
+    `spanweave.Records` that is empty rather than absent, which is §7.1's rule
+    for a poll that read nothing ("nothing arrived" and "nothing was readable"
+    are different answers, and `Endpoint.last` is where the second is visible
+    beside the yield); and a connection that carried no request -- a bare TCP
+    connect and close -- yields nothing, because there is nothing to be empty
+    about.
+
+    "Was a request handled" is decided from `Endpoint.requests` **moving**,
+    not from `Endpoint.last` being non-`None`. Keying it on `last` is what this
+    function used to do and it was wrong in the one way that matters: `last`
+    holds the *previous* exchange, so a `handle_request()` that handled nothing
+    re-yielded that request's object and the consumer saw the same records
+    twice (`reviews/2026-10-07-close.md`, T-R6-4).
 
     `until` is the caller's stop condition, asked once before each request;
     `None` serves forever. It is the caller's because "stop after this many" is
     a policy (`SPEC.md` §1.2) and because a test needs a stop that is not a
-    timeout.
+    timeout. It is asked again before the next `handle_request()` whether or
+    not the last one yielded -- which is what keeps a skipped yield from being
+    a loop with no exit: a real `handle_request()` blocks until a connection
+    arrives, so "no request on that one" means "wait for the next", and `until`
+    is where the waiting stops.
     """
     server = listener()
     try:
         while until is None or not until():
+            handled = endpoint.requests
             server.handle_request()
             last = endpoint.last
-            yield _NOTHING if last is None else last.records
+            if last is None or endpoint.requests == handled:
+                continue
+            yield last.records
     finally:
         server.server_close()

@@ -83,8 +83,9 @@ specifies it, including the two traps worth knowing before you rely on them:
 Exit codes (`SPEC.md` §8.6): `0` the input ended and everything was delivered ·
 `1` it could not start · `2` usage · `3` it ran to the end but something it had
 could not be delivered (`not_written`, `delta_unsent`, `consumer_error`) ·
-`130` interrupted. A refusal, a cap, a late arrival, a `415` and a `400` are
-**observations** and leave the code at `0`.
+`130` interrupted. A refusal, a cap, a late arrival, a `415`, a `400` and a
+client that aborted before reading its answer are **observations** and leave
+the code at `0`.
 
 ## The API
 

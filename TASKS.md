@@ -786,8 +786,73 @@ one not. `CHANGELOG.md:511`, `:607` and `:766` say it too, and so do
 inside a dated entry or a section dated to its own batch. The two behaviour
 threads the review raised (`serve` re-yielding the previous request's `Records`;
 a client that aborts before reading leaking an uncounted `socketserver`
-traceback) are **`SPEC.md` §7.2 decisions, not patches**, and are left for the
-maintainer under `CONTRIBUTING.md`'s "Halt, do not improvise".
+traceback) were **`SPEC.md` §7.2 decisions, not patches**, and were left for the
+maintainer under `CONTRIBUTING.md`'s "Halt, do not improvise". **The maintainer
+decided both on 2026-10-07 and the commit that follows this one closed them**;
+the next section is their disposition.
+
+### The two behaviour threads, decided and closed (2026-10-07)
+
+**Not a batch of the series either.** The series closed at `86183b0`, `7ca6e91`
+made the record true, and this is the second follow-up commit on `receiver`,
+derived parent **`7ca6e91`**. It is the first of the two that changes
+**behaviour**, so the whole bar applies to it: `SPEC.md` in the same commit, the
+new tests confirmed red on the derived parent, and a named mutation per
+behaviour.
+
+These are the only two findings of any of the three reviews that were about
+behaviour rather than prose. Both were raised as threads, both were binned as
+`SPEC.md` §7.2 **decisions** rather than patches, and the maintainer took them
+on 2026-10-07. They are recorded here and **not** in *Decisions taken* above:
+that table is the twelve decisions of the series, counted in its own first line,
+and a post-series decision filed in it would make that count false — which is
+the class of defect **B3** closed.
+
+The decision, in the maintainer's terms: a connection that carried no request
+yields **nothing at all**, with "was a request handled" read from
+`Endpoint.requests` moving rather than from `Endpoint.last`; and a client that
+aborts before the response is written is an **event with a code**, counted, with
+no traceback on stderr and the records still delivered.
+
+| # | what it was | disposition |
+|---|---|---|
+| T-R6-4 | `serve` yielded `endpoint.last.records` after every `handle_request()`, so one that handled nothing re-yielded the **previous** request's object. Reachable from outside by a bare TCP connect-and-close: `requests` stays where it was, nothing is counted, and the consumer gets the prior trace's records a second time. Mitigated only by double-routing happening to be graph-idempotent | **closed.** `serve` now decides "was a request handled" from `Endpoint.requests` **moving**, and yields nothing — not a stale object, not an empty placeholder — for a `handle_request()` that handled none. Three answers where there were two, stated in §7.2: a request handled yields; a **refusal** is a request handled and yields empty (§1.5, unchanged); a connection that carried no request yields nothing. `until` is still asked before each `handle_request()`, which is what keeps a skipped yield from being a loop with no exit |
+| T-R6-5 | a client that aborted before reading made the response write raise, the exception escaped `respond`, `socketserver.BaseServer.handle_error` printed a **traceback to stderr**, and `Endpoint.counts` recorded nothing. Nothing was dropped in substance — the records still reached the consumer — but an uncounted traceback on the error stream is the shape standing rule 5 exists to prevent, and this module's own `400` path already did it correctly | **closed.** A third code, `client_aborted`, beside `unsupported_media_type` and `unreadable_body`. `respond` catches `ConnectionError` around the **write-back only** (never around `endpoint.handle`) and calls the new `Endpoint.aborted(exchange, error)`, which counts the event and puts it on the exchange that becomes `last`, so `counts` and `last.events` stay consistent as they are for every other code. There is no status — nobody is listening for one — and the exchange is still returned, so the records reach the consumer and `serve` still yields for it. The exit code stays `0`: a poster that went away is an observation (§8.6) |
+
+The evidence, measured for this commit:
+
+- **Red on the derived parent** `7ca6e91`, in a worktree under the scratchpad:
+  **7 failed / 43 passed** in `tests/test_endpoint.py`. Three fail
+  `Failed: DID NOT RAISE StopIteration` (the stale re-yield), four fail with the
+  `ConnectionError` escaping `respond`. One **disclosed step**, because the
+  R3a lesson is that an undisclosed one is worse than a wrong number
+  (**B7**): the new tests import `CLIENT_ABORTED`, so the parent run is
+  reachable only after adding that constant — and nothing else — to the parent
+  tree, or the module does not import and nothing is collected.
+- **A named mutation per behaviour, each shown caught and reverted.** *A `serve`
+  that yields the previous exchange when nothing was handled* — the behaviour
+  that was there — takes down the three `serve` tests. *A `respond` that counts
+  the abort but still lets it escape* takes down the four abort tests; it is the
+  more interesting of the two, because counting without catching looks like a
+  fix and still leaves the traceback on stderr.
+- **50 consecutive runs of the two behaviours' tests, 50 green**, 7 items each
+  (`pytest-repeat` is not a dependency here, so a shell loop).
+- **The real client abort, 200 runs out of 200** through this module's own
+  layers on Linux: `SO_LINGER (1, 0)` and close forces an RST, the queued
+  request bytes are still delivered to the read, and `counts` is exactly
+  `{"client_aborted": 1}` with nothing on stderr. That is a **measurement and
+  not the test**, for the reason §7.2 now states: whether an RST discards the
+  bytes queued for a read is the operating system's answer, BSD discards them,
+  and `make check` runs this suite on macOS too.
+
+One existing assertion was **changed rather than added to**:
+`test_a_listener_that_handled_nothing_still_yields` asserted "the yield is empty
+rather than absent", which was the defect and not the rule — the empty
+placeholder only ever appeared before the *first* request, which is what made it
+look like one. It is rewritten as
+`test_a_listener_that_handled_nothing_yields_nothing`, keeping its point that
+`Endpoint.last` is `None` before the first request and adding the ask-count that
+guards the infinite-loop hazard.
 
 ---
 

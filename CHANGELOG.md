@@ -11,6 +11,68 @@ citation is dated history, resolvable at `git show b500342:WORKPLAN.md`.
 
 ## Unreleased
 
+### The endpoint's two behaviour threads, decided and closed (2026-10-07)
+
+**The first change of behaviour since the series closed.** The close review
+(`reviews/2026-10-07-close.md`) found exactly two things in seven commits that
+were about behaviour rather than prose, both in `spanweave_live/endpoint.py`, and
+binned both as `SPEC.md` §7.2 **decisions** rather than patches under
+`CONTRIBUTING.md`'s "Halt, do not improvise". The maintainer decided them on
+2026-10-07; this is them. Derived parent `7ca6e91`; both behaviours have a test
+confirmed red there and a named mutation shown caught.
+
+Fixed
+
+- **A connection that carried no request now yields nothing** (**T-R6-4**).
+  `serve` yielded `endpoint.last.records` after every `handle_request()`, so one
+  that handled nothing re-yielded the **previous** request's object — reachable
+  from outside by a bare TCP connect-and-close, with `Endpoint.requests` not
+  moving, nothing counted, and the consumer handed the prior trace's records a
+  second time. Nothing visible broke only because routing the same records twice
+  happens to be graph-idempotent, which is luck and not design. "Was a request
+  handled" is now read from `Endpoint.requests` **moving**, and there are
+  **three** answers where §7.2 described two: a request handled yields its
+  records; a **refusal** is a request handled and still yields `Records` that is
+  empty rather than absent (§1.5, unchanged); a connection that carried no
+  request yields nothing at all — not a stale object, and not an empty
+  placeholder, because there is nothing for one to be empty about. `until` is
+  still asked before each `handle_request()`, which is what keeps a skipped
+  yield from being a loop with no exit.
+- **A client that aborts before reading is a counted event** (**T-R6-5**). The
+  response write raised, the exception escaped `respond`,
+  `socketserver.BaseServer.handle_error` printed a **traceback to stderr**, and
+  `Endpoint.counts` recorded nothing. The records still reached the consumer, so
+  nothing was dropped in substance — but an uncounted traceback on the error
+  stream is the shape standing rule 5 exists to prevent, and this module's own
+  `400` path already did it correctly. `respond` now catches `ConnectionError`
+  around the **write-back only**, never around `endpoint.handle`.
+
+Added
+
+- **`CLIENT_ABORTED`** (`"client_aborted"`), the endpoint's third code and the
+  first addition to `spanweave_live.__all__` since R6. There is no status for it
+  — nobody is listening for one — and the exit code stays `0`, because a poster
+  that went away is an observation and not a graph the run failed to hand over
+  (`SPEC.md` §8.6).
+- **`Endpoint.aborted(exchange, error)`**, which counts the event and puts it on
+  the exchange that becomes `last`, so `Endpoint.counts` and
+  `Endpoint.last.events` stay consistent with each other as they are for every
+  other code. A method rather than a branch in `respond`, because `Exchange` is
+  frozen and the event has to reach both surfaces.
+- **Seven tests in `tests/test_endpoint.py`**, and one **rewritten**:
+  `test_a_listener_that_handled_nothing_still_yields` asserted "the yield is
+  empty rather than absent", which was the defect rather than the rule — the
+  empty placeholder only ever appeared before the *first* request. It is now
+  `test_a_listener_that_handled_nothing_yields_nothing`, keeping its point that
+  `Endpoint.last` is `None` before the first request. The bare connection is held
+  by a **real socket**; the abort is held by a handler whose `wfile.write`
+  raises, because whether an RST discards the bytes already queued for the
+  server's read is the operating system's answer — a real abort gives
+  `counts == {"client_aborted": 1}` 200 runs out of 200 on Linux, and that is
+  recorded as a measurement rather than shipped as a test that would decide
+  differently on the macOS job. §7.2 says which fact is held by which kind of
+  test.
+
 ### The record made true — the close review's eight blocking findings (2026-10-07)
 
 **Prose only.** No behaviour changed, no test changed, and nothing was added to

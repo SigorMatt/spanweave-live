@@ -76,8 +76,10 @@ EXIT_INTERRUPTED: Final = 130
 
 #: The three codes that mean "it had something and could not hand it over",
 #: which is what exit 3 is about -- and the only thing it is about. A refusal, a
-#: cap, a late arrival, a truncation, a 415 and a 400 are observations and leave
-#: the exit code at 0 (`SPEC.md` §1.3, §8.6).
+#: cap, a late arrival, a truncation, a 415, a 400 and a `client_aborted` are
+#: observations and leave the exit code at 0 (`SPEC.md` §1.3, §8.6). A poster
+#: that went away before reading its answer is not a graph this run failed to
+#: hand over: the records it posted were read and routed like any others.
 UNDELIVERED: Final = ("not_written", DELTA_UNSENT, CONSUMER_ERROR)
 
 #: What a `forgotten` costs where files are being written, said in full because
