@@ -11,6 +11,57 @@ citation is dated history, resolvable at `git show b500342:WORKPLAN.md`.
 
 ## Unreleased
 
+### The sixth sentence, and three in the tests (2026-10-07)
+
+**Prose only.** No behaviour changed, and **no test's logic or assertions
+changed** — only docstring and comment text — so the bar's *confirmed red on the
+parent* and *named mutation* lines do not apply to this entry, and no worktree
+and no parent run were made. Derived parent `1b69c2b`. This closes the residue
+`7ca6e91` disclosed when it closed **B5** of `reviews/2026-10-07-close.md` at
+five sites: the sixth site it found and left, and the three looser instances
+under `tests/`. The literal they are all held against is `tests/gates.py:237`,
+`SEAMS = {"real.py": frozenset({"time", "http.server"})}` — one file, two
+modules — read there for this entry rather than copied from the last one.
+
+Fixed
+
+- **The sixth present-tense "the seam allowlist stays empty" claim**, and the
+  only one of the four in a **shipped** module:
+  `spanweave_live/completion.py`'s module docstring, which is the only one of the
+  four a library user reads. Its local point is unchanged — `now` has no default,
+  so *this* module imports no clock — and the clause that was false now says what
+  is true: `completion.py` needs **no** entry in the allowlist, whose one entry
+  is `real.py`, for `time` and `http.server` (§8.2).
+- **Three looser instances in test prose**, each now stating the true shape and
+  each keeping its own argument. `tests/test_completion.py`'s rationale for
+  requiring `now` is about keeping `completion.py` out of the allowlist, which is
+  now what it says instead of "keeps the allowlist empty".
+  `tests/test_ingest.py`'s "after this batch" claim is dated to **R5**, its own
+  batch, with R7 named as where the one entry finally arrived; and
+  `tests/test_gates.py`'s "still empty after the batch that was supposed to grow
+  it" is dated to **R3**, which is the batch that paragraph is about, with R7
+  named as what grew it. Dating them is what makes each one's point about a
+  declined prediction land rather than read as false — the same fix `7ca6e91`
+  made at the two sentences of that shape it reached.
+- **`TASKS.md`'s disclosure of the four**, which said they were still standing.
+  It now says they are closed by **this commit**: a commit cannot contain its own
+  sha, so the record says "this commit" and a reader resolves it with `git log`
+  or `git blame` on that line rather than being handed a sha that would be wrong.
+  The same passage's `CHANGELOG.md` citations were **stale** — `:511`, `:607` and
+  `:766`, moved by the entries added above them — and now name the four dated
+  entries they sit in, measured at this tip, with a fifth (R0's, "empty at R0")
+  and `SPEC.md:2017` added. Those, `SPEC.md:1672` and `:1676` are all **correct**
+  and all untouched, because each sits inside a dated entry or a section dated to
+  its own batch; §7.2's names R7's entry two sentences later.
+
+Nothing under `spanweave_live/` moved but `completion.py`'s module docstring, and
+`SPEC.md` is untouched, because no behaviour changed and every sentence there
+that says the allowlist is empty is dated to the batch it is about. `make check`
+green (ruff, `ruff format --check`, mypy --strict on 9 source files, **657
+passed**, gates/pins 68). `make conformance` and `make install-check` were not
+run and are not needed: no behaviour, no packaging, no dependency and no pin
+moved.
+
 ### The endpoint's two behaviour threads, decided and closed (2026-10-07)
 
 **The first change of behaviour since the series closed.** The close review

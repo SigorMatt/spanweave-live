@@ -760,10 +760,12 @@ def test_the_ingest_events_are_routings_event_and_carry_no_new_field() -> None:
 def test_ingest_needs_no_entry_in_the_seam_allowlist() -> None:
     """R5's seam question, asserted rather than asserted-about.
 
-    `sleep` and `now` have **no defaults**, so no module under
-    `spanweave_live/` imports `time` and the allowlist stays empty after this
-    batch, as it did after R3 and R4 (`SPEC.md` §1.4, §5.2, §7.1). The real
-    `time.sleep` is bound by R7's CLI.
+    `sleep` and `now` have **no defaults**, so `ingest.py` imports no `time`,
+    and the allowlist was **still empty after R5**, as it had been after R3 and
+    R4 (`SPEC.md` §1.4, §5.2, §7.1). The real `time.sleep` is bound by R7's
+    CLI, which is where the one entry the allowlist has ever had arrived:
+    `{"real.py": frozenset({"time", "http.server"})}`, one file and two modules
+    (`tests/gates.py:237`, `SPEC.md` §8.2). `ingest.py` is not in it.
     """
     source = gates.PACKAGE_ROOT / "ingest.py"
     assert source.exists()

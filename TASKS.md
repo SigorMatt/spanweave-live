@@ -741,7 +741,7 @@ sentence was:
 | B2 | T5 naming `flush`/`forget` as event codes, and §6.5 | **T5** — they are `Subscriptions` methods; the surface is §6.1 |
 | B3 | "Thirteen rows" in the decisions log, twice | *Decisions taken*, and `CHANGELOG.md` — **twelve**, counted |
 | B4 | "each [plan citation] sits inside a dated batch entry" | **R9** — fourteen survive, thirteen are dated, and the fourteenth (`CHANGELOG.md:7`) is re-pointed at this file |
-| B5 | five present-tense "the seam allowlist is empty" claims | `CLAUDE.md` rule 4, `SPEC.md` §5.2, `spanweave_live/ingest.py`, `endpoint.py` ×2 — each states the one entry, and `CLAUDE.md`'s module list gains `http.server` |
+| B5 | five present-tense "the seam allowlist is empty" claims | `CLAUDE.md` rule 4, `SPEC.md` §5.2, `spanweave_live/ingest.py`, `endpoint.py` ×2 — each states the one entry, and `CLAUDE.md`'s module list gains `http.server`. A sixth site (`spanweave_live/completion.py`) and three looser instances under `tests/` were disclosed below rather than fixed, because that commit's scope was three docstrings; the paragraph below records all four **closed** |
 | B6 | §8.7's "every test in it runs the CLI as a process" | `SPEC.md` §8.7 and the **R7** entry — 72 of 81 collected items spawn a process, nine read the package |
 | B7 | six recorded figures that did not re-derive | **R5a**, **R3a**, **R6**, **R7**, **R8** entries, each with the derived parent and the corrected number |
 | B8 | "10⁶ is 230.5 MB" sourced to `SPEC.md` §5.5 | **R3a** — attributed to R3a's own measurement; §5.5 is cited only for what it says |
@@ -773,20 +773,33 @@ measured here, and how:
   own commit body names.
 - **`FORGOTTEN`'s absence at `afc6a7a`** — `git show`, no worktree needed.
 
-**What this commit did not close, and why.** Its scope was prose, and three
+**What `7ca6e91` did not close, and what has.** Its scope was prose, and three
 files under `spanweave_live/` plus no test at all. So four more sentences of
-B5's shape are still standing, disclosed here rather than left to be found:
-`spanweave_live/completion.py:19` still says the allowlist "stays empty" in the
-present tense, which is the same defect as the three that were fixed and was
-missed by the review's own table of five; and `tests/test_completion.py:166`,
-`tests/test_ingest.py:764` and `tests/test_gates.py:263` each carry a looser
-version of it in a docstring or comment, two of them dated to their own batch and
-one not. `CHANGELOG.md:511`, `:607` and `:766` say it too, and so do
-`SPEC.md:1672` and `:1676`; all five of those are **correct**, because each sits
-inside a dated entry or a section dated to its own batch. The two behaviour
-threads the review raised (`serve` re-yielding the previous request's `Records`;
-a client that aborts before reading leaking an uncounted `socketserver`
-traceback) were **`SPEC.md` §7.2 decisions, not patches**, and were left for the
+B5's shape were left standing, disclosed here rather than left to be found:
+`spanweave_live/completion.py` said the allowlist "stays empty" in the present
+tense, which is the same defect as the three that were fixed, is the only one of
+the four in a **shipped** module, and was missed by the review's own table of
+five; and `tests/test_completion.py`, `tests/test_ingest.py` and
+`tests/test_gates.py` each carried a looser version of it in a docstring or
+comment, two of them dated to their own batch and one not. **All four are closed
+by this commit** — the third follow-up on `receiver`, derived parent `1b69c2b` —
+each now stating the shape the allowlist actually has,
+`{"real.py": frozenset({"time", "http.server"})}`, one file and two modules, read
+at `tests/gates.py:237`; the two that were "after this batch" claims are dated to
+**R5** (`test_ingest.py`) and **R3** (`test_gates.py`), the batches each is about,
+with R7 named as what finally grew it. A commit cannot contain its own sha, so
+this paragraph says "this commit" rather than naming one, and a reader resolves it
+with `git log` or `git blame` on this line. `CHANGELOG.md` says it too, in five
+dated entries — `:509` (R6), `:624` (R5a), `:720` (R5), `:879` (R3) and `:1180`
+(R0) as measured at this tip, where the earlier citations `:511`, `:607` and
+`:766` named three of the five and were moved by entries added above them — and
+so do `SPEC.md:1672`, `:1676` and `:2017`. All of those are **correct** and all
+are left alone, because each sits inside a dated entry or a section dated to its
+own batch; §7.2's at `:2017` names R7's entry two sentences later.
+
+The two behaviour threads the review raised (`serve` re-yielding the previous
+request's `Records`; a client that aborts before reading leaking an uncounted
+`socketserver` traceback) were **`SPEC.md` §7.2 decisions, not patches**, and were left for the
 maintainer under `CONTRIBUTING.md`'s "Halt, do not improvise". **The maintainer
 decided both on 2026-10-07 and the commit that follows this one closed them**;
 the next section is their disposition.

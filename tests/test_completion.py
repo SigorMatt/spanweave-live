@@ -163,7 +163,9 @@ def test_now_has_no_default_because_no_module_here_holds_a_clock():
 
     A default would mean a module under `spanweave_live/` importing `time`,
     which would mean an entry in `tests/gates.py`'s seam allowlist. Requiring
-    the argument costs the caller one line and keeps the allowlist empty.
+    the argument costs the caller one line and keeps `completion.py` out of that
+    allowlist, whose one entry is `real.py`, for `time` and `http.server`
+    (`tests/gates.py:237`).
     """
     with pytest.raises(TypeError):
         Completion(policies=(Quiet(1.0),))  # type: ignore[call-arg]

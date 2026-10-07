@@ -15,8 +15,9 @@ question `RootEnded` asks, and the event codes -- and it imports nothing from
 router's, because they are what a router has (`SPEC.md` §5.1).
 
 **No clock here.** `now` is the caller's `Callable[[], float]`, with no default,
-so no module under `spanweave_live/` imports `time` and the seam allowlist in
-`tests/gates.py` stays empty (`SPEC.md` §1.4, §5.2). Every duration is measured
+so this module imports no `time` and needs no entry in the seam allowlist in
+`tests/gates.py` -- whose one entry is `real.py`, for `time` and `http.server`
+(`tests/gates.py:237`, `SPEC.md` §1.4, §5.2, §8.2). Every duration is measured
 on that clock and never on a span's timestamps: those are the observed system's
 clock, and a receiver decision that depended on two clocks agreeing would
 complete traces early or never (`SPEC.md` §5.2).

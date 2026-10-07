@@ -260,8 +260,11 @@ def test_the_real_allowlist_names_one_seam_file_and_nothing_else():
     # R3 was the batch expected to need the first entry — completion is a
     # timeout policy, and a timeout policy wants a clock — and it needed none:
     # `Completion.now` has no default, so the caller holds the import
-    # (`SPEC.md` §5.2). The allowlist is still empty after the batch that was
-    # supposed to grow it.
+    # (`SPEC.md` §5.2). The allowlist was **still empty after R3**, the batch
+    # that was supposed to grow it, and what finally grew it was R7 —
+    # `{"real.py": frozenset({"time", "http.server"})}`, one file and two
+    # modules, which is the literal this test asserts below
+    # (`tests/gates.py:237`).
     #
     # R5 (`sleep`) and R6 (the listener) were the other two candidates R0 named
     # and both declined it too. R6 is the one worth reading twice, because this
