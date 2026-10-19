@@ -44,6 +44,7 @@ from tests import gates
 # Gate A's own corpus helpers and its comparison, imported rather than
 # reimplemented (`SPEC.md` §4.7, §8.7).
 from tests.test_conformance import loaded, rendering_id, renderings, undigested
+from tests.test_zoo_gate import json_bodies, raw_requests
 
 REPO = pathlib.Path(__file__).resolve().parent.parent
 
@@ -210,6 +211,39 @@ def test_a_document_posted_to_serve_is_written_as_gate_As_graph(path, tmp_path) 
     assert written.read_bytes() == rendering.graph
 
 
+def test_protobuf_posted_to_serve_is_written_as_the_batch_graph(tmp_path) -> None:
+    """What a stock exporter sends, through a socket the CLI bound (`§8.1`).
+
+    Z1's real run as its exporter sent it: two `application/x-protobuf` bodies,
+    two requests. The file written at the end is the batch graph of the same
+    export's JSON bodies, which is the zoo gate's comparison (`§4.8`) reached
+    through a process.
+    """
+    capture = "z1/2026-10-13-real"
+    requests = raw_requests(capture)
+    joined = b"\n".join(json_bodies(capture)) + b"\n"
+    batch = spanweave.build(joined)
+    out = tmp_path / "out"
+    with serving("--out", str(out), "--requests", str(len(requests))) as server:
+        # A guard and not a schedule: nothing here waits on it when the
+        # receiver is right. A protobuf body read as JSON lines instead would
+        # put hundreds of `malformed_record` lines on a stderr pipe this test
+        # drains only at exit, the process would block on the full pipe before
+        # answering, and without a bound the test would hang there rather
+        # than fail.
+        statuses = [
+            server.post(
+                request.body, content_type=str(request.content_type), timeout=60
+            )[0]
+            for request in requests
+        ]
+    assert statuses == [200] * len(requests)
+    assert server.returncode == 0, server.stderr.decode()
+    written = out / f"{batch.trace_id}.json"
+    assert written.read_bytes() == spanweave.dumps(undigested(batch))
+    assert sorted(p.name for p in out.iterdir()) == [written.name]
+
+
 class serving:
     """`spanweave-live serve --port 0`, with the bound port read off stderr.
 
@@ -252,8 +286,9 @@ class serving:
         body: bytes,
         content_type: str = "application/json",
         target: str = "/v1/traces",
+        timeout: float | None = None,
     ) -> tuple[int, bytes]:
-        connection = http.client.HTTPConnection(self.host, self.port)
+        connection = http.client.HTTPConnection(self.host, self.port, timeout=timeout)
         try:
             connection.request("POST", target, body, {"Content-Type": content_type})
             response = connection.getresponse()
@@ -261,7 +296,12 @@ class serving:
         finally:
             connection.close()
 
-    def __exit__(self, *_: object) -> None:
+    def __exit__(self, failure: type[BaseException] | None, *_: object) -> None:
+        if failure is not None:
+            # The block failed, so the requests the process is still waiting
+            # for will never come: end it rather than wait out the timeout
+            # below and leave it running.
+            self.process.kill()
         self.stdout, rest = self.process.communicate(timeout=120)
         self.stderr = (
             b"".join(json.dumps(line).encode() + b"\n" for line in self.prologue) + rest

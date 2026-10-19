@@ -18,7 +18,8 @@ completed-trace book makes it forget one, and R6 the OTLP/HTTP endpoint and the
 two codes it refuses with. The endpoint's **third** code, `CLIENT_ABORTED`, was
 added after the series closed and is not a refusal: a poster that goes away
 before reading its answer is an event with a code, not a traceback nobody
-counted (`SPEC.md` §7.2).
+counted (`SPEC.md` §7.2). The zoo series' V1 adds `PROTOBUF_MEDIA_TYPE`, the
+second media type the endpoint serves: what a stock exporter sends.
 
 **R7 adds nothing here**, which is the shape of that batch rather than an
 omission: the CLI (`SPEC.md` §8) is a *caller* of everything above, and its one
@@ -54,6 +55,7 @@ from spanweave_live.endpoint import (
     CLIENT_ABORTED,
     GZIP_ENCODING,
     JSON_MEDIA_TYPE,
+    PROTOBUF_MEDIA_TYPE,
     TRACES_TARGET,
     UNREADABLE_BODY,
     UNSUPPORTED_MEDIA_TYPE,
@@ -112,6 +114,7 @@ __all__ = [
     "JSON_MEDIA_TYPE",
     "LATE_ARRIVAL",
     "NOT_WRITTEN",
+    "PROTOBUF_MEDIA_TYPE",
     "QUIET",
     "REFUSED",
     "REFUSED_AT_CAP",

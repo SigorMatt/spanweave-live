@@ -544,7 +544,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     served = commands.add_parser(
         "serve",
-        help="receive OTLP/HTTP JSON over a socket this process binds",
+        help="receive OTLP/HTTP, JSON or protobuf, over a socket this process binds",
         description=f"Serve POST /v1/traces on one socket. {_FROZEN}",
     )
     served.add_argument(

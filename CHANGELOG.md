@@ -11,7 +11,65 @@ citation is dated history, resolvable at `git show b500342:WORKPLAN.md`.
 
 ## Unreleased
 
-### V0 — the pins move to the wire series' merge, and the zoo is a gate (2026-10-19)
+### V1 — the endpoint serves what a stock exporter sends (2026-10-19)
+
+Derived parent `28fb029`. The zoo series' second batch (`WORKPLAN.md` V1),
+answering the zoo's `PROBES.md` L1: before it, the receiver answered `415` to
+every export a stock exporter sent.
+
+Changed
+
+- **`POST /v1/traces` with `Content-Type: application/x-protobuf` is served.**
+  The body, inflated if `gzip`, goes whole to `spanweave.read_protobuf` (the
+  reader's half, spanweave W1), and its records are routed exactly as a JSON
+  body's are. `application/json` is unchanged and still goes to
+  `Framer.document`. The `Content-Type` names the reader; the bytes are never
+  sniffed. Nothing under `spanweave_live/` imports a protobuf runtime, and a
+  test holds that. New public name: `PROTOBUF_MEDIA_TYPE`.
+- **§7.2's five checks are five, with two media types.** The
+  `unsupported_media_type` detail names both. A protobuf body that does not
+  parse is a `400` with `unreadable_body` by §7.2's existing second case, and
+  no new one: `read_protobuf` answers it as one `malformed_record` and no
+  record. An empty protobuf body is an empty request and a `200`. Every answer
+  is still `{}` or `{"code": ...}` as `application/json`, whatever the
+  request's media type.
+- `spanweave-live serve --help` and `README.md`'s `serve` line name both media
+  types. `SPEC.md` §7.2, §8.1 and §4.8 amended.
+
+Added
+
+- **The zoo gate replays every capture a second time, from its raw bodies**:
+  the exporter's own protobuf, in `forwards` order, through `Endpoint.handle`
+  as the manifest records each request. Every body is answered `200` with the
+  zoo's count for its JSON pair. The graph written equals the JSON replay's
+  byte for byte on all twelve, Z4's two included.
+- `tests/test_endpoint.py`: each of the zoo's 29 raw bodies is POSTed over the
+  socket and answered `200`, and routes as many records as its JSON pair. Each
+  truncated by one byte is `400`. Also covered: gzip over protobuf, both media
+  types matched as HTTP matches a header, and the header choosing the reader.
+  `tests/test_cli.py`: Z1's real run, posted as protobuf to
+  `spanweave-live serve`, is written as the batch graph. A test reads the
+  number 29 back from §7.2 and recounts it.
+- `tests/test_cli.py`'s `serving` helper now takes an optional `timeout` on a
+  post, and it kills the process when its block fails. Without these, a
+  mutation that floods stderr deadlocked the new CLI test on the unread pipe
+  instead of failing it.
+
+Tests red on the parent (`28fb029`, worktree under the scratchpad): 92. These
+are the 29 socket posts, the 29 truncations, both zoo-gate raw tests on all
+twelve, the §7.2 citation, the CLI test, and eight endpoint test cases
+(415 detail ×3, media type, gzip, truncated, header-names-the-reader, the
+constant). Mutations shown caught:
+- the protobuf body handed to `Framer.document` instead of `read_protobuf`:
+  red on the zoo gate's raw replay (24) and on the 29 socket posts;
+- a protobuf body answered `200` without being read: red on `routed` in the
+  same places;
+- the gzip body handed to `read_protobuf` un-inflated: red (gzip test);
+- the reader chosen by the raw header instead of the normalized media type:
+  red (media-type test);
+- the refusal detail naming JSON alone: red (415 detail ×3).
+
+the pins move to the wire series' merge, and the zoo is a gate (2026-10-19)
 
 Derived parent `0de9f55`. The zoo series' first batch (`WORKPLAN.md` V0).
 

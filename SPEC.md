@@ -859,6 +859,17 @@ The table is the test's measurement, and the test reads it from here and
 compares it with what it measured, so a row that moves moves in this file in
 the commit that moves it, with the reason.
 
+**Every capture is replayed a second time, from its raw bodies** (V1): the
+exporter's own `application/x-protobuf` bodies, in the order the manifest's
+`forwards` list sent them, each handed to `Endpoint.handle` as the request its
+manifest records (§7.2), then the same `Router` and the same end-of-input tick.
+Each body is answered `200` and yields the zoo's count for its JSON pair, and
+the graph written is the JSON replay's **byte for byte**, on every row of the
+table — Z4's two included, because the comparison is with what the JSON
+replay wrote and not with the batch graph, so the protobuf path is held to the
+JSON path and nothing else, and the batch that moves Z4 moves both sides
+together.
+
 **Two rows are short, and that is the receiver's behaviour at this pin, not a
 tolerance.** Z4's root span is claimed by no adapter (the zoo's `PROBES.md`
 S1), so §4.2 gives it no trace id and it goes to the no-trace builder (§4.3):
@@ -1886,12 +1897,19 @@ in the workflow, so the claim and the thing that proves it fail together.
 ### 7.2 The OTLP/HTTP endpoint
 
 The other ingest: an exporter POSTs a body instead of writing a file. Same
-answer to the section's one question — the bytes reach the framer — and one
+answer to the section's one question — the bytes reach the reader — and one
 different method for getting there, which is the whole of this section's risk.
+A body comes in **two media types**, and each has its reader: OTLP/HTTP JSON
+goes to `Framer.document`, and OTLP/HTTP protobuf — what a stock exporter
+sends every export as — goes to `spanweave.read_protobuf` (V1; the zoo's
+`PROBES.md` L1, answered by the reader's half in spanweave's W1). Before V1
+this endpoint served JSON alone and answered `415` to every export a stock
+exporter sent.
 
 ```python
 TRACES_TARGET = "/v1/traces"
 JSON_MEDIA_TYPE = "application/json"
+PROTOBUF_MEDIA_TYPE = "application/x-protobuf"
 GZIP_ENCODING = "gzip"
 UNSUPPORTED_MEDIA_TYPE = "unsupported_media_type"
 UNREADABLE_BODY = "unreadable_body"
@@ -1956,10 +1974,10 @@ exception named below.
 
 #### Bodies go to `document`, and that is the batch's only hard rule
 
-A POST body is a whole document, so it goes to **`Framer.document`** and never
-to `Framer.push` (§3.3). The reason this is written as a rule and tested as one
-is that the wrong method does not fail: a pretty-printed export whose body ends
-in a newline reads *identically* through `push` — the same records, no
+A JSON POST body is a whole document, so it goes to **`Framer.document`** and
+never to `Framer.push` (§3.3). The reason this is written as a rule and tested
+as one is that the wrong method does not fail: a pretty-printed export whose
+body ends in a newline reads *identically* through `push` — the same records, no
 diagnostic, byte for byte — because the reader's container detection runs per
 call and a whole arrival is one call. The corpus' two OTLP container renderings
 both end in a newline, so a `push` here passes a sweep over the corpus as it
@@ -1983,14 +2001,49 @@ have found.
 so an endpoint's framer holds nothing between requests. That is asserted, not
 assumed: `Framer.pending_bytes == 0` after every request in every test here.
 
+#### A protobuf body goes to `read_protobuf`, and the receiver transcodes nothing
+
+A body declared `application/x-protobuf` is handed, inflated if it said
+`gzip`, to **`spanweave.read_protobuf`**, whole, and its `Records` are what the
+exchange carries and what `serve` yields — routed from there exactly as a JSON
+body's are. It does not pass through the framer: a protobuf body is not lines,
+so there is nothing for a framer to decide about it, and `read_protobuf` is
+already the one call that reads one whole request. The records that come back
+are the ones the same export's OTLP/JSON reads as, marked unpacked, because
+that is the reader's own contract (`spanweave` `SPEC.md` §7) — the library
+renders the protobuf as the Collector's OTLP/JSON and reads that with its JSON
+reader, so nothing about unpacking an export is written twice.
+
+**Nothing under `spanweave_live/` imports a protobuf runtime.**
+`google.protobuf` and `opentelemetry.proto` are the `otlp` extra's, imported by
+`spanweave` and only when `read_protobuf` is called (§0.1). A transcoder here
+would be a second reader of the envelope, which is a dialect read for exactly
+the reason §1.1 gives (the maintainer's decision for V1, 2026-10-16).
+`read_protobuf` raises `SpanweaveError` (`otlp_extra_not_installed`) when the
+extra is absent, and that is not something a request can carry: the extra is this package's dependency, written
+`spanweave[otlp]`, so an install that lacks it is a broken install, and
+`make install-check` reads a protobuf body with the installed library to show
+that it is not one.
+
+**The header names the reader, and the bytes are not sniffed.** A JSON export
+declared as protobuf is read by `read_protobuf`, does not parse, and is §7.2's
+second `400` case; a protobuf export declared as JSON is read by the JSON
+reader as the lines its newline bytes happen to make, and is whatever that read
+is under the rules below. Deciding from the bytes which encoding a body "really"
+is would be the receiver reading the dialect, so it does not.
+
 #### One request is served, and everything else is 415
 
-`POST /v1/traces` with `Content-Type: application/json` is the one request this
-endpoint serves. Five checks, in this order, and **one** refusal: a method that
-is not `POST`, a target that is not `/v1/traces`, a media type that is not
-`application/json`, a `Transfer-Encoding` other than `identity`, or a
-`Content-Encoding` that is neither `identity` nor `gzip` is `415` with an
-`unsupported_media_type` event.
+`POST /v1/traces` with `Content-Type: application/json` or
+`Content-Type: application/x-protobuf` is the one request this endpoint serves,
+in its two encodings. Five checks, in this order, and **one** refusal: a method
+that is not `POST`, a target that is not `/v1/traces`, a media type that is
+neither `application/json` nor `application/x-protobuf`, a `Transfer-Encoding`
+other than `identity`, or a `Content-Encoding` that is neither `identity` nor
+`gzip` is `415` with an `unsupported_media_type` event. The media-type check's
+`detail` names both types. `application/x-protobuf` is the spelling OTLP/HTTP
+names; another spelling of protobuf is a media type this endpoint was not told
+it reads, and is refused rather than guessed at.
 
 `415` for a wrong target and a wrong method too, rather than `404` and `405`,
 is a **choice and is argued rather than defaulted**: this endpoint serves
@@ -2001,10 +2054,11 @@ total (§1.5). A caller that wants HTTP's finer answers owns the handler class
 and can give them.
 
 The media type is matched case-insensitively with its parameters dropped, so
-`Content-Type: Application/JSON; charset=utf-8` is the served request; that is
-HTTP's own rule about its own header and not a policy invented here.
-`Content-Encoding: gzip` is inflated before the body reaches the framer, and a
-header that is absent or `identity` is no coding at all.
+`Content-Type: Application/JSON; charset=utf-8` is the served request, and so is
+`Application/X-Protobuf`; that is HTTP's own rule about its own header and not
+a policy invented here. `Content-Encoding: gzip` is inflated before the body
+reaches either reader, and a header that is absent or `identity` is no coding
+at all.
 
 **`Transfer-Encoding` is refused rather than ignored**, which is the one check
 that exists for §1.5 rather than for HTTP. `respond` reads `Content-Length`
@@ -2027,15 +2081,30 @@ in this section, and saying so costs one status.
   library's own order (`spanweave` `SPEC.md` §5.2), so the caller matches on it
   instead of reading a sentence.
 
+A protobuf body that does not parse is **this second case and no new one**.
+`read_protobuf` raises nothing an unreadable body can cause: it answers a body
+that is not an `ExportTraceServiceRequest` as one `malformed_record` and no
+record, so `records == ()` and `skipped_records > 0` hold for it as they do for
+a malformed JSON body, and the event's `spanweave_code` is `malformed_record`
+for both. A zoo raw body with its last byte cut off is that answer, on every
+one of them (V1).
+
 Everything else the reader accepts is a `200`, **including an empty body and an
-empty container**: `b""` and `b"[]"` read as no records and nothing skipped.
+empty container**: `b""` and `b"[]"` read as no records and nothing skipped,
+and so does `b""` declared as protobuf, which is an empty request to
+`read_protobuf` as `{"resourceSpans": []}` is to the JSON reader.
 Calling those a `400` would mean the receiver deciding that a body *should* have
 held spans, which is a judgement about what the bytes mean and therefore a
 dialect read (§1.1). A body that holds records the reader could read and some it
 could not is likewise a `200` — it was read, and the diagnostics say what was
 skipped.
 
-An accepted body answers `{}`, and **not** OTLP's `partialSuccess` envelope.
+An accepted body answers `{}`, and **not** OTLP's `partialSuccess` envelope —
+whichever media type it came in, with the response's `Content-Type` saying
+`application/json` either way. A protobuf answer would be an encoded
+`ExportTraceServiceResponse`, and encoding one is the protobuf runtime's work,
+which this package does not import (above); the answer is the one this section
+already gave, and its header says truthfully what it is.
 That is deliberate and is the §1.1 line again: a truthful `rejectedSpans` would
 require counting spans, which only a dialect read can do, and an always-empty
 `partialSuccess` would be a claim of full success this receiver cannot make
@@ -2044,7 +2113,8 @@ about a body whose records it has not yet routed. A refusal answers
 poster is told what the event says.
 
 Nothing in `Endpoint.handle` raises for anything a request can carry — not a
-body that is not JSON, not one that is not UTF-8, not a `Content-Length` that is
+body that is not JSON, not one declared protobuf that does not parse, not one
+that is not UTF-8, not a `Content-Length` that is
 not a number, not an absent header. That is §4.4's rule one layer up: a refusal
 is an event and the endpoint keeps serving.
 
@@ -2174,6 +2244,25 @@ and each must serialize byte for byte to `spanweave.dumps` of
 (§4.7). A second comparison here would be a weaker gate wearing the same name,
 so there is not one.
 
+**The protobuf half is held on what a stock exporter actually sent.** Each of
+all 29 of the zoo's raw bodies (`corpus/fixtures/zoo/`, §4.8) is POSTed over the
+loopback socket as its manifest records it, `application/x-protobuf`, and must
+be answered `200` and route as many records as its JSON pair — the zoo's own
+count for that body, read from the corpus README, not one the receiver made.
+The same bodies with their last byte cut are each the second `400` case. The
+zoo gate replays every capture from those bodies through `Endpoint.handle` and
+holds the graph written to the JSON replay's, byte for byte (§4.8), and
+`tests/test_cli.py` posts Z1's real run to `spanweave-live serve` and holds the
+file it writes to the batch graph. Before V1 every one of those bodies was a
+`415`.
+
+V1's two named mutations, both shown caught: **the protobuf body handed to the
+JSON reader** (`Framer.document` instead of `read_protobuf`), which reads each
+raw body as skipped lines — red on the zoo gate's raw replay and on the 29
+socket posts; and **a protobuf body answered `200` without being read**, an
+empty `Records` in place of the reader's, which is red on `routed` in the same
+two places.
+
 The named mutation for this section is the obvious one and the one the series
 has been warned about since R1: `Endpoint` hands the body to `Framer.push`
 instead of `Framer.document`. It takes **ten** tests here down, and the shape of
@@ -2250,8 +2339,11 @@ it against the parser flag by flag, in both directions, exactly as
 A flag added to the code and not to this block fails, and so does one added here
 and not built.
 
-`<path>` is a file to follow, or `-` for stdin. Everything else is a knob some
-section above already argued for:
+`<path>` is a file to follow, or `-` for stdin. `serve` reads both media types
+§7.2 serves — OTLP/HTTP JSON and OTLP/HTTP protobuf, each gzipped or not — so
+a stock exporter pointed at it is answered `200`; there is no flag for either,
+because the request's `Content-Type` already says which reader it needs.
+Everything else is a knob some section above already argued for:
 
 | flag | what it sets | where it is defined |
 |---|---|---|

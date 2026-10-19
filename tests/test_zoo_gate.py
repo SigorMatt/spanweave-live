@@ -32,6 +32,13 @@ to the no-trace builder and the trace's graph holds four of the capture's five
 records (L2). That is the receiver's behaviour at this pin, measured here and
 stated in §4.8's table with L2 as the reason; the batch that answers L2 moves
 those two rows, and this file is where it has to.
+
+**And every capture is replayed again from its raw bodies** (V1, the zoo's
+L1): the exporter's own `application/x-protobuf` bodies, each through
+`Endpoint.handle` as its manifest states it, then the same router and tick.
+Each is answered `200` with the zoo's count for its JSON pair, and the graph
+written is the JSON replay's byte for byte -- on all twelve, Z4's two included,
+because what the protobuf path is held to is the JSON path.
 """
 
 from __future__ import annotations
@@ -47,13 +54,28 @@ import pytest
 import spanweave
 from spanweave.adapters import classify
 
-from spanweave_live import COMPLETED, Cap, Completed, Completion, Framer, Router
+from spanweave_live import (
+    COMPLETED,
+    TRACES_TARGET,
+    Cap,
+    Completed,
+    Completion,
+    Endpoint,
+    Framer,
+    Request,
+    Router,
+)
 
 REPO = Path(__file__).resolve().parent.parent
 ZOO = REPO / "corpus" / "fixtures" / "zoo"
 SPEC = REPO / "SPEC.md"
 
 JSON_BODY = "application/json"
+
+#: The media type the exporter's own bodies were sent with, as each manifest
+#: records it. Spelled here rather than imported, so that a receiver without
+#: the constant fails on the status it answers and not on an import.
+RAW_BODY = "application/x-protobuf"
 
 #: What the corpus holds at the pin: six briefs, two runs each.
 CAPTURES_EXPECTED = 12
@@ -94,6 +116,39 @@ def json_bodies(capture: str) -> list[bytes]:
         (ZOO / capture / Path(body["file"]).name).read_bytes()
         for body in manifest["bodies"]
         if body["content_type"] == JSON_BODY
+    ]
+
+
+def raw_requests(capture: str) -> list[Request]:
+    """The capture's raw bodies as the exporter POSTed them, in `forwards` order.
+
+    Each is the exporter's own OTLP protobuf body (`raw/NNNN.body`), stated as
+    a `Request` with the media type and content coding its manifest entry
+    records -- the headers the exporter sent, not ones this test chose. The
+    order is the manifest's `forwards` list, the order the bodies reached the
+    Collector, and the `k`-th of them is the one the `k`-th JSON body
+    re-encodes (the corpus README, "The pairs"); that each pair shares its
+    `NNNN` is asserted here rather than assumed, as the pinned library's
+    `tests/test_zoo.py` asserts it.
+    """
+    manifest = json.loads((ZOO / capture / "MANIFEST.json").read_text("utf-8"))
+    listed = {body["file"]: body for body in manifest["bodies"]}
+    forwarded = [listed[forward["file"]] for forward in manifest["forwards"]]
+    json_names = [
+        Path(body["file"]).stem
+        for body in manifest["bodies"]
+        if body["content_type"] == JSON_BODY
+    ]
+    assert [Path(body["file"]).stem for body in forwarded] == json_names, capture
+    return [
+        Request(
+            method="POST",
+            target=TRACES_TARGET,
+            body=(ZOO / capture / body["file"]).read_bytes(),
+            content_type=body["content_type"],
+            content_encoding=body["content_encoding"],
+        )
+        for body in forwarded
     ]
 
 
@@ -179,6 +234,53 @@ def replayed(tmp_path_factory):
     return get
 
 
+class RawReplay(NamedTuple):
+    statuses: tuple[int, ...]
+    per_body: tuple[int, ...]
+    endpoint: Endpoint
+    router: Router
+    completed: tuple[Completed, ...]
+    written: dict[str, bytes]
+
+
+@cache
+def raw_replay(capture: str, out: Path) -> RawReplay:
+    """The same capture again, from the bodies the exporter actually sent.
+
+    Each raw body goes to `Endpoint.handle` as the `Request` its manifest
+    states -- `application/x-protobuf`, the exporter's coding -- because the
+    endpoint is the one path in the receiver that reads protobuf (`SPEC.md`
+    §7.2). Everything after the endpoint is the JSON replay's: one `Router`,
+    then the end-of-input `Cap(0)` tick, writing into `out`.
+    """
+    endpoint = Endpoint()
+    router = Router(completion=Completion(policies=(), now=lambda: 0.0, out_dir=out))
+    statuses, per_body = [], []
+    for request in raw_requests(capture):
+        exchange = endpoint.handle(request)
+        statuses.append(exchange.response.status)
+        per_body.append(len(exchange.records.records))
+        for record in exchange.records.records:
+            router.route(record)
+    assert endpoint.framer.pending_bytes == 0
+    router.completion = Completion(policies=(Cap(0),), now=lambda: 0.0, out_dir=out)
+    completed = router.tick()
+    written = {path.name: path.read_bytes() for path in sorted(out.iterdir())}
+    return RawReplay(
+        tuple(statuses), tuple(per_body), endpoint, router, completed, written
+    )
+
+
+@pytest.fixture(scope="session")
+def raw_replayed(tmp_path_factory):
+    def get(capture: str) -> RawReplay:
+        out = tmp_path_factory.getbasetemp() / "zoo-raw" / capture.replace("/", "_")
+        out.mkdir(parents=True, exist_ok=True)
+        return raw_replay(capture, out)
+
+    return get
+
+
 # --------------------------------------------------------------------------
 # What the gate covers, asserted rather than described.
 # --------------------------------------------------------------------------
@@ -260,6 +362,55 @@ def test_z4_s_graph_holds_four_records_of_five_because_its_root_is_unclaimed(
         return sum(d.code == "orphan_parent" for d in graph.diagnostics)
 
     assert (orphans(done.graph), orphans(run.batch)) == (4, 0)
+
+
+# --------------------------------------------------------------------------
+# The raw replay: what a stock exporter sends is what the JSON replay wrote
+# (V1, the zoo's L1).
+# --------------------------------------------------------------------------
+
+
+def test_the_zoo_s_raw_bodies_are_the_number_section_7_2_cites():
+    """§7.2 cites how many raw bodies the zoo holds; this counts them."""
+    spec = SPEC.read_text(encoding="utf-8")
+    start = spec.index("### 7.2 ")
+    end = spec.index("\n## ", start)
+    (cited,) = set(re.findall(r"all (\d+) of the zoo's raw bodies", spec[start:end]))
+    assert int(cited) == sum(len(raw_requests(c)) for c in captures())
+
+
+@pytest.mark.parametrize("capture", captures())
+def test_every_raw_body_is_served_and_routes_the_records_its_json_body_does(
+    capture, replayed, raw_replayed
+):
+    """Each protobuf body is a `200` and yields the zoo's count for its pair.
+
+    The count is the zoo's own (`zoo_records`), the same one the JSON replay
+    is held to, so a raw body that is answered `200` and routed nothing -- or
+    routed through the JSON reader, which reads protobuf as nothing but
+    skipped lines -- fails here on the number and not only on a graph.
+    """
+    raw = raw_replayed(capture)
+    assert raw.statuses == (200,) * len(zoo_records()[capture])
+    assert raw.per_body == zoo_records()[capture] == replayed(capture).per_body
+    assert raw.router.routed == replayed(capture).router.routed
+    assert raw.endpoint.counts == {}
+
+
+@pytest.mark.parametrize("capture", captures())
+def test_the_raw_replay_writes_the_json_replay_s_graph_byte_for_byte(
+    capture, replayed, raw_replayed
+):
+    """Raw replay equals JSON replay, on all twelve, Z4's two included.
+
+    The comparison is with what the JSON replay **wrote**, whatever that is:
+    on ten captures it is the batch graph, and on Z4's two it is the short
+    graph §4.8 pins (L2). So this holds the protobuf path to the JSON path
+    and nothing else, and V2's move of Z4 moves both sides together.
+    """
+    raw = raw_replayed(capture)
+    assert len(raw.completed) == 1
+    assert raw.written == replayed(capture).written
 
 
 @pytest.mark.parametrize("capture", L3_CAPTURES)

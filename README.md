@@ -56,7 +56,8 @@ spanweave-live tail trace.jsonl --out graphs/ --once --deltas
 # Read a pipe to EOF. `-` is stdin.
 cat trace.jsonl | spanweave-live tail - --out graphs/
 
-# Receive OTLP/HTTP JSON: POST /v1/traces, application/json, gzip accepted.
+# Receive OTLP/HTTP: POST /v1/traces, application/json or application/x-protobuf
+# (what a stock exporter sends), gzip accepted.
 spanweave-live serve --port 4318 --out graphs/ --root-grace 5
 ```
 
