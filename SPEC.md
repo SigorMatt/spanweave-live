@@ -126,6 +126,17 @@ and the claiming adapter's `parse` — and never from a key the receiver looks u
 itself. There is no `record["trace_id"]`, no `resourceSpans` walk, no
 `"gen_ai."` prefix test, anywhere under `spanweave_live/`.
 
+One source sits beside the adapters, and it is not a dialect (V2). For a
+record the reader **unpacked from an OTLP export** that no adapter claims, the
+trace id is the one the export's envelope states, read through the library's
+public `spanweave.envelope(record)`. The transport's ids are the transport's:
+the reader renames them before any adapter is asked, and spanweave's T1
+decided they are no dialect's and made the function public for exactly this
+caller. Whether a record was unpacked is the reader's mark, the record's type
+(`spanweave.read.Unpacked`, `spanweave` `SPEC.md` §7), never a key. Where the
+library refuses the envelope, that refusal is the answer; nothing is read past
+it.
+
 This is the sharpest of the non-goals because it is the easiest to violate by
 accident and the cheapest-looking at the time: one `record.get("trace_id")` in
 the router "just for partitioning" works on every JSONL fixture and is silently
@@ -135,8 +146,9 @@ disagreeing subtly with the first, is a defect no fixture of the receiver's own
 can find — the library would be right and the receiver would be wrong, about
 the same bytes.
 
-If a record's trace id cannot be had through the adapter surface, the answer is
-"no trace id" and a counted event, not a key lookup.
+If a record's trace id cannot be had through the adapter surface or the
+envelope, the answer is "no trace id" and a counted event — `no_trace`
+(§4.2) — not a key lookup.
 
 ### 1.2 No rules, no semantics
 
@@ -547,6 +559,10 @@ Record = Any  # whatever `spanweave.read_records` yielded
 
 REFUSED = "refused"
 REFUSED_AT_CAP = "refused_at_cap"
+NO_TRACE = "no_trace"        # its detail is exactly one of the three below (§4.2)
+UNCLAIMED = "unclaimed"
+NO_ENVELOPE = "no_envelope"
+NO_ID = "no_id"
 
 @dataclass(frozen=True, slots=True)
 class Event:
@@ -660,24 +676,67 @@ neither.
 
 `trace_id_of(record)` asks `spanweave.adapters.classify(record)` which adapters
 claim the record, takes the single claimant, calls that adapter's
-`parse([record])`, and reads `trace_id` off the spans it yields. That is the
-whole of it. There is no key table, no dialect test, no `record["trace_id"]`,
-and no fallback that reads one (§1.1).
+`parse([record])`, and reads `trace_id` off the spans it yields. Where **no**
+adapter claims a record the reader unpacked from an OTLP export, it asks
+`spanweave.envelope(record)` instead and takes the envelope's `trace_id`
+(V2, §1.1): the transport's id, which every span of an export states whether
+or not anything can read the span. That is the whole of it. There is no key
+table, no dialect test, no `record["trace_id"]`, and no fallback that reads one
+(§1.1). Whether a record was unpacked is the reader's mark, the record's type
+(`spanweave.read.Unpacked`), and a flat record's envelope is never asked for.
 
-Three answers are **no trace id**, and each is the same answer:
+Three answers are **no trace id**. Each sends the record to the no-trace
+builder (§4.3) and each is announced there by one event, code **`no_trace`**,
+counted, carrying the record's arrival index and a `detail` that is exactly
+the name of the answer:
 
-- **Nobody claimed the record.** The library's own treatment is an `unknown`
-  node plus an `unclaimed_record` diagnostic, and that is what the no-trace
-  builder produces, because the record is fed to a real `Builder`.
-- **More than one adapter claimed it.** The library refuses an ambiguous
-  record rather than guessing (`spanweave` `SPEC.md` §6.1), so there is nobody
-  to ask for a trace id. The record goes to the no-trace builder, which raises
-  the library's own refusal, and that becomes a `refused` event (§4.4).
-- **The claimant reported no single trace id** — no `trace_id` on the spans it
-  parsed, or more than one distinct id across them. §1.1 already fixes this
-  answer: "If a record's trace id cannot be had through the adapter surface,
-  the answer is 'no trace id' and a counted event, not a key lookup." Choosing
-  among several would be a policy, and inventing one is a halt point.
+- **`unclaimed`: nobody claimed a flat record.** There is no claimant to ask,
+  and a flat file states no envelope. The library's own treatment is an
+  `unknown` node plus an `unclaimed_record` diagnostic, and that is what the
+  no-trace builder produces, because the record is fed to a real `Builder`.
+- **`no_envelope`: nobody claimed an unpacked record, and the library refused
+  its envelope** — `spanweave.envelope` raised `EnvelopeError`: no trace or
+  span id, or a field of a type the envelope cannot hold. The event carries
+  the library's code as `spanweave_code` (`not_an_envelope`). A stock
+  exporter can reach this one, because on the wire an all-zero id is no id
+  (spanweave's wire series). The receiver does not say which field failed —
+  that is the library's message, a call to `spanweave.envelope` on the record
+  away — and never reads past the refusal to a key it could use.
+- **`no_id`: the claimant reported no single trace id** — no `trace_id` on the
+  spans it parsed, or more than one distinct id across them. Choosing among
+  several would be a policy, and inventing one is a halt point.
+
+§1.1 fixes the shape of all three: "If a record's trace id cannot be had
+through the adapter surface or the envelope, the answer is 'no trace id' and a
+counted event … not a key lookup." `no_trace` is said **before** the record is
+fed, because it is where the record was sent and why; if the no-trace builder
+then refuses it (a record sent twice), a `refused` follows it on the same
+`Routed` (§4.4). It is an observation, never a failure: `finished` counts it
+(§8.3) and the exit code ignores it (§8.6).
+
+Two other ways to have no trace id are the library's **refusals**, and they
+stay `refused` and nothing else. **More than one adapter claimed the record**:
+the library refuses an ambiguous record rather than guessing (`spanweave`
+`SPEC.md` §6.1), so there is nobody to ask for a trace id. The record goes to
+the no-trace builder, which raises the library's own refusal, and that becomes
+a `refused` event (§4.4). And a `SpanweaveError` while classifying or parsing,
+below.
+
+**The claimant's id and the envelope's, measured equal.** Where an adapter
+claims an unpacked record, the claimant's id routes and the envelope is not
+asked. Which of the two would route if they differed is a rule nobody has
+stated, so this document does not choose; V2 measured instead that they do not
+differ. Over every unpacked record exactly one adapter claims, in the corpus'
+conformance renderings and captured files and in each zoo capture read twice —
+its JSON bodies through `read_records`, its raw bodies through
+`read_protobuf` — the two ids were compared on **748** records — 8 from the corpus'
+renderings, 370 from the zoo's JSON bodies and 370 from its raw bodies — and
+are equal on 748, differ on 0, and on 0 one side states no id.
+`tests/test_zoo_gate.py` derives every number in that sentence, so a pin move
+that makes one differ fails there before it routes anything. Routing reads
+ids only through the library, so whatever the library's next reader rules
+decide about a malformed export moves routing and the batch build together,
+and the zoo gate (§4.8) holds the two equal; nothing here decides them.
 
 A `spanweave.SpanweaveError` raised while classifying or parsing is also "no
 trace id". It is **not** swallowed: the record goes to the no-trace builder,
@@ -719,13 +778,23 @@ because that new builder is the newest one the router made. That is still
 arrival order — of builders, which is what the router has — and §5.5 says so
 where it can be read next to the event that causes it.
 
-The **no-trace builder** is a `Builder` like any other and exists from the
-start. It is the receiver's honest place for a record that identifies no trace,
-and the point of using a builder rather than a counter is that it carries the
-library's own account of what those records were: `missing_trace_id` once per
-graph, and `unclaimed_record` per unclaimed record, exactly as a batch build of
-the same records reports them (`spanweave` `SPEC.md` §6.1, §7). The receiver
-invents no event code for either.
+The **no-trace builder** is a `Builder` like any other, made the first time a
+record needs it, and it carries the library's own account of what its records
+were: `missing_trace_id` once per graph and `unclaimed_record` per unclaimed
+record, exactly as a batch build of the same records reports them (`spanweave`
+`SPEC.md` §6.1, §7). The decision that sent each record there is the
+receiver's, so although that builder is never completed and never written
+(§5.4, §8.5), every record it holds was announced by one counted `no_trace`
+event that says why (§4.2).
+
+One exception, older than V2 and found by it, is stated here rather than
+fixed in passing: `trace_id_of` classifies across every adapter even when the
+router was given an `adapter` (§4.1), so under a named adapter a record two
+adapters claim is "ambiguous" to routing, reaches the no-trace builder — which,
+given the name, absorbs it without refusing — and is announced by nothing,
+where `spanweave.build` under the same name reads it as that adapter's. Making
+routing honour the name is a change to what §4.1's `adapter` means for routing,
+and it is registered for the series' close, not decided here.
 
 One consequence inherited rather than chosen: a no-trace builder holding
 **only** unclaimed records refuses `graph()`, because `spanweave` refuses an
@@ -815,6 +884,16 @@ surface says "no trace id" and the key says `t1`, so a dialect read puts an
 warning is still right about why the read is wrong; the corpus is simply not
 where it shows.
 
+**One side an export whose root nobody claims** (V2). No conformance scenario
+holds a span of an export that no adapter claims (a test asserts it), so gate
+A borrows one from the corpus' zoo, read in place: `zoo/z4/2026-10-12-recorded`,
+one export of five spans whose root is unclaimed. It arrives whole, as a
+document, at a seeded place among the arrivals of each of the corpus'
+renderings, at each of the ten seeds, and both traces must come out as their
+batch graphs byte for byte with nothing in the no-trace builder — which is
+only true if the root is routed by its envelope (§4.2). Its trace id is its
+own, so nothing is relabelled.
+
 ### 4.8 The zoo gate — a stranger's captures, live and batch
 
 Gate A runs over fixtures the library wrote for itself. The **zoo gate**
@@ -848,8 +927,8 @@ a count the receiver made.
 | `z2/2026-10-14-recorded` | 1 | 23 | 23 | yes |
 | `z3/2026-10-13-real` | 4 | 102 | 102 | yes |
 | `z3/2026-10-13-recorded` | 1 | 102 | 102 | yes |
-| `z4/2026-10-12-real` | 2 | 5 | 4 | no (L2) |
-| `z4/2026-10-12-recorded` | 1 | 5 | 4 | no (L2) |
+| `z4/2026-10-12-real` | 2 | 5 | 5 | yes (L2) |
+| `z4/2026-10-12-recorded` | 1 | 5 | 5 | yes (L2) |
 | `z5/2026-10-13-real` | 1 | 4 | 4 | yes |
 | `z5/2026-10-13-recorded` | 1 | 4 | 4 | yes |
 | `z6/2026-10-14-real` | 11 | 26 | 26 | yes |
@@ -865,19 +944,20 @@ exporter's own `application/x-protobuf` bodies, in the order the manifest's
 manifest records (§7.2), then the same `Router` and the same end-of-input tick.
 Each body is answered `200` and yields the zoo's count for its JSON pair, and
 the graph written is the JSON replay's **byte for byte**, on every row of the
-table — Z4's two included, because the comparison is with what the JSON
-replay wrote and not with the batch graph, so the protobuf path is held to the
-JSON path and nothing else, and the batch that moves Z4 moves both sides
-together.
+table. The comparison is with what the JSON replay wrote, so the protobuf path
+is held to the JSON path and nothing else; V2 moved Z4's two rows on both
+sides together.
 
-**Two rows are short, and that is the receiver's behaviour at this pin, not a
-tolerance.** Z4's root span is claimed by no adapter (the zoo's `PROBES.md`
-S1), so §4.2 gives it no trace id and it goes to the no-trace builder (§4.3):
-the trace is released at version 4, its graph is the batch graph less exactly
-the one `unknown` node the batch keeps for the unclaimed record, and each of
-the four records it does hold is an `orphan_parent` there and in no batch
-graph. That is the zoo's L2, and the batch that answers L2 is the one that
-moves these two rows.
+**Two rows say `(L2)`, because V2 moved them.** Z4's root span is claimed by
+no adapter (the zoo's `PROBES.md` S1). Until V2, §4.2 gave it no trace id and
+it went to the no-trace builder: the trace was released at version 4, and
+each of the four records it held was an `orphan_parent` there and in no batch
+graph — V0 pinned those rows as `4` and `no (L2)`. Since V2 the root was
+unpacked from an export, so its envelope states its trace id and §4.2 routes
+it there: the trace is released at version 5, its graph is five nodes, the
+root an `unknown` one, with four `parent` edges and no `orphan_parent`, and it
+is the batch graph byte for byte. Nothing reaches the no-trace builder on any
+of the twelve rows.
 
 Of the four captures on which the audit saw a trace complete once per body
 under `--quiet 0` (L3: Z3, Z1, Z2 and Z6, the real runs), each completes
@@ -2433,7 +2513,9 @@ could match on them.
 
 - **`router`** and **`endpoint`** lines are a routing `Event` (§4.1): `index`,
   `detail`, and whichever of `trace_id`, `spanweave_code`, `seconds`,
-  `version`, `offset` and `at` that code is about.
+  `version`, `offset` and `at` that code is about. A `no_trace` line (§4.2)
+  is `index` and `detail`, plus `spanweave_code` for `no_envelope`, and never
+  `trace_id`: it is the line that says there was none.
 - **`ingest`** lines are the same `Event`, from §7.1's tail.
 - **`framer`** lines are a `FramingEvent` (§3.1), with one renaming: its `line`
   field is written as **`framer_line`**. That is §3.4's and §7.1's consequence
@@ -2467,8 +2549,9 @@ and what makes this section's tests deterministic: the kernel chooses, the CLI
 says which, and no test hard-codes a port (§7.2).
 
 `finished` is the only aggregate and there is one of it: `counts` is the
-router's count per code (§4.6), bounded by the number of codes, and `routed` is
-how many records were routed. A line per record summarizing the stream is the
+router's count per code (§4.6), bounded by the number of codes — `no_trace`
+among them, so how many records of a run reached no trace is one number on its
+last line — and `routed` is how many records were routed. A line per record summarizing the stream is the
 accumulation §4.6 refuses.
 
 ### 8.4 `--deltas` writes stdout, one delta document per line
@@ -2540,8 +2623,8 @@ nothing is ever forgotten and no file is ever written over.
 | `130` | interrupted (`SIGINT`): what had been written stays written, and traces still open were **not** completed |
 
 The code is about **what the receiver could not do**, and never about what the
-telemetry said. A `refused`, a `refused_at_cap`, a `late_arrival`, a
-`truncated`, a `415`, a `400`, a `client_aborted` and every reader diagnostic
+telemetry said. A `refused`, a `refused_at_cap`, a `no_trace`, a
+`late_arrival`, a `truncated`, a `415`, a `400`, a `client_aborted` and every reader diagnostic
 are observations (§1.3): a run full of them exits `0`, and the events and `counts` on stderr are
 where a caller reads them. A receiver that exited non-zero because a span was
 re-sent would be a gate, and the receiver enforces nothing.

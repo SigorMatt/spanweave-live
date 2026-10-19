@@ -26,12 +26,18 @@ per-call deduplication (`SPEC.md` §2.2) cannot hide a difference -- and the
 one field a builder cannot carry, `meta.source_digest`, is dropped from the
 batch side and nothing else is normalized (`SPEC.md` §4.7).
 
-**Two of the twelve rows are not equal, and the gate says so.** Z4's root span
-is claimed by no adapter (the zoo's `PROBES.md` S1), so the receiver routes it
-to the no-trace builder and the trace's graph holds four of the capture's five
-records (L2). That is the receiver's behaviour at this pin, measured here and
-stated in §4.8's table with L2 as the reason; the batch that answers L2 moves
-those two rows, and this file is where it has to.
+**All twelve rows are equal, and two of them because V2 moved them.** Z4's
+root span is claimed by no adapter (the zoo's `PROBES.md` S1). Until V2 the
+receiver routed it to the no-trace builder and the trace's graph held four of
+the capture's five records (L2); since V2 an unpacked record no adapter claims
+is routed by its envelope's trace id, read through `spanweave.envelope`
+(`SPEC.md` §4.2), and the trace holds all five. §4.8's table names L2 on those
+two rows as the reason they moved, and this file is where they did.
+
+Beside the gate, the measurement V2 stops on: over every unpacked record a
+claimant claims, in the corpus and the zoo, the claimant's trace id equals
+the envelope's. Were one ever to differ, which of the two routes would be a
+rule nobody has stated (`SPEC.md` §4.2 cites the count; this file derives it).
 
 **And every capture is replayed again from its raw bodies** (V1, the zoo's
 L1): the exporter's own `application/x-protobuf` bodies, each through
@@ -52,7 +58,8 @@ from typing import NamedTuple
 
 import pytest
 import spanweave
-from spanweave.adapters import classify
+from spanweave.adapters import classify, get
+from spanweave.read import Unpacked
 
 from spanweave_live import (
     COMPLETED,
@@ -67,7 +74,8 @@ from spanweave_live import (
 )
 
 REPO = Path(__file__).resolve().parent.parent
-ZOO = REPO / "corpus" / "fixtures" / "zoo"
+FIXTURES = REPO / "corpus" / "fixtures"
+ZOO = FIXTURES / "zoo"
 SPEC = REPO / "SPEC.md"
 
 JSON_BODY = "application/json"
@@ -89,9 +97,10 @@ L3_CAPTURES = (
     "z6/2026-10-14-real",
 )
 
-#: The rows whose written graph is not the whole capture's batch graph, each
-#: with the zoo's probe that says why. Nothing else may be in it.
-SHORT = {
+#: The rows a batch of this series moved to "equal", each with the zoo's probe
+#: that says why; §4.8's table carries the probe beside the `yes`. V0 pinned
+#: these two at 4 of 5 nodes as `no (L2)`, and V2 moved them.
+MOVED = {
     "z4/2026-10-12-real": "L2",
     "z4/2026-10-12-recorded": "L2",
 }
@@ -290,7 +299,7 @@ def test_the_zoo_is_the_twelve_captures_its_readme_counts():
     assert len(captures()) == CAPTURES_EXPECTED
     assert sorted(zoo_records()) == captures()
     assert set(L3_CAPTURES) <= set(captures())
-    assert set(SHORT) <= set(captures())
+    assert set(MOVED) <= set(captures())
 
 
 @pytest.mark.parametrize("capture", captures())
@@ -317,26 +326,28 @@ def test_end_of_input_completes_one_trace_and_writes_one_file(capture, replayed)
     assert list(run.written) == [f"{done.trace_id}.json"]
 
 
-@pytest.mark.parametrize("capture", [c for c in captures() if c not in SHORT])
+@pytest.mark.parametrize("capture", captures())
 def test_the_written_graph_is_the_batch_graph_byte_for_byte(capture, replayed):
     run = replayed(capture)
     (written,) = run.written.values()
     assert written == run.batch_bytes, capture
     assert run.router._no_trace is None, "nothing reached the no-trace builder"
+    assert run.router.counts == {"completed": 1, "released": 1, "written": 1}
 
 
-@pytest.mark.parametrize("capture", sorted(SHORT))
-def test_z4_s_graph_holds_four_records_of_five_because_its_root_is_unclaimed(
+@pytest.mark.parametrize("capture", sorted(MOVED))
+def test_z4_s_graph_holds_five_records_of_five_its_root_by_its_envelope(
     capture, replayed
 ):
-    """The two rows the gate holds short, and exactly how short (L2).
+    """The two rows V2 moved, and exactly what moved (L2).
 
-    One record of five is claimed by no adapter. The router gives it no trace
-    (`SPEC.md` §4.2) and the no-trace builder absorbs it (§4.3), so the
-    trace's builder is released at version 4, and its graph is the batch
-    graph less exactly one node: the `unknown` node the batch keeps for the
-    unclaimed record (`spanweave` `SPEC.md` §6.1). Without its root, each of
-    the four is an orphan in the written graph and none is in the batch's.
+    One record of five is claimed by no adapter. It was unpacked from an
+    export, so the transport states its trace id, and the router reads that
+    through `spanweave.envelope` (`SPEC.md` §4.2): all five reach the trace's
+    builder, which is released at version 5. Its graph is five nodes -- the
+    root an `unknown` node -- with four `parent` edges and no `orphan_parent`,
+    which is the batch graph's account, byte for byte above. V0 pinned the same
+    trace at four nodes, each of them an orphan.
     """
     run = replayed(capture)
     (done,) = run.completed
@@ -346,22 +357,17 @@ def test_z4_s_graph_holds_four_records_of_five_because_its_root_is_unclaimed(
     ]
     unclaimed = [r for r in records if classify(r) == ()]
     assert (len(unclaimed), len(records)) == (1, 5)
-    assert done.version == 4
-    assert run.router.no_trace.version == 1
+    (root,) = unclaimed
+    assert isinstance(root, Unpacked)
+    assert spanweave.envelope(root).trace_id == done.trace_id
 
-    (written,) = run.written.values()
-    assert written != run.batch_bytes
-    assert written == spanweave.dumps(done.graph)
-    live = {node.id: node.kind for node in done.graph.nodes()}
-    batch = {node.id: node.kind for node in run.batch.nodes()}
-    missing = set(batch) - set(live)
-    assert set(live) < set(batch)
-    assert [batch[node_id] for node_id in missing] == [spanweave.NodeKind.UNKNOWN]
-
-    def orphans(graph: spanweave.Graph) -> int:
-        return sum(d.code == "orphan_parent" for d in graph.diagnostics)
-
-    assert (orphans(done.graph), orphans(run.batch)) == (4, 0)
+    assert done.version == 5
+    assert run.router._no_trace is None
+    graph = done.graph
+    assert len(graph.nodes()) == 5
+    assert [n.kind for n in graph.nodes()].count(spanweave.NodeKind.UNKNOWN) == 1
+    assert len(graph.edges(spanweave.EdgeKind.PARENT)) == 4
+    assert [d for d in graph.diagnostics if d.code == "orphan_parent"] == []
 
 
 # --------------------------------------------------------------------------
@@ -460,9 +466,9 @@ def test_the_spec_s_zoo_gate_table_is_what_the_gate_measures(replayed):
         run = replayed(capture)
         (done,) = run.completed
         (written,) = run.written.values()
-        equal = (
-            "yes" if written == run.batch_bytes else f"no ({SHORT.get(capture, '?')})"
-        )
+        equal = "yes" if written == run.batch_bytes else "no"
+        if capture in MOVED:
+            equal = f"{equal} ({MOVED[capture]})"
         measured[capture] = (
             len(run.per_body),
             run.router.routed,
@@ -474,15 +480,112 @@ def test_the_spec_s_zoo_gate_table_is_what_the_gate_measures(replayed):
 
 def test_the_readme_s_zoo_sentence_is_what_the_gate_measures(replayed):
     """README says how many of the twelve are equal; this counts them."""
-    words = {"ten": 10, "eleven": 11, "twelve": 12}
+    words = {"two": 2, "ten": 10, "eleven": 11, "twelve": 12}
     readme = (REPO / "README.md").read_text(encoding="utf-8")
-    stated = re.search(r"(\w+) of the (\w+) are equal; Z4's (\w+) are short", readme)
+    stated = re.search(r"All (\w+) are equal, Z4's (\w+) included", readme)
     assert stated is not None
-    equal, total, short = stated.groups()
+    total, moved = stated.groups()
     measured = [
         next(iter(replayed(capture).written.values())) == replayed(capture).batch_bytes
         for capture in captures()
     ]
-    assert words[equal.lower()] == sum(measured)
-    assert words[total] == len(measured)
-    assert {"two": 2}[short] == len(SHORT) == measured.count(False)
+    assert words[total] == len(measured) == sum(measured)
+    assert words[moved] == len(MOVED)
+
+
+# --------------------------------------------------------------------------
+# The measurement V2 stops on: the claimant and the envelope agree.
+# --------------------------------------------------------------------------
+
+
+class Agreement(NamedTuple):
+    compared: int
+    equal: int
+    differing: int
+    one_side_none: int
+    conformance: int
+    zoo_json: int
+    zoo_raw: int
+
+
+def claimed_unpacked(records: spanweave.Records) -> list[object]:
+    """The records the reader unpacked from an export that one adapter claims."""
+    return [
+        r for r in records.records if isinstance(r, Unpacked) and len(classify(r)) == 1
+    ]
+
+
+@cache
+def agreement() -> Agreement:
+    """Every claimed unpacked record in the corpus and the zoo, asked two ways.
+
+    The corpus is every rendering of `fixtures/conformance/` and every file of
+    `fixtures/captured/`; the zoo is every capture's JSON bodies through
+    `read_records` and its raw bodies through `read_protobuf`, so a record of
+    the zoo is counted once per encoding. For each, the claimant's `parse`
+    states one trace id or does not, and `spanweave.envelope` states one or
+    refuses. The receiver's own `trace_id_of` is not asked: this measures the
+    library's two answers, which is what the stop condition is about.
+    """
+    sources: list[tuple[str, spanweave.Records]] = []
+    for path in sorted(FIXTURES.glob("conformance/*/dialects/*")):
+        sources.append(("conformance", spanweave.read_records(path.read_bytes())))
+    for path in sorted(FIXTURES.glob("captured/*.jsonl")):
+        sources.append(("conformance", spanweave.read_records(path.read_bytes())))
+    for capture in captures():
+        for body in json_bodies(capture):
+            sources.append(("zoo_json", spanweave.read_records(body)))
+        for request in raw_requests(capture):
+            sources.append(("zoo_raw", spanweave.read_protobuf(request.body)))
+    tally = dict.fromkeys(Agreement._fields, 0)
+    for where, records in sources:
+        for record in claimed_unpacked(records):
+            (claimant,) = classify(record)
+            parsed = {s.trace_id for s in get(claimant).parse([record]) if s.trace_id}
+            by_claimant = next(iter(parsed)) if len(parsed) == 1 else None
+            try:
+                by_envelope: str | None = spanweave.envelope(record).trace_id
+            except spanweave.EnvelopeError:
+                by_envelope = None
+            tally["compared"] += 1
+            tally[where] += 1
+            if by_claimant is None or by_envelope is None:
+                tally["one_side_none"] += 1
+            elif by_claimant == by_envelope:
+                tally["equal"] += 1
+            else:
+                tally["differing"] += 1
+    return Agreement(**tally)
+
+
+def test_every_claimant_s_trace_id_is_its_envelope_s():
+    """V2's stop condition, measured: not one record where the two differ."""
+    measured = agreement()
+    assert measured.differing == 0
+    assert measured.one_side_none == 0
+    assert measured.equal == measured.compared > 0
+
+
+def test_section_4_2_cites_the_agreement_this_file_measures():
+    """§4.2 states the count; this re-derives every number in the sentence."""
+    spec = SPEC.read_text(encoding="utf-8")
+    start = spec.index("### 4.2 ")
+    end = spec.index("\n### ", start + 1)
+    stated = re.search(
+        r"compared on \*\*(\d+)\*\* records \N{EM DASH} (\d+) from the corpus' "
+        r"renderings, (\d+) from the zoo's JSON bodies and (\d+) from its raw "
+        r"bodies \N{EM DASH} and are equal on (\d+), differ on (\d+), and on "
+        r"(\d+) one side states no id",
+        " ".join(spec[start:end].split()),
+    )
+    assert stated is not None
+    measured = agreement()
+    assert tuple(int(n) for n in stated.groups()) == (
+        measured.compared,
+        measured.conformance,
+        measured.zoo_json,
+        measured.zoo_raw,
+        measured.equal,
+        measured.differing,
+        measured.one_side_none,
+    )

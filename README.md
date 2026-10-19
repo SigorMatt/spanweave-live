@@ -136,7 +136,7 @@ The five pieces, each specified in the section named:
 | | | |
 |---|---|---|
 | **`Framer`** | §3 | `push(chunk)` hands the reader complete lines only and keeps the remainder; `document(body)` hands a whole OTLP-JSON body over unsplit; `flush()` reads the remainder as a final line and reports it; `pending_bytes` is what it still holds. Diagnostics come back with the line's absolute offset in the stream. `max_pending_bytes` caps the remainder, and the oversize fragment is reported rather than dropped |
-| **`Router`** | §4 | One `spanweave.Builder` per trace, created on first sight, the trace id read through `spanweave.adapters.classify` and the claiming adapter's `parse`. A record with no trace id or no claimant goes to the no-trace builder; a `Builder` refusal is a counted `refused` event and routing continues; `max_traces` is a cap and the cap is counted |
+| **`Router`** | §4 | One `spanweave.Builder` per trace, created on first sight, the trace id read through `spanweave.adapters.classify` and the claiming adapter's `parse`. A record no adapter claims that was unpacked from an OTLP export is routed by its envelope's trace id, through `spanweave.envelope`; a record with no trace id goes to the no-trace builder and is announced by a counted `no_trace` event; a `Builder` refusal is a counted `refused` event and routing continues; `max_traces` is a cap and the cap is counted |
 | **`Completion`** | §5 | Three policies, each a value — `Quiet(seconds)`, `RootEnded(grace_seconds)`, `Cap(records)` — composable as any-of over a `now` the caller supplies. `Router.tick()` returns the traces completed, materializes each final graph, writes it, and releases the builder. A record for a completed trace opens a new generation and emits `late_arrival` with the gap |
 | **`Subscriptions`** | §6 | A consumer registers a callback for one trace or for all, per record or `every=N`, and is handed `Update`s carrying a `spanweave` delta. Retention is set to the hungriest subscriber's window and no more. A callback that raises is isolated as `consumer_error`: the other subscribers are still called and the record is still absorbed |
 | **`tail` / `stdin` / `serve`** | §7 | `tail(path, *, now, sleep, poll_seconds)` follows a growing file, detects truncation and rotation by the platform's own `(st_dev, st_ino)` and reports both as events; `stdin()` reads a pipe to EOF; `serve(endpoint, *, listener=…)` answers `POST /v1/traces` over a socket the caller's factory owns |
@@ -160,9 +160,9 @@ The same claim is held over traces nobody wrote for it: the **zoo gate**
 of a stranger's six agents, which the pinned corpus carries under
 `fixtures/zoo/`, through one `Framer` and one `Router` to end of input, and
 compares the graph written with `spanweave.build` of the same records, byte for
-byte. Ten of the twelve are equal; Z4's two are short by the one root span no
-adapter claims, which the receiver routes to no trace (§4.8 says why, and which
-batch moves them).
+byte. All twelve are equal, Z4's two included: their root span is claimed by
+no adapter, and the receiver routes it by the trace id its OTLP envelope
+states, read through `spanweave.envelope` (§4.2, §4.8).
 
 ```bash
 make check          # ruff, ruff format --check, mypy --strict, pytest, the gates

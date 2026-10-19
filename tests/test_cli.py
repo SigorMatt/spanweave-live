@@ -381,6 +381,42 @@ def test_finished_is_the_last_line_and_carries_the_counts(tmp_path) -> None:
     assert codes(result.stderr).count("finished") == 1
 
 
+def test_a_record_that_reaches_no_trace_is_a_router_line_and_finished_counts_it(
+    tmp_path,
+) -> None:
+    """V2: a record that reaches the no-trace builder is said, and counted.
+
+    One claimed span of the corpus' trace and one flat record no adapter
+    claims. The second is one `router` line of code `no_trace`, `detail`
+    `unclaimed`, with no `spanweave_code` key because the library refused
+    nothing (§8.3 leaves a `None` out). `finished` counts it beside the
+    trace's own completion, the exit is `0` because it is an observation
+    (§8.6), and the no-trace builder writes no file (§8.5).
+    """
+    rendering = loaded(by_id(MULTI), second=False)
+    first = rendering.data.splitlines(keepends=True)[0]
+    mystery = json.dumps({"trace_id": "t1", "span_id": "s9", "name": "?"}).encode()
+    out = tmp_path / "out"
+    result = run("tail", "-", "--out", str(out), stdin=first + mystery + b"\n")
+    assert result.returncode == 0, result.stderr.decode()
+    said = only(result.stderr, "no_trace")
+    assert said == {
+        "code": "no_trace",
+        "layer": "router",
+        "index": 2,
+        "detail": "unclaimed",
+    }
+    finished = lines(result.stderr)[-1]
+    assert finished["routed"] == 2
+    assert finished["counts"] == {
+        "completed": 1,
+        "no_trace": 1,
+        "released": 1,
+        "written": 1,
+    }
+    assert sorted(path.name for path in out.iterdir()) == [f"{rendering.trace_id}.json"]
+
+
 def test_the_cli_codes_and_layers_are_the_ones_SPEC_names() -> None:
     """§8.3's two lists, held against the module (`SPEC.md` §8.3).
 

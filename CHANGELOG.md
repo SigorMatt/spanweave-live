@@ -11,6 +11,75 @@ citation is dated history, resolvable at `git show b500342:WORKPLAN.md`.
 
 ## Unreleased
 
+### V2 — every record the receiver routes reaches a trace or an event says why not (2026-10-19)
+
+Derived parent `2ef0231`. The zoo series' third batch (`WORKPLAN.md` V2),
+answering the zoo's `PROBES.md` L2. Before it, a record the receiver routed
+could reach no graph and no event said where it went. This is the receiver's
+half of spanweave's T1 decision.
+
+Changed
+
+- **An unpacked OTLP record that no adapter claims is routed by its envelope.**
+  `trace_id_of` asks the claimant's `parse`, as before. When no adapter claims
+  a record the reader unpacked from an export, it now asks
+  `spanweave.envelope(record).trace_id`, which is the transport's id read
+  through the library's public function. "Unpacked" is the reader's mark, the
+  record's type `spanweave.read.Unpacked`, and never a key. A flat record's
+  envelope is never asked for. A refused envelope is the answer, and nothing
+  is read past it to a key.
+- **Every record that reaches the no-trace builder is announced.** Each one
+  gets one event, new code `no_trace`, counted, with the arrival index. Its
+  `detail` is exactly `unclaimed` (a flat record no adapter claims),
+  `no_envelope` (an unpacked one whose envelope the library refused, with
+  `spanweave_code` `not_an_envelope`), or `no_id` (the claimant reported no
+  single id). The event comes before the feed. A `refused` follows it if the
+  builder will not take the record. An ambiguous record is still `refused`
+  and nothing else. `finished` counts `no_trace`. The exit code ignores it,
+  because it is an observation. New public names: `NO_TRACE`, `UNCLAIMED`,
+  `NO_ENVELOPE`, `NO_ID`.
+- **The zoo gate's Z4 rows move from 4 of 5 to 5 of 5.** Z4's unclaimed root
+  now reaches its trace. The written graph is the batch graph byte for byte:
+  five nodes, four `parent` edges, no `orphan_parent`. All twelve captures are
+  equal, and nothing reaches the no-trace builder on any of them. §4.8's table
+  marks the two rows `yes (L2)`. README says all twelve.
+- `SPEC.md` §1.1, §4.1, §4.2, §4.3, §4.7, §4.8, §8.3 and §8.6 amended. §4.3
+  now says in one sentence what its three said and contradicted §1.1 and
+  §1.5 with.
+
+Added
+
+- **The measurement V2 would have stopped on.** Over every unpacked record
+  that exactly one adapter claims, in the corpus and the zoo, the claimant's
+  trace id and the envelope's were compared on 748 records: 8 from the
+  corpus' renderings, 370 from the zoo's JSON bodies and 370 from its raw
+  bodies. They are equal on 748, differ on 0, and one side states no id on 0.
+  `tests/test_zoo_gate.py` derives every number, and §4.2 cites them.
+- **Gate A pairs an export with an unclaimed root against every rendering.**
+  No conformance scenario has such a span, and a test asserts that. So gate A
+  borrows the corpus' `zoo/z4/2026-10-12-recorded`, read in place, and pairs
+  it with each of the 55 renderings at each of the ten seeds.
+- **An older gap, found and pinned rather than fixed.** Under a router given
+  `adapter=`, a record two adapters claim reaches the no-trace builder, which
+  absorbs it, and no event says so. §4.3 states this, a test pins it, and it
+  is registered for the close.
+
+Tests red on the parent (`2ef0231`, worktree under the scratchpad): 25. These
+are eight routing tests (envelope routing, `unclaimed`, `no_id`,
+`no_envelope` over a protobuf body with a zero trace id, a refused envelope
+not read past, announced-then-refused, the cap test now expecting
+`no_trace`, the constants), four zoo-gate tests on Z4 (byte for byte and
+5 of 5, ×2), the README sentence, the §4.2 citation, gate A's new test at all
+ten seeds, and the CLI's `no_trace` line and `finished` count. Mutations shown
+caught:
+- the envelope fallback applied to a flat record: red (`unclaimed` test, CLI);
+- a refused envelope read past to the record's `trace_id` key: red (the
+  read-past test);
+- a `no_trace` event not counted: red (six tests, the CLI's `finished` among
+  them);
+- an ambiguous record also announced as `no_trace`: red (two tests);
+- the announcement dropped: red (seven tests).
+
 ### V1 — the endpoint serves what a stock exporter sends (2026-10-19)
 
 Derived parent `28fb029`. The zoo series' second batch (`WORKPLAN.md` V1),

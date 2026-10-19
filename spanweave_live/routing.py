@@ -7,9 +7,12 @@ record, score it, hold it, or read what the graph came to say: it partitions,
 and the graphs are the caller's (`SPEC.md` §1.2, §1.3).
 
 **It never reads a dialect.** A record's trace id comes from
-`spanweave.adapters.classify` and the claiming adapter's `parse`, and from
-nowhere else -- no key table, no `record["trace_id"]`, no container walk
-(`SPEC.md` §1.1, §4.2). The cheap-looking alternative works on every fixture
+`spanweave.adapters.classify` and the claiming adapter's `parse` -- or, for a
+record the reader unpacked from an OTLP export that no adapter claims, from
+`spanweave.envelope`, the transport's statement read through the library's
+public function -- and from nowhere else: no key table, no
+`record["trace_id"]`, no container walk (`SPEC.md` §1.1, §4.2). The
+cheap-looking alternative works on every fixture
 anyone would write and is a second dialect reader that can disagree with the
 library about the same bytes, for reasons no fixture of the receiver's own can
 pin. The cost of doing it properly is a second parse per record, measured at
@@ -36,8 +39,9 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Final
 
-from spanweave import Builder, Delta, Graph, SpanweaveError
+from spanweave import Builder, Delta, EnvelopeError, Graph, SpanweaveError, envelope
 from spanweave.adapters import classify, get
+from spanweave.read import Unpacked
 
 from spanweave_live.completion import (
     COMPLETED,
@@ -77,6 +81,25 @@ REFUSED: Final = "refused"
 #: A record named a trace the router has no room for (`SPEC.md` §4.5). Refused
 #: in the open rather than dropped: silence was the alternative.
 REFUSED_AT_CAP: Final = "refused_at_cap"
+
+#: A record reached the no-trace builder (`SPEC.md` §4.2, §4.3). Not a refusal
+#: -- the builder absorbs it, and the library's own account of it is in that
+#: builder's graph -- but a routing decision, and §1.5 says a decision is
+#: never silent. `detail` is exactly one of the three below.
+NO_TRACE: Final = "no_trace"
+
+#: `no_trace`'s detail: no adapter claimed a record the reader did not unpack
+#: from an export, so there is no claimant and no envelope to ask.
+UNCLAIMED: Final = "unclaimed"
+
+#: `no_trace`'s detail: no adapter claimed a record the reader unpacked from an
+#: export, and `spanweave.envelope` refused it. The event carries the
+#: library's code; the receiver never says which field failed.
+NO_ENVELOPE: Final = "no_envelope"
+
+#: `no_trace`'s detail: the one claimant reported no single trace id -- none on
+#: the spans it parsed, or more than one distinct id across them.
+NO_ID: Final = "no_id"
 
 
 @dataclass(frozen=True, slots=True)
@@ -192,36 +215,80 @@ class _Book:
     completed_at: float | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class _Identity:
+    """What the library said about which trace a record belongs to.
+
+    `trace_id` is the answer. Where it is `None`, `why` is the `no_trace`
+    detail that says which "no" it was -- or `None` itself where the answer is
+    the library's **refusal** (an ambiguous record, or a `SpanweaveError` while
+    classifying or parsing), which the no-trace builder's `feed` raises again
+    and `Router.route` reports as `refused` (`SPEC.md` §4.4). `spanweave_code`
+    is the library's code where it refused the envelope.
+    """
+
+    trace_id: str | None
+    why: str | None = None
+    spanweave_code: str | None = None
+
+
+def _identify(record: Record) -> _Identity:
+    """`trace_id_of`, with the reason kept for the event (`SPEC.md` §4.2).
+
+    Two sources and no third. A record one adapter claims is that claimant's
+    `parse`. A record **no** adapter claims is asked of its envelope only if
+    the reader unpacked it from an export -- the mark is the record's type,
+    `spanweave.read.Unpacked`, which only the reader sets (`spanweave`
+    `SPEC.md` §7), and never a key -- and `spanweave.envelope` either states
+    the transport's trace id or refuses. A refusal is the answer: nothing is
+    read past it.
+    """
+    try:
+        claimants = classify(record)
+    except SpanweaveError:
+        return _Identity(None)
+    if not claimants:
+        if not isinstance(record, Unpacked):
+            return _Identity(None, UNCLAIMED)
+        try:
+            return _Identity(envelope(record).trace_id)
+        except EnvelopeError as refusal:
+            return _Identity(None, NO_ENVELOPE, refusal.code)
+    if len(claimants) > 1:
+        return _Identity(None)
+    try:
+        reported = {
+            span.trace_id for span in get(claimants[0]).parse([record]) if span.trace_id
+        }
+    except SpanweaveError:
+        return _Identity(None)
+    if len(reported) != 1:
+        return _Identity(None, NO_ID)
+    return _Identity(next(iter(reported)))
+
+
 def trace_id_of(record: Record) -> str | None:
-    """The trace a record belongs to, through the adapter surface alone.
+    """The trace a record belongs to, through the library alone (`SPEC.md` §4.2).
 
     `classify` says which adapters claim this one record; the single claimant's
     `parse` translates it; the trace id is what the resulting spans report.
-    That is the whole mechanism, and there is no other branch in it
-    (`SPEC.md` §4.2).
+    Where **no** adapter claims a record the reader unpacked from an OTLP
+    export, the trace id is the one its envelope states, read through
+    `spanweave.envelope` -- the transport's, which spanweave's T1 decided is
+    not a dialect's. That is the whole mechanism.
 
-    `None` -- "no trace id" -- for each of the four ways the library declines
-    to say: nobody claimed the record, more than one adapter claimed it, the
-    claimant reported no trace id, or it reported more than one distinct id
-    across the spans of one record. §1.1 fixes that answer: an id that cannot
-    be had through the adapter surface is absent, not looked up.
+    `None` -- "no trace id" -- for each of the ways the library declines to
+    say: nobody claimed a flat record; nobody claimed an unpacked one and the
+    library refused its envelope; more than one adapter claimed it; the
+    claimant reported no trace id, or more than one distinct id across the
+    spans of one record. §1.1 fixes that answer: an id that cannot be had
+    through the library is absent, not looked up.
 
     A `SpanweaveError` is also `None`, and is not swallowed by it: the record
     goes to the no-trace builder, whose `feed` reaches the same code and raises
     the same refusal, and `Router.route` reports it with the library's own code.
     """
-    try:
-        claimants = classify(record)
-        if len(claimants) != 1:
-            return None
-        reported = {
-            span.trace_id for span in get(claimants[0]).parse([record]) if span.trace_id
-        }
-    except SpanweaveError:
-        return None
-    if len(reported) != 1:
-        return None
-    return next(iter(reported))
+    return _identify(record).trace_id
 
 
 @dataclass(slots=True, kw_only=True)
@@ -334,7 +401,8 @@ class Router:
         """
         self._index += 1
         index = self._index
-        trace_id = trace_id_of(record)
+        identity = _identify(record)
+        trace_id = identity.trace_id
         # One reading, and only where there is a policy to measure against: a
         # router with no completion reads no clock at all, which is why R2's
         # behaviour -- gate A included -- is untouched by R3 (`SPEC.md` §5.2).
@@ -343,6 +411,20 @@ class Router:
 
         if trace_id is None:
             builder = self.no_trace
+            if identity.why is not None:
+                # Said before the feed: it is where the record was sent and
+                # why. A refusal by that builder, if one follows, is §4.4's.
+                events += (
+                    self._counted(
+                        Event(
+                            code=NO_TRACE,
+                            index=index,
+                            trace_id=None,
+                            spanweave_code=identity.spanweave_code,
+                            detail=identity.why,
+                        )
+                    ),
+                )
         else:
             existing = self._builders.get(trace_id)
             if existing is None:

@@ -297,6 +297,269 @@ def test_the_no_trace_builder_says_what_a_batch_build_of_the_same_records_says()
     ]
 
 
+# --------------------------------------------------------------------------
+# An unpacked record no adapter claims is routed by its envelope, and every
+# record that reaches the no-trace builder is announced (V2, the zoo's L2).
+# --------------------------------------------------------------------------
+
+#: The code and the three details of V2, spelled here rather than imported so
+#: that a receiver without them fails on what it routed and not on an import
+#: (as `tests/test_zoo_gate.py` spells `RAW_BODY`). One test below holds the
+#: package's constants to these spellings.
+NO_TRACE = "no_trace"
+UNCLAIMED = "unclaimed"
+NO_ENVELOPE = "no_envelope"
+NO_ID = "no_id"
+
+#: The trace every hand-made export below states, in the hex OTLP writes.
+EXPORT_TRACE = "0af7651916cd43dd8448eb211c80319c"
+
+
+def otlp_span(
+    span_id: str,
+    *,
+    trace: str = EXPORT_TRACE,
+    parent: str = "",
+    claimed: bool = True,
+) -> dict:
+    """One OTLP/JSON span. `claimed=False` carries no attribute any adapter
+    reads, which is what the zoo's Z4 root is (`PROBES.md` S1)."""
+    ids = {"traceId": trace, "spanId": span_id, "parentSpanId": parent}
+    # An empty id is omitted, as proto3 JSON omits a default: the Collector's
+    # rendering of the protobuf export below, which states the same nothing.
+    span: dict = {key: value for key, value in ids.items() if value}
+    span |= {
+        "name": f"span.{span_id}",
+        "startTimeUnixNano": "1000000000000",
+        "endTimeUnixNano": "1001000000000",
+    }
+    if claimed:
+        span["attributes"] = [
+            {"key": "openinference.span.kind", "value": {"stringValue": "CHAIN"}}
+        ]
+    return span
+
+
+def otlp_export(*spans: dict) -> bytes:
+    """One `ExportTraceServiceRequest` as OTLP/JSON, on one line."""
+    return json.dumps(
+        {"resourceSpans": [{"scopeSpans": [{"spans": list(spans)}]}]}
+    ).encode("utf-8")
+
+
+def protobuf_export(*spans: dict) -> bytes:
+    """The same export in the encoding a stock exporter sends (`SPEC.md` §7.2).
+
+    Built through `opentelemetry.proto`, which a **test** may import: the ban
+    is on the package (`tests/test_endpoint.py`), because the reader is the
+    library's. An id here is bytes, so `""` is sixteen or eight zero bytes --
+    which on the wire is no id at all.
+    """
+    from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import (
+        ExportTraceServiceRequest,
+    )
+
+    request = ExportTraceServiceRequest()
+    scope = request.resource_spans.add().scope_spans.add()
+    for span in spans:
+        wire = scope.spans.add()
+        wire.trace_id = bytes.fromhex(span.get("traceId", "")) or bytes(16)
+        wire.span_id = bytes.fromhex(span.get("spanId", "")) or bytes(8)
+        wire.parent_span_id = bytes.fromhex(span.get("parentSpanId", ""))
+        wire.name = span["name"]
+        wire.start_time_unix_nano = int(span["startTimeUnixNano"])
+        wire.end_time_unix_nano = int(span["endTimeUnixNano"])
+        for attribute in span.get("attributes", ()):
+            added = wire.attributes.add()
+            added.key = attribute["key"]
+            added.value.string_value = attribute["value"]["stringValue"]
+    return request.SerializeToString()
+
+
+def test_the_no_trace_code_and_its_details_are_the_package_s_constants():
+    import spanweave_live
+
+    assert (
+        spanweave_live.NO_TRACE,
+        spanweave_live.UNCLAIMED,
+        spanweave_live.NO_ENVELOPE,
+        spanweave_live.NO_ID,
+    ) == (NO_TRACE, UNCLAIMED, NO_ENVELOPE, NO_ID)
+
+
+def no_trace_events(routed: Routed) -> list[Event]:
+    return [event for event in routed.events if event.code == NO_TRACE]
+
+
+def test_an_export_with_an_unclaimed_span_among_claimed_ones_is_one_trace():
+    """The zoo's L2 in miniature: the root no adapter claims is the trace's.
+
+    The export states one trace id for both spans. Nobody claims the root, so
+    the adapter surface has no id for it -- and the transport does, read
+    through `spanweave.envelope` and nothing else (`SPEC.md` §4.2). Both
+    records reach one builder, whose graph is the batch graph of the export:
+    the root an `unknown` node, the child its `parent`, no orphan.
+    """
+    export = otlp_export(
+        otlp_span("aaaaaaaaaaaaaaaa", claimed=False),
+        otlp_span("bbbbbbbbbbbbbbbb", parent="aaaaaaaaaaaaaaaa"),
+    )
+    router = Router()
+    routed = [router.route(record) for record in Framer().document(export).records]
+
+    assert [r.trace_id for r in routed] == [EXPORT_TRACE, EXPORT_TRACE]
+    assert all(r.events == () for r in routed)
+    assert router.trace_ids == (EXPORT_TRACE,)
+    assert router._no_trace is None, "nothing reached the no-trace builder"
+    assert router.counts == {}
+    traced = router.builder(EXPORT_TRACE)
+    assert traced is not None
+    assert live(traced) == spanweave.dumps(undigested(spanweave.build(export)))
+    assert "orphan_parent" not in codes_of(traced.graph())
+
+
+def test_an_unclaimed_flat_record_is_announced_as_unclaimed():
+    """No adapter, no envelope to ask: a flat file states no transport.
+
+    `unclaimable` carries a `trace_id` key. The envelope is the reader's mark
+    and not a key (`spanweave` `SPEC.md` §7), so the fallback is never asked
+    about a flat record, and the answer is the one §4.2 always gave -- now
+    said, as one `no_trace` event with `detail` `unclaimed`.
+    """
+    router = Router()
+    routed = router.route(unclaimable("s9"))
+    assert routed.trace_id is None
+    assert routed.builder is router.no_trace
+    assert router.no_trace.version == 1, "absorbed by the no-trace builder"
+    (event,) = routed.events
+    assert event == Event(
+        code=NO_TRACE, index=1, trace_id=None, spanweave_code=None, detail=UNCLAIMED
+    )
+    assert router.counts == {NO_TRACE: 1}
+
+
+def test_a_claimed_record_that_reports_no_trace_id_is_announced_as_no_id():
+    nameless = openinference("s0")
+    del nameless["trace_id"]
+    router = Router()
+    routed = router.route(nameless)
+    assert routed.builder is router.no_trace
+    (event,) = routed.events
+    assert (event.code, event.detail, event.spanweave_code) == (NO_TRACE, NO_ID, None)
+    assert router.counts == {NO_TRACE: 1}
+
+
+def test_an_unclaimed_span_with_a_zero_trace_id_on_the_wire_has_no_envelope():
+    """The library refuses the envelope, and the receiver says so, and stops.
+
+    On the wire an all-zero id is no id, so the envelope of the unclaimed span
+    is refused (`not_an_envelope`): one `no_trace` with `detail` `no_envelope`
+    and the library's code. Beside it a claimed span with the same zero id is
+    `no_id`. The no-trace builder holds both, and its account of them is the
+    batch build's of the same export: `missing_trace_id` and
+    `unclaimed_record`, the library's codes, none of the receiver's.
+    """
+    spans = (
+        otlp_span("aaaaaaaaaaaaaaaa", trace="", claimed=False),
+        otlp_span("bbbbbbbbbbbbbbbb", trace="", parent="aaaaaaaaaaaaaaaa"),
+    )
+    read = spanweave.read_protobuf(protobuf_export(*spans))
+    as_json = otlp_export(*spans)
+    assert list(read.records) == list(spanweave.read_records(as_json).records)
+
+    router = Router()
+    routed = [router.route(record) for record in read.records]
+    assert [r.builder is router.no_trace for r in routed] == [True, True]
+    assert [no_trace_events(r) for r in routed] == [
+        [
+            Event(
+                code=NO_TRACE,
+                index=1,
+                trace_id=None,
+                spanweave_code="not_an_envelope",
+                detail=NO_ENVELOPE,
+            )
+        ],
+        [
+            Event(
+                code=NO_TRACE, index=2, trace_id=None, spanweave_code=None, detail=NO_ID
+            )
+        ],
+    ]
+    assert router.counts == {NO_TRACE: 2}
+    assert live(router.no_trace) == spanweave.dumps(
+        undigested(spanweave.build(as_json))
+    )
+    assert {"missing_trace_id", "unclaimed_record"} <= set(
+        codes_of(router.no_trace.graph())
+    )
+
+
+def test_a_refused_envelope_is_never_read_past_to_the_trace_id_key():
+    """The envelope says no; the record's `trace_id` key is not asked instead.
+
+    The span states a trace but an all-zero span id, so the library refuses
+    its envelope (`the envelope states no span_id`) while the unpacked record
+    still carries `trace_id`. A receiver that fell back to that key would file
+    the span under the trace; this one files it under no trace and says why.
+    """
+    spans = (
+        otlp_span("", claimed=False),
+        otlp_span("bbbbbbbbbbbbbbbb"),
+    )
+    records = spanweave.read_protobuf(protobuf_export(*spans)).records
+    assert records[0]["trace_id"] == EXPORT_TRACE, "the key is there to be misread"
+
+    router = Router()
+    first, second = (router.route(record) for record in records)
+    assert first.trace_id is None and first.builder is router.no_trace
+    assert [(e.detail, e.spanweave_code) for e in no_trace_events(first)] == [
+        (NO_ENVELOPE, "not_an_envelope")
+    ]
+    assert second.trace_id == EXPORT_TRACE
+    traced = router.builder(EXPORT_TRACE)
+    assert traced is not None and traced.version == 1
+
+
+def test_an_ambiguous_record_is_refused_and_not_also_announced_as_no_trace():
+    """The ambiguous case is §4.4's `refused`, and stays only that."""
+    router = Router()
+    routed = router.route(ambiguous("sA"))
+    assert [event.code for event in routed.events] == [REFUSED]
+    assert router.counts == {REFUSED: 1}
+
+
+def test_under_a_named_adapter_an_ambiguous_record_reaches_no_trace_unannounced():
+    """A pin of an older gap, stated in `SPEC.md` §4.3 and not fixed by V2.
+
+    Routing classifies across every adapter whatever `adapter` the router was
+    given, so the record is ambiguous to routing; the no-trace builder, given
+    the name, absorbs it without refusing; and no event says so. Pinned so
+    that the sentence in §4.3 is a measurement, and so that whichever batch
+    decides what a named adapter means for routing moves this test with it.
+    """
+    router = Router(adapter="openinference")
+    routed = router.route(ambiguous("sA"))
+    assert routed.trace_id is None and routed.builder is router.no_trace
+    assert routed.events == ()
+    assert router.no_trace.version == 1
+    assert router.counts == {}
+
+
+def test_a_no_trace_record_the_builder_refuses_is_announced_and_then_refused():
+    """Announced where it was sent; refused if the builder would not take it."""
+    nameless = openinference("s0")
+    del nameless["trace_id"]
+    router = Router()
+    router.route(nameless)
+    again = router.route(dict(nameless))
+    assert [(e.code, e.detail) for e in again.events] == [
+        (NO_TRACE, NO_ID),
+        (REFUSED, again.events[1].detail),
+    ]
+    assert router.counts == {NO_TRACE: 2, REFUSED: 1}
+
+
 def test_a_no_trace_builder_holding_only_unclaimed_records_refuses_its_graph():
     """Inherited, not chosen (`SPEC.md` §4.3).
 
@@ -468,9 +731,9 @@ def test_a_record_with_no_trace_id_is_never_refused_at_the_cap():
     router = Router(max_traces=1)
     router.route(openinference("s0", trace="t1"))
     routed = router.route(nameless)
-    assert routed.events == ()
+    assert [event.code for event in routed.events] == [NO_TRACE]
     assert routed.builder is router.no_trace
-    assert router.counts == {}
+    assert router.counts == {NO_TRACE: 1}, "announced, and not refused at the cap"
 
 
 def test_no_cap_is_the_default():

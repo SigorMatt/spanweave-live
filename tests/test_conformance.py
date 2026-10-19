@@ -313,3 +313,69 @@ def test_interleaved_traces_produce_each_traces_own_batch_graph(seed: int) -> No
             )
             checked += 1
     assert checked == 2 * PAIRS_EXPECTED
+
+
+# --------------------------------------------------------------------------
+# An export with an unclaimed span among claimed ones, interleaved (V2).
+# --------------------------------------------------------------------------
+
+#: The corpus' one OTLP container with a span no adapter claims among spans
+#: one does: the zoo's Z4, recorded run -- one export, five spans, the root
+#: unclaimed (the zoo's `PROBES.md` S1). No conformance scenario has such a
+#: span (asserted below, not assumed), so gate A borrows this capture, read in
+#: place through `corpus/` as the zoo gate reads it, rather than a hand-made
+#: export of the receiver's own.
+UNCLAIMED_AMONG_CLAIMED = "z4/2026-10-12-recorded"
+
+
+def test_no_corpus_rendering_holds_an_unclaimed_span_of_an_export() -> None:
+    """Why gate A borrows a zoo capture for V2: the scenarios have none."""
+    from spanweave.adapters import classify
+    from spanweave.read import Unpacked
+
+    for path in renderings():
+        records = spanweave.read_records(path.read_bytes()).records
+        unclaimed = [r for r in records if isinstance(r, Unpacked) and not classify(r)]
+        assert unclaimed == [], rendering_id(path)
+
+
+@pytest.mark.parametrize("seed", SEEDS)
+def test_an_export_with_an_unclaimed_span_interleaves_with_every_rendering(
+    seed: int,
+) -> None:
+    """Gate A's claim, with one side an export whose root nobody claims.
+
+    Z4's export arrives whole, as a document, at a seeded place among each
+    corpus rendering's arrivals. Its trace id is its own and not `t1`, so no
+    relabelling is needed and none is done. Both traces must come out as
+    their batch graphs byte for byte -- which, for Z4, needs the unclaimed
+    root routed to its trace by its envelope (`SPEC.md` §4.2), and nothing
+    left in the no-trace builder.
+    """
+    from tests.test_zoo_gate import json_bodies
+
+    (body,) = json_bodies(UNCLAIMED_AMONG_CLAIMED)
+    z4 = spanweave.build(body)
+    z4_graph = spanweave.dumps(undigested(z4))
+    assert z4.trace_id not in (None, "t1")
+
+    checked = 0
+    for path in renderings():
+        rendering = loaded(path, second=False)
+        rng = random.Random(seed)
+        items = interleave(rendering.arrivals, (("document", body),), rng)
+        router = replay(items, rng)
+
+        where = f"{rendering_id(path)} + zoo {UNCLAIMED_AMONG_CLAIMED} @ seed {seed}"
+        assert router.counts == {}, f"{where}: unexpected events {router.counts}"
+        assert router._no_trace is None, f"{where}: a record reached no trace"
+        assert sorted(router.trace_ids) == sorted({rendering.trace_id, z4.trace_id})
+        for trace_id, expected in (
+            (rendering.trace_id, rendering.graph),
+            (z4.trace_id, z4_graph),
+        ):
+            builder = router.builder(trace_id)
+            assert builder is not None, f"{where}: no builder for {trace_id}"
+            assert spanweave.dumps(undigested(builder.graph())) == expected, where
+            checked += 1
+    assert checked == 2 * RENDERINGS_EXPECTED
