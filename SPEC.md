@@ -50,7 +50,7 @@ pin.
 Both halves are fetched over **HTTPS**, not SSH, and that is a requirement
 rather than a preference:
 
-- the dependency is `spanweave @ git+https://github.com/SigorMatt/spanweave@<sha>`,
+- the dependency is `spanweave[otlp] @ git+https://github.com/SigorMatt/spanweave@<sha>`,
   so an unauthenticated resolve — CI's, a stranger's — works;
 - the submodule URL in `.gitmodules` is `https://github.com/SigorMatt/spanweave.git`,
   because CI checks submodules out with the Actions token over HTTPS. An SSH
@@ -61,11 +61,26 @@ Both are held by a test (`tests/test_pins.py`), the submodule half included:
 until R2a it was stated only in a comment in `.github/workflows/ci.yml`, so a
 re-added SSH submodule passed `make check` and failed only at CI.
 
+The pin is `17edf6165c724bea996cbd29af74d7fe77adf267` since V0: spanweave
+`main` at the merge of its wire series (PR #6), version `0.9.1`, a commit
+that carries both the zoo's captures under `fixtures/zoo/` (§4.8) and
+`spanweave.read_protobuf`. `tests/test_pins.py` reads the sha and the version
+from this paragraph and holds them to the pin and to the installed library. The dependency names the library's **`otlp`
+extra**, unconditionally, because a receiver exists to receive what stock
+exporters send and they send protobuf, which only `read_protobuf` reads and
+only with that extra installed. The receiver itself imports neither of the
+extra's packages; it is in the requirement so that every install of the
+receiver can read what the library reads. `tests/test_pins.py` holds the extra
+to exactly `otlp` and asks the installed library to read an empty export,
+which only an installed extra can answer; `make install-check` asks the same
+of the installed wheel.
+
 ### 0.2 No typing override: the dependency is a typed package
 
 `pyproject.toml` carries **no** mypy override for `spanweave`. The pin of §0.1
-names `fec7da27af517ad8b58ae3ec57827916aae60674`, and the package at that
-commit ships `spanweave/py.typed`, so `mypy --strict` reads the library as the
+names `17edf6165c724bea996cbd29af74d7fe77adf267`, and the package at that
+commit ships `spanweave/py.typed`, as the pin before it,
+`fec7da27af517ad8b58ae3ec57827916aae60674`, was the first to (below), so `mypy --strict` reads the library as the
 typed package it is: `Records`, `Diagnostic` and `read_records` resolve to
 their real types, and a planted `x: int = read_records(b"")` errors with
 `expression has type "Records"`.
@@ -799,6 +814,65 @@ surface says "no trace id" and the key says `t1`, so a dialect read puts an
 `unknown` node in a trace's graph that belongs in the no-trace builder. §1.1's
 warning is still right about why the read is wrong; the corpus is simply not
 where it shows.
+
+### 4.8 The zoo gate — a stranger's captures, live and batch
+
+Gate A runs over fixtures the library wrote for itself. The **zoo gate**
+(`tests/test_zoo_gate.py`, V0) runs over traces it did not: the twelve
+captures of `SigorMatt/spanweave-zoo` — six agents, each run once against a
+real model and once against a recorded one, under stock instrumentation into a
+stock Collector — which the pinned `spanweave` carries byte for byte under
+`fixtures/zoo/`, and which this repository reads in place through `corpus/`
+(§0.1), never copied. The zoo's audit observed that live, batch and
+incremental were equal (its `PROBES.md` L3); this gate is that observation
+held on every `make conformance`.
+
+For each capture, its JSON bodies, in the order its manifest lists them, go
+through one `Framer.document` each and one `Router`; the input then ends as
+the CLI ends it (§8.5) — the completion replaced by one whose only policy is
+`Cap(0)`, ticked once — and the graph that tick **writes** is compared with
+`spanweave.dumps` of `spanweave.build` of the same records. The batch side is
+one input built through the public `build`: every zoo body is one line, so the
+bodies joined by newlines are one line-delimited stream of exports, and the
+test asserts that reading the joined stream yields exactly the records of the
+bodies read one at a time. `meta.source_digest` is dropped from the batch side
+for §4.7's reason and nothing else is normalized. The number of records routed
+is held to the zoo's own count, from `fixtures/zoo/README.md`, rather than to
+a count the receiver made.
+
+| Capture | Bodies | Routed | In the trace's graph | Written graph is the batch graph |
+|---|---|---|---|---|
+| `z1/2026-10-13-real` | 2 | 31 | 31 | yes |
+| `z1/2026-10-13-recorded` | 1 | 31 | 31 | yes |
+| `z2/2026-10-14-real` | 3 | 23 | 23 | yes |
+| `z2/2026-10-14-recorded` | 1 | 23 | 23 | yes |
+| `z3/2026-10-13-real` | 4 | 102 | 102 | yes |
+| `z3/2026-10-13-recorded` | 1 | 102 | 102 | yes |
+| `z4/2026-10-12-real` | 2 | 5 | 4 | no (L2) |
+| `z4/2026-10-12-recorded` | 1 | 5 | 4 | no (L2) |
+| `z5/2026-10-13-real` | 1 | 4 | 4 | yes |
+| `z5/2026-10-13-recorded` | 1 | 4 | 4 | yes |
+| `z6/2026-10-14-real` | 11 | 26 | 26 | yes |
+| `z6/2026-10-14-recorded` | 1 | 16 | 16 | yes |
+
+The table is the test's measurement, and the test reads it from here and
+compares it with what it measured, so a row that moves moves in this file in
+the commit that moves it, with the reason.
+
+**Two rows are short, and that is the receiver's behaviour at this pin, not a
+tolerance.** Z4's root span is claimed by no adapter (the zoo's `PROBES.md`
+S1), so §4.2 gives it no trace id and it goes to the no-trace builder (§4.3):
+the trace is released at version 4, its graph is the batch graph less exactly
+the one `unknown` node the batch keeps for the unclaimed record, and each of
+the four records it does hold is an `orphan_parent` there and in no batch
+graph. That is the zoo's L2, and the batch that answers L2 is the one that
+moves these two rows.
+
+Of the four captures on which the audit saw a trace complete once per body
+under `--quiet 0` (L3: Z3, Z1, Z2 and Z6, the real runs), each completes
+**once** here, at the tick after its last record, and its graph carries no
+`orphan_parent`: fed whole, nothing is missing a parent, and the early
+generations the audit counted were the policy firing early.
 
 ## 5. Completion — when is a trace finished?
 

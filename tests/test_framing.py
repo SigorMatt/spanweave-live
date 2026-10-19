@@ -35,7 +35,7 @@ SEEDS = (0, 1, 2, 3, 7, 11, 13, 101, 1009, 20261004)
 # What the corpus holds at the pinned sha, asserted below so that a sweep
 # which silently stops covering something is a failure rather than a smaller
 # number nobody reads. `tests/test_pins.py` is what keeps the sha still.
-LINE_RENDERINGS_EXPECTED = 51
+LINE_RENDERINGS_EXPECTED = 53
 DOCUMENT_RENDERINGS_EXPECTED = 2
 
 

@@ -150,13 +150,22 @@ Records of two traces, shuffled together and framed in arbitrary chunks,
 produce each trace's graph **byte for byte** identical to `spanweave.build` of
 that trace alone. That is conformance gate A (`SPEC.md` §4.7,
 `tests/test_conformance.py`), run over every pair of renderings from the pinned
-corpus' scenarios — 1354 cross-scenario pairs × 10 seeds × 2 graphs per pair =
-27 080 byte-for-byte comparisons. Live and batch are one model, or this library
+corpus' scenarios — 1460 cross-scenario pairs × 10 seeds × 2 graphs per pair =
+29 200 byte-for-byte comparisons. Live and batch are one model, or this library
 is not worth having.
+
+The same claim is held over traces nobody wrote for it: the **zoo gate**
+(`SPEC.md` §4.8, `tests/test_zoo_gate.py`) replays each of the twelve captures
+of a stranger's six agents, which the pinned corpus carries under
+`fixtures/zoo/`, through one `Framer` and one `Router` to end of input, and
+compares the graph written with `spanweave.build` of the same records, byte for
+byte. Ten of the twelve are equal; Z4's two are short by the one root span no
+adapter claims, which the receiver routes to no trace (§4.8 says why, and which
+batch moves them).
 
 ```bash
 make check          # ruff, ruff format --check, mypy --strict, pytest, the gates
-make conformance    # gate A alone
+make conformance    # gate A and the zoo gate alone
 make showcase       # agentgolden's rules, unchanged, evaluated per delta
 make install-check  # build the wheel, install it, run it from outside the repo
 ```

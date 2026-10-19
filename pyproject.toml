@@ -33,9 +33,11 @@ classifiers = [
 # `corpus/` is a submodule at the SAME sha, and `tests/test_pins.py` holds the
 # two equal -- moving one without the other is the failure that pin exists to
 # catch. The URL is HTTPS, not SSH, so an unauthenticated clone (CI, a
-# stranger) resolves it.
+# stranger) resolves it. Since V0 it names the library's `otlp` extra,
+# unconditionally: stock exporters send protobuf, and only
+# `spanweave.read_protobuf` with that extra reads it (SPEC.md section 0.1).
 dependencies = [
-    "spanweave @ git+https://github.com/SigorMatt/spanweave@fec7da27af517ad8b58ae3ec57827916aae60674",
+    "spanweave[otlp] @ git+https://github.com/SigorMatt/spanweave@17edf6165c724bea996cbd29af74d7fe77adf267",
 ]
 
 [project.scripts]

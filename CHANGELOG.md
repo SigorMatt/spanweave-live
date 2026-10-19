@@ -11,6 +11,65 @@ citation is dated history, resolvable at `git show b500342:WORKPLAN.md`.
 
 ## Unreleased
 
+### V0 — the pins move to the wire series' merge, and the zoo is a gate (2026-10-19)
+
+Derived parent `0de9f55`. The zoo series' first batch (`WORKPLAN.md` V0).
+
+Changed
+
+- **Both pins move to spanweave `17edf6165c724bea996cbd29af74d7fe77adf267`**,
+  the wire series' merge (PR #6): `pyproject.toml`, the `corpus/` submodule and
+  `uv.lock`. spanweave's version there is `0.9.1`, as at the pin before, so
+  `agentgolden`'s `spanweave>=0.9.1,<1.0` still resolves; `tests/test_pins.py`
+  asserts both. The dependency is now written **`spanweave[otlp]`**, so the
+  extra `spanweave.read_protobuf` needs (`protobuf`, `opentelemetry-proto`)
+  ships with every install of the receiver. Nothing under `spanweave_live/`
+  imports either. `SPEC.md` §0.1 and §0.2 name the new pin.
+- **Gate A grows with the corpus**: 30 scenarios, 55 renderings (53 `.jsonl`,
+  2 OTLP documents), 1460 cross-scenario pairs. The new scenario is
+  `orphan_siblings`. Every pair still produces each trace's batch graph byte
+  for byte, on all ten seeds. `README.md`'s sentence is now 1460 × 10 × 2 =
+  29 200. A new test reads that sentence back and checks it against the
+  sweep's own constants.
+- **The showcase's first-failure table did not move** at the new pin. The
+  expectation was "unchanged", because the stranger series changed
+  diagnostics and times and not edges. `make showcase` asserts the same table
+  as before, with `tests/test_showcase.py` untouched.
+
+Added
+
+- **The zoo gate**, `tests/test_zoo_gate.py`, run by `make conformance`
+  (`SPEC.md` §4.8). It covers each of the twelve captures under
+  `corpus/fixtures/zoo/`. The JSON bodies go through `Framer.document`, then
+  `Router.route`, then the end-of-input `Cap(0)` tick. Two things are then
+  checked. The written graph must equal `spanweave.dumps(spanweave.build(...))`
+  of the same records byte for byte, with the batch side built from the bodies
+  joined into one line-delimited stream (the test asserts the join is
+  faithful). And `routed` must equal the zoo's own per-body record counts,
+  read from the corpus README. **Ten rows are equal. Z4's two are short:
+  4 records of 5 reach the trace's graph.** Z4's root span is claimed by no
+  adapter, so it goes to the no-trace builder (L2). The test pins exactly that:
+  version 4, one record in the no-trace builder, the batch graph less its one
+  `unknown` node, and 4 `orphan_parent` live against 0 in batch. §4.8's table
+  holds those rows, the test reads that table back, and V2 is the batch that
+  moves them. The four L3 captures (Z3, Z1, Z2, Z6 real) complete once, at
+  the last index, with no `orphan_parent`.
+- `make install-check` reads one zoo raw body (Z4 recorded, five records) with
+  the *installed* `spanweave`, which proves that the `otlp` extra ships.
+
+Tests red on the parent (`0de9f55`, worktree under the scratchpad): every
+zoo-gate test, because the zoo is absent from the old pin (0 captures of 12).
+Also red there: the three new pin tests and the corpus-size and README
+sentence tests of gate A. Mutations shown caught:
+- a router that reads `record["trace_id"]` for a record no adapter claims
+  turns Z4's rows into 5 of 5 and is red (the Z4 test and §4.8's table);
+- an unclaimed record dropped instead of fed to the no-trace builder is red;
+- in the test itself, keeping `source_digest` on the batch side is red on 12,
+  and feeding the raw bodies where the JSON bodies belong is red on 42.
+
+`make check` green (716 passed), `make conformance` green (57),
+`make showcase` green with the table unchanged, `make install-check` green.
+
 ### The sixth sentence, and three in the tests (2026-10-07)
 
 **Prose only.** No behaviour changed, and **no test's logic or assertions

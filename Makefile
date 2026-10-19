@@ -32,13 +32,17 @@ gates:
 # spanweave.build of its own rendering. This is the project's central claim and
 # from R2 onward this target is green or red; it no longer asserts nothing.
 #
+# The zoo gate (SPEC.md section 4.8, V0) runs beside it: each of the twelve
+# captures under corpus/fixtures/zoo/ replayed to end of input, and the graph
+# written compared byte for byte with spanweave.build of the same records.
+#
 # It is also run by `check`, via `test`. This target is how you run it alone,
 # and how CI names it in a log.
 conformance:
 	@test -d corpus/fixtures/conformance || { \
 	  echo "corpus/ is not checked out: run 'git submodule update --init'"; \
 	  exit 1; }
-	uv run pytest tests/test_conformance.py -v
+	uv run pytest tests/test_conformance.py tests/test_zoo_gate.py -v
 
 # The showcase (SPEC.md section 9): agentgolden's support-agent rules, UNCHANGED,
 # evaluated on every per-record delta of agentgolden's own skipped_verification

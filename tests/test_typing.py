@@ -6,9 +6,9 @@ Until R2c the pinned `spanweave` shipped no `py.typed` marker, so `mypy
 `pyproject.toml` carried one override -- `follow_untyped_imports = true` for
 `module = ["spanweave.*"]` -- to make it look anyway (`SPEC.md` §0.2). The
 marker is now upstream (`SigorMatt/spanweave` PR #4, merged as
-`fec7da27af517ad8b58ae3ec57827916aae60674`, which is the sha both halves of the
-pin now name), so the override is deleted and these tests are what keep it
-deleted.
+`fec7da27af517ad8b58ae3ec57827916aae60674`, which both halves of the pin named
+from R2c until V0 moved them on to a later commit that ships it too), so the
+override is deleted and these tests are what keep it deleted.
 
 Three separate things are asserted, because only the three together say what
 §0.2 claimed:

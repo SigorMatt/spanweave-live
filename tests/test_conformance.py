@@ -51,9 +51,9 @@ SEEDS = (0, 1, 2, 3, 7, 11, 13, 101, 1009, 20261004)
 # What the corpus holds at the pinned sha. Asserted below, so a sweep that
 # silently stops covering something fails rather than quietly getting smaller.
 # `tests/test_pins.py` is what keeps the sha still.
-SCENARIOS_EXPECTED = 29
-RENDERINGS_EXPECTED = 53
-PAIRS_EXPECTED = 1354
+SCENARIOS_EXPECTED = 30
+RENDERINGS_EXPECTED = 55
+PAIRS_EXPECTED = 1460
 
 #: The trace id every corpus rendering uses, and the id one side of each pair is
 #: moved to so that the two are two traces rather than one.
@@ -227,6 +227,27 @@ def test_the_corpus_is_the_size_the_sweep_claims():
     assert len(pairs()) == PAIRS_EXPECTED
     documents = [path for path in renderings() if path.suffix == ".json"]
     assert len(documents) == 2, "the OTLP container renderings, framed whole"
+
+
+def test_the_readme_states_the_sweep_this_file_runs():
+    """README's gate-A sentence is a citation, and this re-derives it.
+
+    It states the pairs, the seeds, the graphs per pair and their product.
+    Each is held to this file's own constants -- the pairs to the corpus
+    count asserted above -- so a pin move that grows the corpus fails here
+    until the sentence moves with it (V0 moved it from 1354 to 1460).
+    """
+    readme = (REPO / "README.md").read_text(encoding="utf-8")
+    stated = re.search(
+        r"(\d+) cross-scenario pairs \N{MULTIPLICATION SIGN} (\d+) seeds "
+        r"\N{MULTIPLICATION SIGN} (\d+) graphs per pair =\s+"
+        r"([\d ]+) byte-for-byte comparisons",
+        readme,
+    )
+    assert stated is not None
+    pairs_, seeds, graphs, total = stated.groups()
+    assert (int(pairs_), int(seeds), int(graphs)) == (PAIRS_EXPECTED, len(SEEDS), 2)
+    assert int(total.replace(" ", "")) == PAIRS_EXPECTED * len(SEEDS) * 2
 
 
 def test_every_corpus_rendering_identifies_the_one_trace_the_relabelling_assumes():
