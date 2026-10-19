@@ -13,8 +13,8 @@ the orchestrator's execution state, which batch is next and what it must
 contain. **It is edited only by the orchestrator**, and a sub-agent executing a
 batch never edits it. It exists only for the life of a series and is deleted at
 the close, with what outlives it folded into `TASKS.md`; the receiver series'
-last state is at `git show b500342:WORKPLAN.md`. No series is open at this tip,
-so there is no `WORKPLAN.md` here.
+last state is at `git show b500342:WORKPLAN.md`. The zoo series is open on `zoo`,
+and its `WORKPLAN.md` is here.
 
 ## What this project is
 
