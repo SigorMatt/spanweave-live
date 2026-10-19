@@ -73,12 +73,14 @@ TRACES_TARGET: Final = "/v1/traces"
 #: The first of the two media types it reads: OTLP/HTTP JSON, handed to
 #: `Framer.document`. Parameters (`; charset=utf-8`) are allowed and ignored;
 #: the type itself is matched case-insensitively, as HTTP says it is. It is
-#: also the type of every answer, whichever media type the request had.
+#: also the type of every refusal, whichever media type the request had, and of
+#: the answer to an accepted JSON request.
 JSON_MEDIA_TYPE: Final = "application/json"
 
 #: The second: OTLP/HTTP protobuf, the media type a stock exporter sends every
 #: export as, handed to `spanweave.read_protobuf` (V1, the zoo's L1). Matched by
-#: the same rule as the first.
+#: the same rule as the first. An accepted request of this type is answered in
+#: it (V1a).
 PROTOBUF_MEDIA_TYPE: Final = "application/x-protobuf"
 
 #: The media types this endpoint reads, in the order the refusal names them.
@@ -108,10 +110,14 @@ UNREADABLE_BODY: Final = "unreadable_body"
 #: code is the fact that the answer never arrived (`SPEC.md` §1.5, §7.2).
 CLIENT_ABORTED: Final = "client_aborted"
 
-#: What an accepted body answers. `{}` and not OTLP's `partialSuccess` envelope:
-#: see `SPEC.md` §7.2 for why an empty one would be a claim this receiver cannot
-#: make and a filled one would be a dialect read.
-_ACCEPTED_BODY: Final = b"{}"
+#: What an accepted body answers, in the media type the request declared. `{}`
+#: for JSON and not OTLP's `partialSuccess` envelope: see `SPEC.md` §7.2 for why
+#: an empty one would be a claim this receiver cannot make and a filled one
+#: would be a dialect read. For protobuf, the empty `ExportTraceServiceResponse`
+#: -- the same claim, `{}`'s and no more -- which encodes as **zero bytes**, so
+#: answering in the request's encoding needs no encoder and no protobuf import
+#: here (V1a). A refusal is JSON for either: `_coded` below.
+_ACCEPTED: Final = {JSON_MEDIA_TYPE: b"{}", PROTOBUF_MEDIA_TYPE: b""}
 
 #: Read nothing, and said so. A request that was refused still yields one of
 #: these, as a poll that read nothing still yields in §7.1: "nothing arrived"
@@ -352,9 +358,15 @@ class Endpoint:
                     ),
                 ),
             )
+        # The request passed `_unsupported`, so its declared media type is one
+        # of the two keys: the answer is in that type, never in one the bytes
+        # suggest (`SPEC.md` §7.2).
+        media_type = _media_type(request.content_type)
         return Exchange(
             request=request,
-            response=Response(status=200, body=_ACCEPTED_BODY),
+            response=Response(
+                status=200, body=_ACCEPTED[media_type], content_type=media_type
+            ),
             records=read,
         )
 
@@ -448,6 +460,10 @@ class Endpoint:
     @staticmethod
     def _coded(code: str) -> bytes:
         """A refusal's body: the receiver's own code, and nothing else.
+
+        JSON whichever media type the request declared. OTLP asks a server to
+        refuse a protobuf request with an encoded `google.rpc.Status`, which
+        would need an encoder this package does not have (`SPEC.md` §7.2).
 
         `sort_keys=True` and a separator with no spaces, because a response is
         output and output here is byte-identical for identical input

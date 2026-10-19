@@ -11,6 +11,51 @@ citation is dated history, resolvable at `git show b500342:WORKPLAN.md`.
 
 ## Unreleased
 
+### V1a — a protobuf request is answered in its own encoding (2026-10-19)
+
+Derived parent `fef26e0`. The zoo series' fourth batch (`WORKPLAN.md` V1a), the
+thread V1 left for the close and the maintainer's 2026-10-19 decision. It
+finishes the zoo's `PROBES.md` L1 for the answer: V1 read what a stock exporter
+sends, and answered it in JSON, which that exporter cannot decode.
+
+Changed
+
+- **An accepted `application/x-protobuf` request is answered `200` with
+  `Content-Type: application/x-protobuf` and an empty body.** That is the
+  empty `ExportTraceServiceResponse`, which encodes as zero bytes, so no
+  encoder is needed and nothing under `spanweave_live/` imports a protobuf
+  runtime. It is the same message `{}` is in OTLP/JSON, so it claims nothing
+  `{}` does not, and §7.2's `partialSuccess` reasoning is unchanged. The
+  answer's type is the request's declared media type as §7.2 matches it,
+  never a type guessed from the bytes.
+- **A refusal stays `{"code": ...}` as `application/json` for either media
+  type.** OTLP asks for an encoded `google.rpc.Status` there, which would need
+  an encoder. §7.2 states the deviation and its reason.
+- JSON requests are unchanged: `{}` as `application/json`. `README.md` names
+  the request and not the answer, so it did not move. `SPEC.md` §7.2 amended:
+  the sentence whose premise this corrects, the deviation, and what the
+  section is tested against.
+
+Added
+
+- **The zero bytes are re-derived, not asserted.** A test encodes
+  `ExportTraceServiceResponse()` with the `otlp` extra's runtime, which a test
+  may import and the package may not, and holds the endpoint's answer to it.
+  It reads the bytes back as that message with no `partial_success`, and holds
+  its OTLP/JSON rendering equal to the `{}` a JSON request gets.
+- A table of requests at the pure layer holds the answer's type to the
+  declared one under HTTP's matching, and every refusal of a protobuf request
+  to JSON. `respond` is shown writing the type and a `Content-Length` of `0`.
+  The socket test over every zoo raw body now checks the type and `b""`, and
+  the JSON and truncated-protobuf socket tests check theirs.
+
+Mutations shown caught:
+- the answer's type always `application/json`, as on the parent: red;
+- the answer's type taken from the header verbatim (case and parameters): red;
+- the answer's type guessed from the body's first byte: red;
+- a non-empty protobuf success body (`{}` under the protobuf type): red;
+- a refusal (`415`, or the `400` cases) answered in the request's type: red.
+
 ### V2 — every record the receiver routes reaches a trace or an event says why not (2026-10-19)
 
 Derived parent `2ef0231`. The zoo series' third batch (`WORKPLAN.md` V2),

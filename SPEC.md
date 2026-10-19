@@ -2179,18 +2179,30 @@ dialect read (§1.1). A body that holds records the reader could read and some i
 could not is likewise a `200` — it was read, and the diagnostics say what was
 skipped.
 
-An accepted body answers `{}`, and **not** OTLP's `partialSuccess` envelope —
-whichever media type it came in, with the response's `Content-Type` saying
-`application/json` either way. A protobuf answer would be an encoded
-`ExportTraceServiceResponse`, and encoding one is the protobuf runtime's work,
-which this package does not import (above); the answer is the one this section
-already gave, and its header says truthfully what it is.
+An accepted body is answered **in the media type its request declared**, and
+with one message for both: the empty `ExportTraceServiceResponse`, and **not**
+OTLP's `partialSuccess` envelope. A JSON request answers `{}` as
+`application/json`, which is that message in OTLP/JSON. A protobuf request
+answers `200` with `Content-Type: application/x-protobuf` and an **empty
+body**, which is the same message in protobuf: the empty response encodes as
+zero bytes, so answering in the request's encoding needs no encoder, and
+nothing under `spanweave_live/` imports a protobuf runtime to do it (above;
+V1a). Before V1a a protobuf request was answered `{}` as `application/json`, on
+the premise that a protobuf answer needs an encoder; the empty one does not,
+and a stock exporter cannot decode a JSON answer to a protobuf request. The
+answer's type is the request's media type as matched above, lowercased and
+without parameters — never a type the bytes suggest, which is the sniffing this
+section refuses.
 That is deliberate and is the §1.1 line again: a truthful `rejectedSpans` would
 require counting spans, which only a dialect read can do, and an always-empty
 `partialSuccess` would be a claim of full success this receiver cannot make
-about a body whose records it has not yet routed. A refusal answers
+about a body whose records it has not yet routed. The zero bytes claim no more
+than `{}` does, because they are the same message. A refusal answers
 `{"code": "<the receiver's code>"}`, serialized with `sort_keys=True`, so the
-poster is told what the event says.
+poster is told what the event says — as `application/json` for **either**
+media type, which deviates from OTLP: OTLP asks for a protobuf request's
+refusal to be an encoded `google.rpc.Status`, which is not empty and so would
+need the encoder this package does not import.
 
 Nothing in `Endpoint.handle` raises for anything a request can carry — not a
 body that is not JSON, not one declared protobuf that does not parse, not one
@@ -2335,6 +2347,24 @@ holds the graph written to the JSON replay's, byte for byte (§4.8), and
 `tests/test_cli.py` posts Z1's real run to `spanweave-live serve` and holds the
 file it writes to the batch graph. Before V1 every one of those bodies was a
 `415`.
+
+**The answer's encoding is held on the same bodies** (V1a): each of the zoo's
+raw bodies posted over the socket is answered `application/x-protobuf` and
+`b""`, and a test re-derives the zero bytes with the protobuf runtime the
+`otlp` extra ships — which a test may import and the package may not — as
+`ExportTraceServiceResponse().SerializeToString()`, reads them back as that
+message with no `partial_success`, and holds its OTLP/JSON rendering equal to
+the `{}` a JSON request gets. At the pure layer, a table of requests holds the
+answer's type to the declared one under HTTP's matching (case, parameters,
+`gzip`, an empty body), a protobuf body declared JSON to `{}` as JSON, and
+every refusal of a protobuf request — `400` on a truncated body and on a body
+that will not inflate, `415` on a coding or a spelling it does not read — to
+`{"code": …}` as `application/json`. V1a's named mutations, all shown caught:
+**the answer's type taken from anything but the request's declared media
+type** — always `application/json`, as before V1a; the header verbatim, with
+its case and parameters; or a type guessed from the body's first byte — and
+**a non-empty protobuf success body** (`{}` under the protobuf type). A refusal
+answered in the request's type is red too.
 
 V1's two named mutations, both shown caught: **the protobuf body handed to the
 JSON reader** (`Framer.document` instead of `read_protobuf`), which reads each
