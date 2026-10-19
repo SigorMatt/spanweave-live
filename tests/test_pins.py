@@ -122,9 +122,10 @@ def test_the_dependency_pin_is_a_full_sha():
 def test_the_dependency_carries_the_otlp_extra_and_no_other():
     """V0: the receiver depends on `spanweave[otlp]`, unconditionally.
 
-    The zoo series' decision for V1 (`WORKPLAN.md` §3): a receiver exists to
-    receive what stock exporters send, and they send protobuf, which only
-    `spanweave.read_protobuf` reads, and only with the `otlp` extra installed.
+    The zoo series' decision for V1 (`TASKS.md`, its decisions log,
+    2026-10-16): a receiver exists to receive what stock exporters send, and
+    they send protobuf, which only `spanweave.read_protobuf` reads, and only
+    with the `otlp` extra installed.
     So the extra is part of the runtime requirement, not an extra of this
     package a user has to know to ask for. Exactly `otlp`: an extra added
     beside it would be a second optional surface of the library arriving in

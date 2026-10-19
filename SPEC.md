@@ -29,10 +29,10 @@ its batch lands:
 | 8 | CLI | What does a person type? |
 | 9 | The showcase | What does a consumer do with all this, and what does live buy over batch? |
 
-Sections 3 onward are written by the batch that builds them (`TASKS.md`,
-R1–R8). §9 is the odd one: it specifies a **test**, not a piece of the
-receiver, because the showcase adds no library behaviour and the reason it adds
-none is itself a claim worth stating (§9.1). This document begins with the two sections that constrain all of them:
+Sections 3 onward are written by the batch that builds them (`TASKS.md`:
+the receiver series' R1–R8, amended since by the zoo series' V0–V3). §9 is
+the odd one: it specifies a **test**, not a piece of the receiver, because
+the showcase adds no library behaviour and the reason it adds none is itself a claim worth stating (§9.1). This document begins with the two sections that constrain all of them:
 what the receiver will never do, and the three properties of the library
 underneath it that it has to be designed around.
 
@@ -719,8 +719,9 @@ stay `refused` and nothing else. **More than one adapter claimed the record**:
 the library refuses an ambiguous record rather than guessing (`spanweave`
 `SPEC.md` §6.1), so there is nobody to ask for a trace id. The record goes to
 the no-trace builder, which raises the library's own refusal, and that becomes
-a `refused` event (§4.4). And a `SpanweaveError` while classifying or parsing,
-below.
+a `refused` event (§4.4) — except under a router given an `adapter`, the one
+exception §4.3 states, where it is absorbed and announced by nothing. And a
+`SpanweaveError` while classifying or parsing, below.
 
 **The claimant's id and the envelope's, measured equal.** Where an adapter
 claims an unpacked record, the claimant's id routes and the envelope is not
@@ -794,7 +795,8 @@ adapters claim is "ambiguous" to routing, reaches the no-trace builder — which
 given the name, absorbs it without refusing — and is announced by nothing,
 where `spanweave.build` under the same name reads it as that adapter's. Making
 routing honour the name is a change to what §4.1's `adapter` means for routing,
-and it is registered for the series' close, not decided here.
+and it is registered in `TASKS.md` for the next receiver series (the zoo
+series' close, V4), not decided here.
 
 One consequence inherited rather than chosen: a no-trace builder holding
 **only** unclaimed records refuses `graph()`, because `spanweave` refuses an

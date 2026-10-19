@@ -5,11 +5,99 @@ All notable changes to this project. **Nothing here is frozen**: the version is
 
 The format is loosely [Keep a Changelog](https://keepachangelog.com/); the unit
 of change is a **batch**, each entry names the batch, and `TASKS.md` is the
-registry that lists them one line apiece. Entries below the R9 heading may still
-cite the series' `WORKPLAN.md`; that file was deleted at the close and each such
-citation is dated history, resolvable at `git show b500342:WORKPLAN.md`.
+registry that lists them one line apiece. A batch entry may cite its series'
+`WORKPLAN.md`, which was deleted at that series' close; each such citation is
+dated history, resolvable at `git show 3077bec:WORKPLAN.md` for the zoo
+series' entries (V0–V4) and at `git show b500342:WORKPLAN.md` for the receiver
+series' (R0–R9).
 
 ## Unreleased
+
+## 0.0.2 — the zoo series (2026-10-19)
+
+The version moved from `0.0.1` at the series' close (V4): nothing is frozen,
+and the event-code set grew (`no_trace`, V2). Every entry under this heading is
+a batch of the zoo series, newest first.
+
+### V4 — the zoo series closes, and its plan is deleted (2026-10-19)
+
+Derived parent `3077bec`. The zoo series' last batch (V4). No behaviour
+changed but the version `--version` prints: nothing under `spanweave_live/`
+moved but `__version__` and one comment.
+This is the close. The series' plan is deleted, and what outlives it is folded
+into tracked files.
+
+Added
+
+- **`TASKS.md` registers the zoo series**, above the receiver series. It has
+  the six batches with the commit that closed each, the plan's decisions log
+  (§3) and resume note (§4) folded in, L1–L4 dispositioned, and V2's four
+  threads. L1's reader half is spanweave's W1 `4ecf414`. It also has the order
+  of what remains before the merge (the plan's §2), and the origins (§5).
+  Where a number lives in `SPEC.md` or `README.md` and a test re-derives it
+  there, the registry points at it rather than copying it. One sentence of the
+  2026-10-19 V2 decision row moved, as V4's row directs (thread V2(c)): the
+  event carries the library's code; which field failed is the library's
+  sentence, which the receiver does not carry.
+- **`tests/test_record.py`** holds that record to what it says. The version
+  must be one number in `pyproject.toml`, the package, `uv.lock` and this
+  file's newest versioned heading. The heading's entries must be the
+  registry's batches, newest first. The registry must list V0–V4 in the order
+  they ran, each sha a non-`plan:` ancestor of the tip whose body names its
+  batch. The decisions log must be as long as it says, and L1's W1 sha must be
+  the one spanweave's own registry gives at the pin. Every
+  `git show <sha>:WORKPLAN.md` citation must resolve. `CLAUDE.md` must say a
+  series is open exactly while a plan exists, and rule 1 must name every
+  source of a trace id `SPEC.md` §1.1 names. CI's `check` job must keep the
+  history the file reads.
+
+Changed
+
+- **The version is `0.0.2`** (`pyproject.toml`, `spanweave_live.__version__`,
+  `uv.lock`). Nothing is frozen, and the event-code set grew. This file now
+  groups its entries under `0.0.2` and `0.0.1`. V0's entry had lost its
+  `### V0 — ` heading prefix, and the new test found it.
+- **`CLAUDE.md`** says no series is open and where the zoo series' plan is.
+  Standing rule 1 names spanweave's public `envelope()` as a source of trace
+  ids, in the plan's §0.6 words (thread V2(d)).
+- **Thread V2(a), the sentences.** Each sentence this series wrote saying that
+  a record reaching the no-trace builder is announced now names the one
+  exception: a router given `adapter=` absorbs a record two adapters claim
+  with no event. These are `SPEC.md` §4.2's sentence on an ambiguous record,
+  the `NO_TRACE` comment in `spanweave_live/routing.py`, a section comment in
+  `tests/test_routing.py` and README's `Router` row. §4.3 already named it,
+  and now says where it is registered. The V2 entry below names it in its own
+  bullet and is left as it stands.
+- `CONTRIBUTING.md`'s sentence about the deleted plan covers every series, and
+  `tests/test_pins.py`'s citation of the plan's §3 points at `TASKS.md`. This
+  file's preamble says where each series' `WORKPLAN.md` citations resolve.
+  `SPEC.md` §0 names the zoo series beside R1–R8.
+- CI's `check` job checks out with `fetch-depth: 0`, because the new test reads
+  history. No job is added or renamed, so the ruleset's required checks are
+  the same names.
+
+Removed
+
+- **`WORKPLAN.md`**, as its §0.6 said from the series' first commit. It is
+  at `git show 3077bec:WORKPLAN.md`. No `plan:` commit follows this one.
+
+Not here: `reviews/` is unchanged. No review of this series had been archived
+when this commit was made. The cold review runs after it, in two halves
+(`TASKS.md`, *What remains before the merge*).
+
+Tests red on the parent (`3077bec`, worktree under the scratchpad): 8 of the
+new file's 10. The two green there are guards: the plan citations resolve, and
+`CLAUDE.md` said a series was open while its plan existed. Mutations shown
+caught, each red on exactly one test:
+- `spanweave_live.__version__` left at `0.0.1`: red (the version);
+- V2 registered as its `plan:` commit `b01c945`: red (the commits);
+- V0's heading prefix lost again: red (the changelog's entries);
+- the decisions log said to be seven rows: red (its length);
+- `CLAUDE.md` still saying the series is open: red (the open-series test);
+- rule 1 without the envelope clause: red (rule 1);
+- W1 cited as its decision commit `898e9f5`: red (L1's W1);
+- run 2 written V3 → V1a → V4: red (the order);
+- `fetch-depth: 0` dropped from CI: red (the history).
 
 ### V3 — what a generation is, and what the policies do at values the audit never ran (2026-10-19)
 
@@ -220,7 +308,7 @@ constant). Mutations shown caught:
   red (media-type test);
 - the refusal detail naming JSON alone: red (415 detail ×3).
 
-the pins move to the wire series' merge, and the zoo is a gate (2026-10-19)
+### V0 — the pins move to the wire series' merge, and the zoo is a gate (2026-10-19)
 
 Derived parent `0de9f55`. The zoo series' first batch (`WORKPLAN.md` V0).
 
@@ -278,6 +366,11 @@ sentence tests of gate A. Mutations shown caught:
 
 `make check` green (716 passed), `make conformance` green (57),
 `make showcase` green with the table unchanged, `make install-check` green.
+
+## 0.0.1 — the receiver series
+
+The version from R0 to the receiver series' merge: its batches R0–R9 and the
+follow-up commits of 2026-10-07 after its close, newest first.
 
 ### The sixth sentence, and three in the tests (2026-10-07)
 

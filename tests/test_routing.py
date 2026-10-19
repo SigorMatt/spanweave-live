@@ -299,7 +299,8 @@ def test_the_no_trace_builder_says_what_a_batch_build_of_the_same_records_says()
 
 # --------------------------------------------------------------------------
 # An unpacked record no adapter claims is routed by its envelope, and every
-# record that reaches the no-trace builder is announced (V2, the zoo's L2).
+# record that reaches the no-trace builder is announced (V2, the zoo's L2) --
+# but one, under a named adapter (`SPEC.md` §4.3), pinned below as it is.
 # --------------------------------------------------------------------------
 
 #: The code and the three details of V2, spelled here rather than imported so

@@ -13,8 +13,9 @@ the orchestrator's execution state, which batch is next and what it must
 contain. **It is edited only by the orchestrator**, and a sub-agent executing a
 batch never edits it. It exists only for the life of a series and is deleted at
 the close, with what outlives it folded into `TASKS.md`; the receiver series'
-last state is at `git show b500342:WORKPLAN.md`. The zoo series is open on `zoo`,
-and its `WORKPLAN.md` is here.
+last state is at `git show b500342:WORKPLAN.md`, and the zoo series' at
+`git show 3077bec:WORKPLAN.md`. No series is open at this tip, so there is no
+`WORKPLAN.md` here.
 
 ## What this project is
 
@@ -42,15 +43,18 @@ either, and that too is a halt point.
 
 ## Standing rules — non-negotiable
 
-These are `WORKPLAN.md` §0.6, which is where they were first written, repeated
-here because they are the contract and a session must not have to read the plan
-to find them. A change that violates one is wrong even if it passes tests.
+These were first written as a series' `WORKPLAN.md` §0.6 — the receiver
+series', and rule 1's envelope clause the zoo series' — and are repeated here
+because they are the contract and a session must not have to read a plan to
+find them. A change that violates one is wrong even if it passes tests.
 
 1. **It never reads a dialect.** A record's trace id, span id or kind comes from
    `spanweave`'s adapters (`spanweave.adapters.classify` and the claiming
-   adapter's `parse`), never from a key the receiver looks up itself. No
-   `record["trace_id"]`, no container walk, no dialect test under
-   `spanweave_live/`. (`SPEC.md` §1.1.)
+   adapter's `parse`) **or, for a record the reader unpacked from an OTLP
+   export that no adapter claims, from spanweave's public `envelope()` — the
+   transport's id, which the stranger series decided is not a dialect** —
+   never from a key the receiver looks up itself. No `record["trace_id"]`, no
+   container walk, no dialect test under `spanweave_live/`. (`SPEC.md` §1.1.)
 
 2. **It carries no rules and no semantics.** A consumer evaluates graphs; the
    receiver hands them over. No roles, no severity, no risk, no cost, no scoring,

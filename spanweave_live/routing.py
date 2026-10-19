@@ -85,7 +85,9 @@ REFUSED_AT_CAP: Final = "refused_at_cap"
 #: A record reached the no-trace builder (`SPEC.md` §4.2, §4.3). Not a refusal
 #: -- the builder absorbs it, and the library's own account of it is in that
 #: builder's graph -- but a routing decision, and §1.5 says a decision is
-#: never silent. `detail` is exactly one of the three below.
+#: never silent. `detail` is exactly one of the three below. One exception,
+#: older than this code and stated in §4.3: under a router given an `adapter`,
+#: a record two adapters claim reaches that builder with no event.
 NO_TRACE: Final = "no_trace"
 
 #: `no_trace`'s detail: no adapter claimed a record the reader did not unpack
