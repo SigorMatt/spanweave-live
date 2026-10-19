@@ -19,7 +19,9 @@ two codes it refuses with. The endpoint's **third** code, `CLIENT_ABORTED`, was
 added after the series closed and is not a refusal: a poster that goes away
 before reading its answer is an event with a code, not a traceback nobody
 counted (`SPEC.md` §7.2). The zoo series' V1 adds `PROTOBUF_MEDIA_TYPE`, the
-second media type the endpoint serves: what a stock exporter sends.
+second media type the endpoint serves: what a stock exporter sends. After its
+close, `NO_GRAPH` is the code a completion emits for a trace no adapter can
+read (`SPEC.md` §5.4).
 
 **R7 adds nothing here**, which is the shape of that batch rather than an
 omission: the CLI (`SPEC.md` §8) is a *caller* of everything above, and its one
@@ -38,6 +40,7 @@ from spanweave_live.completion import (
     COMPLETED,
     FORGOTTEN,
     LATE_ARRIVAL,
+    NO_GRAPH,
     NOT_WRITTEN,
     QUIET,
     RELEASED,
@@ -119,6 +122,7 @@ __all__ = [
     "LATE_ARRIVAL",
     "NOT_WRITTEN",
     "NO_ENVELOPE",
+    "NO_GRAPH",
     "NO_ID",
     "NO_TRACE",
     "PROTOBUF_MEDIA_TYPE",

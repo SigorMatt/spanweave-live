@@ -377,6 +377,27 @@ def protobuf_export(*spans: dict) -> bytes:
     return request.SerializeToString()
 
 
+#: The two spans of `unread_export`, root first, as an exporter batches them.
+UNREAD_ROOT = "aaaaaaaaaaaaaaaa"
+UNREAD_CHILD = "bbbbbbbbbbbbbbbb"
+
+
+def unread_export() -> bytes:
+    """An export no adapter can read: a plain HTTP health check (H1 R-1).
+
+    Two spans, root and child, both ended, with no attribute any adapter
+    reads, and one valid trace id. Since V2 the envelope's id makes it a trace
+    of its own (`SPEC.md` §4.2), whose graph the library refuses
+    (`adapter_unconfident`) -- as `spanweave.build` of the same line refuses.
+    Hand-made here, beside the other exports, because no corpus fixture is one:
+    the zoo's every generation holds a claimed record.
+    """
+    return otlp_export(
+        otlp_span(UNREAD_ROOT, claimed=False),
+        otlp_span(UNREAD_CHILD, parent=UNREAD_ROOT, claimed=False),
+    )
+
+
 def test_the_no_trace_code_and_its_details_are_the_package_s_constants():
     import spanweave_live
 
@@ -743,6 +764,105 @@ def test_no_cap_is_the_default():
         router.route(openinference("s0", trace=f"t{n}"))
     assert len(router.trace_ids) == 12
     assert router.counts == {}
+
+
+# --------------------------------------------------------------------------
+# A trace counts against the cap from its first claimed record (§4.5, H1
+# R-1): one no adapter can read is held off it, as the no-trace builder is.
+# --------------------------------------------------------------------------
+
+
+def unread_records() -> tuple:
+    return Framer().document(unread_export()).records
+
+
+def test_a_trace_no_adapter_claims_is_held_but_not_counted_at_the_cap():
+    """The health check's trace has a builder and leaves the slot to `t1`."""
+    router = Router(max_traces=1)
+    routed = [router.route(record) for record in unread_records()]
+    assert [r.trace_id for r in routed] == [EXPORT_TRACE, EXPORT_TRACE]
+    assert all(r.events == () for r in routed), "never refused at the cap"
+    assert [r.version for r in routed] == [1, 2]
+
+    admitted = router.route(openinference("s0", trace="t1"))
+    assert admitted.events == (), "the unread trace took no slot"
+    assert admitted.builder is router.builder("t1")
+    assert router.trace_ids == (EXPORT_TRACE, "t1")
+    assert router.counts == {}
+
+
+def test_a_record_no_adapter_claims_is_never_refused_at_the_cap():
+    """Whichever trace it names: a full cap admits the unread trace anyway."""
+    router = Router(max_traces=1)
+    router.route(openinference("s0", trace="t1"))
+    routed = [router.route(record) for record in unread_records()]
+    assert all(r.events == () for r in routed)
+    assert router.trace_ids == ("t1", EXPORT_TRACE)
+    assert router.counts == {}
+
+
+def test_the_claimed_record_that_would_make_an_unread_trace_count_is_refused():
+    """At the cap, as a new trace's first record is: refused, in the open.
+
+    `t1` holds the one slot, so the claimed span that would make the health
+    check's trace count is `refused_at_cap`; the trace keeps its builder and
+    its two records, and an unclaimed record of it is still absorbed.
+    """
+    router = Router(max_traces=1)
+    router.route(openinference("s0", trace="t1"))
+    for record in unread_records():
+        router.route(record)
+    (claimed,) = Framer().document(otlp_export(otlp_span("cccccccccccccccc"))).records
+    (unclaimed,) = (
+        Framer()
+        .document(otlp_export(otlp_span("dddddddddddddddd", claimed=False)))
+        .records
+    )
+
+    refused = router.route(claimed)
+    (event,) = refused.events
+    assert event.code == REFUSED_AT_CAP
+    assert (event.index, event.trace_id) == (4, EXPORT_TRACE)
+    assert "max_traces" in event.detail
+    assert refused.builder is None and refused.version is None
+    held = router.builder(EXPORT_TRACE)
+    assert held is not None and held.version == 2, "the record was not absorbed"
+
+    assert router.route(unclaimed).events == ()
+    assert held.version == 3
+    assert router.counts == {REFUSED_AT_CAP: 1}
+    assert router.trace_ids == ("t1", EXPORT_TRACE)
+
+
+def test_a_trace_holding_one_claimed_record_counts_at_the_cap_from_it():
+    """The guard: Z4's shape, an unclaimed root and a claimed child, counts.
+
+    Uncounted from the root, counted from the child -- so a second trace is
+    refused at the cap exactly as before V2 made the root routable.
+    """
+    export = otlp_export(
+        otlp_span(UNREAD_ROOT, claimed=False),
+        otlp_span(UNREAD_CHILD, parent=UNREAD_ROOT),
+    )
+    router = Router(max_traces=1)
+    for record in Framer().document(export).records:
+        assert router.route(record).events == ()
+    refused = router.route(openinference("s0", trace="t1"))
+    assert [event.code for event in refused.events] == [REFUSED_AT_CAP]
+    assert router.trace_ids == (EXPORT_TRACE,)
+
+
+def test_an_unread_trace_a_claimed_record_joins_is_one_trace_with_a_graph():
+    """The guard, uncapped: the claimed record reads the trace as batch does."""
+    joining = otlp_export(otlp_span("cccccccccccccccc", parent=UNREAD_ROOT))
+    router = Router()
+    for body in (unread_export(), joining):
+        for record in Framer().document(body).records:
+            assert router.route(record).events == ()
+    held = router.builder(EXPORT_TRACE)
+    assert held is not None and held.version == 3
+    whole = unread_export() + b"\n" + joining + b"\n"
+    assert live(held) == spanweave.dumps(undigested(spanweave.build(whole)))
 
 
 # --------------------------------------------------------------------------

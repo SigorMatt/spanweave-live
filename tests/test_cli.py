@@ -694,6 +694,50 @@ def test_a_graph_that_could_not_be_written_is_exit_3(tmp_path) -> None:
     assert lines(result.stderr)[-1]["exit"] == 3
 
 
+def test_a_trace_no_adapter_can_read_is_no_graph_and_the_run_exits_0(
+    tmp_path,
+) -> None:
+    """Ordinary traffic is not a failed delivery (`SPEC.md` §5.4, §8.6).
+
+    A plain HTTP health check exported over OTLP, replayed with `--once` and
+    `--root-grace 0`: no root the receiver can see, so only end of input's
+    `Cap(0)` completes it. It is one `router` line of code `no_graph` with the
+    library's code, no `not_written`, no file, and `finished` counts it with
+    `exit` `0`.
+    """
+    from tests.test_routing import EXPORT_TRACE, unread_export
+
+    source = tmp_path / "health.jsonl"
+    source.write_bytes(unread_export() + b"\n")
+    out = tmp_path / "out"
+    result = run(
+        "tail",
+        str(source),
+        "--out",
+        str(out),
+        "--once",
+        "--poll-seconds",
+        "0",
+        "--root-grace",
+        "0",
+    )
+    assert result.returncode == 0, result.stderr.decode()
+    said = only(result.stderr, "no_graph")
+    assert {key: said[key] for key in said if key != "detail"} == {
+        "code": "no_graph",
+        "layer": "router",
+        "index": 2,
+        "trace_id": EXPORT_TRACE,
+        "spanweave_code": "adapter_unconfident",
+    }
+    assert "not_written" not in codes(result.stderr)
+    assert "Cap(records=0)" in str(only(result.stderr, "completed")["detail"])
+    finished = lines(result.stderr)[-1]
+    assert finished["exit"] == 0
+    assert finished["counts"] == {"completed": 1, "no_graph": 1, "released": 1}
+    assert not out.exists() or list(out.iterdir()) == []
+
+
 def test_a_refused_body_is_an_observation_and_the_run_exits_0(tmp_path) -> None:
     """A `415` and a `400` are what the endpoint saw, not what it could not do."""
     out = tmp_path / "out"

@@ -16,9 +16,94 @@ series' (R0–R9).
 ## 0.0.2 — the zoo series (2026-10-19)
 
 The version moved from `0.0.1` at the series' close (V4): nothing is frozen,
-and the event-code set grew (`no_trace`, V2). Under this heading are the zoo
-series' batches V0–V4 and, above them, the commits made after its close,
-newest first.
+and the event-code set grew (`no_trace`, V2; `no_graph`, after the close). Under
+this heading are the zoo series' batches V0–V4 and, above them, the commits made
+after its close, newest first.
+
+### A trace no adapter can read is announced as no_graph, and stays off the cap until it holds a claimed record (2026-10-20)
+
+Derived parent `1df7a35`. The second commit after the series' close, and the
+one behaviour change among them, answering R-1 of the first half of its cold
+review (run 1, archived under `reviews/` by a later commit of these). Since V2
+an export no adapter claims, a plain HTTP health check, is an identified trace
+whose graph the library refuses (`adapter_unconfident`), as a batch build of
+the same records refuses. Live still equalled batch; what followed had been
+chosen by nobody: exit 3 for ordinary traffic, and a cap slot only end of input
+released. This decides it.
+
+Changed
+
+- **The event.** At completion, a refusal of `graph()` whose code is
+  `adapter_unconfident` is one counted **`no_graph`** event carrying that code,
+  made at materialization whether or not a directory was named, and no
+  `not_written` follows it. It is a fact about the input, as `no_trace` is, so
+  §8.6's exit 3 does not count it: the CLI exits `0` on such a trace, and
+  `finished` counts it. A refusal with any other code is still `not_written`
+  and exit 3. New public name: `NO_GRAPH`.
+- **The cap.** A trace counts against `max_traces` from the first claimed record
+  it absorbs, and not before: a record no adapter claims is never refused at the
+  cap, whichever trace it names, and the builder of a trace holding only such
+  records takes no slot. At the cap, the claimed record that would make such a
+  trace count is `refused_at_cap`, as a new trace's first record is; the trace
+  keeps its builder and its records. The cost is stated in §4.5: `max_traces`
+  does not bound those builders, and completion is what releases them.
+- **`RootEnded`.** A trace with no graph has no root the receiver can see, so
+  `RootEnded` alone never completes it; `Quiet`, `Cap` and end of input do, as
+  `no_graph`. §5.3 says so beside the rootless trap, and README's third trap
+  gains it. No code moved for this: the tick already read a refused graph as "no
+  root seen yet".
+- **The record.** The "unreachable" sentences go: §5.4's step 2, `routing.py`'s
+  `_write` and `_root_ended`, and a fourth the decision did not count, §5.7's
+  parenthetical, which cited step 2's. `SPEC.md` §4.5, §5.1 (the code list),
+  §5.3, §5.4, §5.5 (the one case that does not re-open), §5.7, §8.3 and §8.6
+  amended; §5.4's step 3 said "refused in step 1" of step 2, and says step 2.
+  README's exit-code line, its `Router` row and the comment on its end-of-input
+  `Cap(0)`, which said a replay always leaves files behind, say what is true.
+
+Added
+
+- **One hand-made export no adapter can read**, `unread_export()` in
+  `tests/test_routing.py` beside the other hand-made exports: two spans, root
+  and child, both ended, no attribute any adapter reads, one valid trace id.
+  Fourteen test items are new, the guards below among them. The routing tests
+  hold the cap: the
+  unread trace is held and not counted, its records are never refused at a full
+  cap, and the claimed record that would make it count is `refused_at_cap`.
+  Under `Quiet(0.5)` and `Cap(2)`, each with and without a directory, the
+  completion's events are `completed`, `no_graph` (`adapter_unconfident`),
+  `released`. Under `RootEnded(0.0)` alone nothing completes it up to
+  `now = 10^6`; the end-of-input `Cap(0)` does, as `no_graph`.
+  `Router(max_traces=1, completion=RootEnded(0.0))` fed the export and then
+  `zoo/z1/2026-10-13-recorded` completes z1 with none of its 31 records
+  `refused_at_cap` (31 re-derived from the zoo README). The CLI test runs
+  `tail --once --root-grace 0` on the export and requires exit `0`, `no_graph`
+  on stderr and in `finished`, no `not_written`, and no file.
+- **Three guards**, green on the parent: a trace holding one claimed record (Z4's
+  shape, an unclaimed root and a claimed child) still counts at the cap from that
+  record; uncapped, an unread trace a claimed record joins is one trace whose
+  graph is the batch graph; and a refusal of `graph()` with any other code is
+  still `not_written`, with a stub `Builder` whose `graph()` refuses with
+  another code.
+
+Red on the parent (`1df7a35`, worktree under the scratchpad), with the three
+test files overlaid: the whole suite gives 11 failed, 898 passed. The failures
+are the three routing cap tests (the export refused at the cap, or holding the
+slot), the constant, the four completion parametrizations (`not_written` or
+nothing where `no_graph` is required), the `RootEnded` test (its end-of-input
+completion has no `no_graph`), the z1 test (`refused_at_cap` on z1's records),
+and the CLI test (exit 3). The three guards passed there.
+Mutations, each run against the whole suite (909 tests):
+- `no_graph` counted toward exit 3: 1 failed, 908 passed (the CLI test);
+- an unclaimed-only trace counted against the cap: 3 failed, 906 passed (two
+  routing cap tests and the z1 test);
+- the claimed record that joins an unclaimed-only trace at the cap admitted:
+  1 failed, 908 passed (the routing test of that record);
+- `no_graph` said only where a directory was named: 3 failed, 906 passed (the
+  two parametrizations with no directory, and the `RootEnded` test);
+- a released trace not dropped from the counted set: 1 failed, 908 passed (R3's
+  `test_completing_frees_a_slot_at_the_cap`, which already held the slot);
+- every refusal of `graph()` reported as `no_graph`: 1 failed, 908 passed (the
+  guard with the stub `Builder`).
 
 ### The record test gives the review's fixes a place, and says what holds the registry (2026-10-20)
 

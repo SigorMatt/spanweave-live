@@ -50,9 +50,17 @@ COMPLETED: Final = "completed"
 #: The final graph was written. `detail` is the path.
 WRITTEN: Final = "written"
 #: There is no file for this completed trace, and `detail` says why: the
-#: library refused the graph, the trace id is not usable as one path component,
-#: or the write failed. Never silence (`SPEC.md` §1.5).
+#: library refused the graph with a code other than `adapter_unconfident`, the
+#: trace id is not usable as one path component, or the write failed. Never
+#: silence (`SPEC.md` §1.5).
 NOT_WRITTEN: Final = "not_written"
+#: A completed trace has no graph: the library refused to materialize it,
+#: `adapter_unconfident`, because no adapter can read any record its builder
+#: absorbed (`SPEC.md` §4.5, §5.4). A fact about the input, as `no_trace` is,
+#: and not a failed delivery: made at materialization whether or not the caller
+#: named a directory, carrying the library's code, and never followed by a
+#: `not_written` -- so the CLI's exit 3 does not count it (`SPEC.md` §8.6).
+NO_GRAPH: Final = "no_graph"
 #: The builder was dropped. The point of the whole section (`SPEC.md` §2.3).
 RELEASED: Final = "released"
 #: A record arrived for a trace that was completed. A new builder is opened and

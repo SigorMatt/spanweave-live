@@ -818,19 +818,36 @@ unchanged version, not the version the record would have produced.
 
 ### 4.5 `max_traces` is a cap, and the cap is counted
 
-`max_traces` bounds how many identified traces the router holds builders for,
-because the receiver's cost is in `feed` and in materialization (§2.3) and an
-unbounded stream of trace ids is unbounded memory. At the cap, a record for a
-**new** trace produces an Event with code `refused_at_cap` carrying the record's
-index and the trace id, counted, and `Routed.builder` is `None`: no builder is
-created and the record is not absorbed. It is **refused, in the open** — the
-count and the event are the receiver's answer to "what did you not handle?"
-(§1.5), and silence would have been the alternative.
+`max_traces` bounds how many identified traces the router holds builders for
+and **counts** — those holding a record an adapter claims (below) — because the
+receiver's cost is in `feed` and in materialization (§2.3) and an unbounded
+stream of trace ids is unbounded memory. At the cap, a claimed record for a
+**new** trace produces an Event with code `refused_at_cap` carrying the
+record's index and the trace id, counted, and `Routed.builder` is `None`: no
+builder is created and the record is not absorbed. It is **refused, in the
+open** — the count and the event are the receiver's answer to "what did you not
+handle?" (§1.5), and silence would have been the alternative.
 
-A record for a trace the router already holds is never refused at the cap, and
+A record for a trace the router already counts is never refused at the cap, and
 neither is a record with no trace id: the no-trace builder is not a trace, and
 counting it against the cap would make "no trace id" the thing that evicts
 real ones. `max_traces=None` is no cap.
+
+**A trace counts against the cap from the first claimed record it absorbs, and
+not before.** Since V2 a record no adapter claims can still name a trace — its
+envelope's id, read through `spanweave.envelope` (§4.2) — so an export none of
+whose spans any adapter claims, a plain HTTP health check, is a trace of its own
+whose graph the library refuses (`adapter_unconfident`), as `spanweave.build` of
+the same records refuses. It is the case the paragraph above keeps off the cap,
+records the library cannot read, which must not crowd out the traces it can:
+the builder such a trace holds is not counted, and a record no adapter claims is
+never refused at the cap, whichever trace it names. At the cap, the claimed
+record that would make such a trace count is `refused_at_cap`, as a new trace's
+first record is: it is not absorbed, `Routed.builder` is `None`, and the trace
+keeps the builder and the records it had. The cost, said rather than hidden:
+`max_traces` does not bound the builders of traces no adapter claims. What
+releases them is completion — `Quiet`, `Cap` and end of input, and never
+`RootEnded` alone (§5.3) — which reports each as `no_graph` (§5.4).
 
 Which traces to evict, and when, is **not** here: eviction is completion's
 business (§5), and a cap that quietly released a live builder would be a
@@ -1003,6 +1020,7 @@ CAP = "cap"
 COMPLETED = "completed"
 WRITTEN = "written"
 NOT_WRITTEN = "not_written"
+NO_GRAPH = "no_graph"
 RELEASED = "released"
 LATE_ARRIVAL = "late_arrival"
 FORGOTTEN = "forgotten"
@@ -1161,6 +1179,15 @@ at the tick at `now = last + S`, for each of the same S; `Cap(4)` at the fourth
 record; and `Cap(5)` never, so only the end-of-input `Cap(0)` (§8.5) completes
 it, with the batch graph.
 
+**Nor does `RootEnded` alone ever complete a trace with no graph.** A trace none
+of whose records any adapter claims (§4.5) has a graph the library refuses, so
+it has no root the receiver can see, ended or not: a tick reads the refusal as
+"no root seen yet" (§5.7), and `RootEnded(S)` never fires on it, at any S. Its
+spans may all have ended; the receiver cannot see that without a graph.
+`Quiet` and `Cap` complete it, and so does end of input (§8.5's `Cap(0)`), and
+each reports it as `no_graph` (§5.4). A caller whose stream carries traces no
+adapter can read composes `RootEnded` with one of them, as above.
+
 ### 5.4 `tick()` — evaluate, then materialize, write and release
 
 `Router.tick()` takes one clock reading, evaluates the policies against every
@@ -1183,23 +1210,28 @@ Completing one trace is four steps, in this order, and the events come back on
    first_record_at`). It is first because it is the decision; the three steps
    after it are what the decision caused.
 2. **Materialize.** `builder.graph()`, which is the batch graph of what was
-   absorbed (`spanweave` §10). It can refuse — a builder holding only records no
-   adapter claimed refuses rather than returning a graph of `unknown` nodes
-   (§4.3) — and then `Completed.graph` is `None` and the refusal is reported by
-   step 3 rather than raised. `tick()` raises nothing a record can cause, for
-   `route`'s reason (§4.4). That refusal is, today, **unreachable** through this
-   surface and the handling is deliberately kept anyway: a builder refuses a
-   graph only when nothing in it was claimed (§4.3), and a trace the router
-   identified has at least one claimed record by construction — the trace id came
-   from a claiming adapter (§4.2). So no test covers it, which is said here
-   rather than left for a reader to discover: `graph()`'s refusals are the
-   library's to define, a pin move can add one, and the receiver's answer to a
-   new one should be a `not_written` event and not a traceback that loses every
-   other trace it was holding.
+   absorbed (`spanweave` §10). It can refuse, and then `Completed.graph` is
+   `None` and the refusal is reported rather than raised: `tick()` raises
+   nothing a record can cause, for `route`'s reason (§4.4). A builder holding
+   only records no adapter claimed refuses, `adapter_unconfident`, rather than
+   returning a graph of `unknown` nodes (§4.3), and since V2 an identified trace
+   can be one: a trace none of whose records any adapter claims (§4.5). That
+   refusal is a **fact about the input**, as `no_trace` is (§4.2), and not a
+   failure to deliver anything: it is one counted `NO_GRAPH` event, here,
+   carrying the library's code as `spanweave_code`, whether or not the caller
+   named a directory, and step 3 then writes nothing and says nothing more of
+   it. `spanweave.build` of the same records refuses alike, so live still
+   equals batch. A refusal of `graph()` with **any other** code is step 3's
+   `NOT_WRITTEN`, as it was before V2 made the first one reachable:
+   `graph()`'s refusals are the library's to define, a pin move can add one,
+   and the receiver's answer to one it has no account of is an event that
+   counts toward exit 3 (§8.6), not a traceback that loses every other trace
+   it was holding.
 3. **Write, if the caller named a directory.** `spanweave.dump(graph, path)`
    into `out_dir`, and `WRITTEN` with the path. Three things stop a write, and
    each is `NOT_WRITTEN` with a `detail` saying which: the graph was refused in
-   step 1 (`spanweave_code` carries the library's code); the trace id is not
+   step 2 with a code other than `adapter_unconfident` (`spanweave_code`
+   carries the library's code); the trace id is not
    usable as **one** path component — it is empty, it is `.` or `..`, or it
    contains a separator or a NUL — because a trace id is untrusted input
    (`CLAUDE.md` 9) and a file named from it must not be able to leave the
@@ -1249,10 +1281,12 @@ record is not refused, not dropped and not held: the caller's policy said stop
 holding a builder, and it did not say stop receiving telemetry (§1.3).
 
 One case does not re-open: a router **at `max_traces`** has no room for the new
-builder, so the record is `refused_at_cap` (§4.5) and there is no late arrival to
-report, because nothing was re-opened. The cap's event is the report, the trace
-stays completed, and a later record that *is* admitted carries the gap from the
-original completion — which is still the true gap.
+builder of a claimed record, so the record is `refused_at_cap` (§4.5) and there
+is no late arrival to report, because nothing was re-opened. The cap's event is
+the report, the trace stays completed, and a later record that *is* admitted
+carries the gap from the original completion — which is still the true gap. A
+record no adapter claims is admitted even there, because a trace counts against
+the cap only from its first claimed record (§4.5).
 
 The new builder starts at version 0 and is the newest builder the router holds,
 so the id rejoins `trace_ids` at the end (§4.3). Its `Cap` and `Quiet` are its
@@ -1475,12 +1509,14 @@ free:
   calls `graph()` until it completes something.
 
 A graph the library **refuses** while a tick is evaluating `RootEnded` is "no
-root seen yet", and it is not an event. (Unreachable today, for step 2's reason,
-and handled for step 2's reason.) The alternative is one event per tick for
-the life of the stream, which is the unbounded accumulation §4.6 exists to avoid,
-and the condition is not hidden by leaving it out: it is permanent, it is the
-library's own answer, and the caller meets it the moment it asks that builder for
-a graph. Nothing was dropped — a decision was not made, and the trace stays open.
+root seen yet", and it is not an event. (A trace none of whose records any
+adapter claims is one, since V2: §5.3, §5.4's step 2.) The alternative is one
+event per tick for the life of the stream, which is the unbounded accumulation
+§4.6 exists to avoid, and the condition is not hidden by leaving it out: it
+lasts until the builder absorbs a record an adapter claims, it is the library's
+own answer, and the caller meets it the moment it asks that builder for a
+graph. Nothing was dropped — a decision was not made, and the trace stays open
+until `Quiet`, `Cap` or end of input completes it, as `no_graph` (§5.4).
 
 ## 6. Subscriptions — the deltas go out, and nothing is concluded about them
 
@@ -2614,7 +2650,10 @@ could match on them.
   `detail`, and whichever of `trace_id`, `spanweave_code`, `seconds`,
   `version`, `offset` and `at` that code is about. A `no_trace` line (§4.2)
   is `index` and `detail`, plus `spanweave_code` for `no_envelope`, and never
-  `trace_id`: it is the line that says there was none.
+  `trace_id`: it is the line that says there was none. A `no_graph` line
+  (§5.4) is `index`, `detail`, `trace_id` and `spanweave_code`
+  (`adapter_unconfident`): the trace a completion found no graph for, and the
+  library's reason.
 - **`ingest`** lines are the same `Event`, from §7.1's tail.
 - **`framer`** lines are a `FramingEvent` (§3.1), with one renaming: its `line`
   field is written as **`framer_line`**. That is §3.4's and §7.1's consequence
@@ -2651,7 +2690,8 @@ says which, and no test hard-codes a port (§7.2).
 router's count per code (§4.6), bounded by the number of codes — `no_trace`
 among them, so how many records of a run reached no trace is one number on its
 last line — and `routed` is how many records were routed. A line per record summarizing the stream is the
-accumulation §4.6 refuses.
+accumulation §4.6 refuses. `no_graph` is among the codes too, so how many of a
+run's completed traces had no graph to write is one number on the same line.
 
 ### 8.4 `--deltas` writes stdout, one delta document per line
 
@@ -2722,11 +2762,15 @@ nothing is ever forgotten and no file is ever written over.
 | `130` | interrupted (`SIGINT`): what had been written stays written, and traces still open were **not** completed |
 
 The code is about **what the receiver could not do**, and never about what the
-telemetry said. A `refused`, a `refused_at_cap`, a `no_trace`, a
+telemetry said. A `refused`, a `refused_at_cap`, a `no_trace`, a `no_graph`, a
 `late_arrival`, a `truncated`, a `415`, a `400`, a `client_aborted` and every reader diagnostic
 are observations (§1.3): a run full of them exits `0`, and the events and `counts` on stderr are
 where a caller reads them. A receiver that exited non-zero because a span was
-re-sent would be a gate, and the receiver enforces nothing.
+re-sent would be a gate, and the receiver enforces nothing. `no_graph` is the
+one of those a completion makes: a trace no adapter can read had no graph to
+deliver (§5.4), so a run whose traffic includes one — a stock exporter's HTTP
+health check — exits `0`. A `not_written`, whatever stopped the write, is still
+`3`.
 
 `1` is every `OSError` the source raises, reported as one `start_failed` line
 carrying the error verbatim. In practice that is the first open or the bind,
