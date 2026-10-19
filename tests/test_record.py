@@ -129,13 +129,36 @@ def test_the_version_is_one_number_wherever_it_is_written():
     assert re.fullmatch(r"0\.0\.\d+", declared), "pre-1.0, by 0.0.x"
 
 
+#: A `CHANGELOG.md` entry's date, the last thing on its heading.
+DATED = re.compile(r".+ \((\d{4}-\d\d-\d\d)\)")
+
+
 def test_the_version_s_changelog_entries_are_the_registry_s_batches():
-    """One `### <id> — …` entry per zoo batch under the version, newest first."""
+    """One `### <id> — …` entry per zoo batch under the version, newest first.
+
+    Above them, and only above them, the version carries the entries of the
+    commits made after the series closed, newest first, as `## 0.0.1` carries
+    the receiver series' (`The record made true — …` above `R9`). Such an
+    entry's heading names no batch and ends in its date, and the dates run
+    newest first down to the close's, V4's. Below the batches it is red.
+    """
     _, entries = released()
-    named = re.findall(r"^### (\S+) — ", entries, re.M)
-    headings = re.findall(r"^### .*$", entries, re.M)
-    assert len(named) == len(headings), f"an entry names no batch: {headings}"
-    assert named == [batch for batch, _ in reversed(registry())]
+    headings = re.findall(r"^### (.*)$", entries, re.M)
+    first = next(
+        (at for at, heading in enumerate(headings) if re.match(r"\S+ — ", heading)),
+        len(headings),
+    )
+    later, batches = headings[:first], headings[first:]
+    named = [heading.partition(" — ")[0] for heading in batches]
+    assert named == [batch for batch, _ in reversed(registry())], (
+        f"below the batches, an entry names no batch: {batches}"
+    )
+    dates = []
+    for heading in [*later, batches[0]]:
+        dated = DATED.fullmatch(heading)
+        assert dated is not None, f"an entry is undated: {heading}"
+        dates.append(dated.group(1))
+    assert dates == sorted(dates, reverse=True), f"not newest first: {later}"
 
 
 # --------------------------------------------------------------------------
@@ -158,8 +181,12 @@ def test_each_registered_commit_is_its_batch(history):
     """Every sha but the last is a batch commit of this branch, for that batch.
 
     Not a `plan:` commit (they interleave, one after each batch), an ancestor
-    of the tip, and a body that names the batch by its id as a word -- so
-    `V1` does not match `V1a`'s body.
+    of the tip, and a body that names the batch by its id as a word. The word
+    alone does not tell the batches apart: `V1` matches `V1a`'s body
+    (`a856ec2`, "V1's §4 thread"), and V0's `024fc66` names V1, V2 and V3.
+    What holds the registry is that match **and** the shas' uniqueness, the
+    last assert: V1 registered as `024fc66` passes every check of its row and
+    is red only there.
     """
     rows = registry()
     *batches, (last, closing) = rows

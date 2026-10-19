@@ -16,8 +16,50 @@ series' (R0–R9).
 ## 0.0.2 — the zoo series (2026-10-19)
 
 The version moved from `0.0.1` at the series' close (V4): nothing is frozen,
-and the event-code set grew (`no_trace`, V2). Every entry under this heading is
-a batch of the zoo series, newest first.
+and the event-code set grew (`no_trace`, V2). Under this heading are the zoo
+series' batches V0–V4 and, above them, the commits made after its close,
+newest first.
+
+### The record test gives the review's fixes a place, and says what holds the registry (2026-10-20)
+
+Derived parent `e883fa3`. The first commit after the series' close, answering
+two findings of the second half of its cold review (run 2 and the close,
+archived under `reviews/` by a later commit of these): R-17 and R-6. No
+behaviour changed: only `tests/test_record.py` and this file moved, and
+`SPEC.md` is untouched, because it states no rule about this file's headings.
+
+Changed
+
+- **`tests/test_record.py` gives the commits after the close a place** (R-17).
+  The newest version's entries had to be the registry's batches and nothing
+  else, so this entry, and each later fix for the review's findings, had no truthful
+  place: under `## Unreleased` it would say it is not in `0.0.2`, which it
+  ships in. The test now accepts, above the batches and only there, entries
+  whose heading names no batch, each ending in its date, the dates newest
+  first down to the close's (V4's). That is how `## 0.0.1` carries the receiver
+  series' follow-ups above R9. An entry of that kind below the batches is
+  still red. This file's sentence under `## 0.0.2` says the same.
+- **The commit check's docstring says what holds the registry** (R-6). It said
+  the body match tells `V1` from `V1a`'s body; it does not: `\bV1\b` matches
+  `a856ec2`'s body ("V1's §4 thread", "(V1 served"), and V0's `024fc66` names
+  V1 ("(V1-V3)"), V2 and V3. What holds the registry is that match **and** the
+  shas' uniqueness, the check's last assert, and the docstring now says so.
+
+Red on the parent (`e883fa3`, worktree under the scratchpad), with this
+file overlaid: `tests/test_record.py` gives 1 failed, 9 passed. The failure is
+the entries test refusing this entry ("an entry names no batch"). The new
+test file there is 10 passed, both with this file and with the parent's.
+Mutations, each run against the whole suite (895 tests):
+- this entry moved below V0: 1 failed, 894 passed (the entries test);
+- this entry moved between V4 and V3: 1 failed, 894 passed (the same);
+- V1 registered as V0's `024fc66` (the review's X1): 1 failed, 894 passed,
+  on the uniqueness assert alone; with that assert removed, 895 passed;
+- this entry dated 2026-10-18, before the close: 1 failed, 894 passed; with
+  the newest-first assert removed, 895 passed;
+- the entries test setting aside the headings that name no batch wherever
+  they stand, rather than only above the batches: with it, this entry below
+  V0, and between V4 and V3, are each 895 passed;
+- this entry's date dropped: 1 failed, 894 passed.
 
 ### V4 — the zoo series closes, and its plan is deleted (2026-10-19)
 
