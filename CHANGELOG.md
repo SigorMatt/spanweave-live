@@ -11,6 +11,43 @@ citation is dated history, resolvable at `git show b500342:WORKPLAN.md`.
 
 ## Unreleased
 
+### V3 — what a generation is, and what the policies do at values the audit never ran (2026-10-19)
+
+Derived parent `5369cac`. The zoo series' fifth batch (`WORKPLAN.md` V3), the
+zoo's `PROBES.md` L3 and L4, and the maintainer's 2026-10-16 decision that
+generations are not merged and early completion is not a defect. **No
+behaviour changed**: no test showed a policy firing at the wrong instant.
+Docs and pins.
+
+Added
+
+- `tests/test_zoo_policies.py` pins the three policies over the zoo's
+  captures on one fake-clock schedule (body *k* fed at `now = k`, ticked at
+  `k` and `k + 0.5`). On Z3, Z1, Z2 and Z6 real: `Quiet(0.5)` completes once
+  per body and each generation's file is `spanweave.build` of **its own
+  body** byte for byte, every one before the last carrying `orphan_parent`,
+  the last holding the ended root, each after the first opened by
+  `late_arrival`; `Quiet(2.0)`, `RootEnded(1.0)` and `Cap(N)` each complete
+  once at the instant §5.3 states, with the end-of-input graph; `RootEnded`'s
+  grace runs from the tick that first saw the root. On Z5 real and recorded,
+  which has no root: `RootEnded(S)` for S in {0, 1, 3600} completes nothing up
+  to `now = 10^6`; `Quiet(S)` completes once at `last + S`; `Cap(4)` at the
+  fourth record; `Cap(5)` never, and end of input does. These pins are green
+  on the parent; the three tests that re-derive the documents' numbers are
+  red there, because the documents are what this batch adds.
+- `SPEC.md` §5.3: the policies' readings on the zoo, and `RootEnded` alone
+  never completing a trace whose root never ends. §5.5: what a generation
+  is — the batch graph of what its builder absorbed when the policy fired,
+  never merged — with the generation table the test reads. §4.8 points there.
+- `README.md`: the third trap, beside the two `--help` prints.
+
+Mutations shown caught (by the new file alone):
+- `Quiet`'s `>=` as `>`: red (15);
+- `Cap`'s `>=` as `>`: red (6);
+- an orphan read as a root in `root_ended`: red (17);
+- a late arrival that does not number its generation: red (4);
+- `RootEnded`'s grace measured from the last record: red (4).
+
 ### V1a — a protobuf request is answered in its own encoding (2026-10-19)
 
 Derived parent `fef26e0`. The zoo series' fourth batch (`WORKPLAN.md` V1a), the

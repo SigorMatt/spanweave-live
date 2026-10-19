@@ -429,7 +429,7 @@ def test_the_l3_captures_complete_once_at_the_last_index_and_orphan_nothing(
     saw complete once per body under `--quiet 0` completes **once**, at the
     tick after its last record, and its graph carries no `orphan_parent`: the
     early generations were the policy firing early, not the receiver losing
-    parents (WORKPLAN V3 reads that further).
+    parents (`SPEC.md` §5.5 reads that further).
     """
     run = replayed(capture)
     (done,) = run.completed

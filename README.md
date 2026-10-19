@@ -70,7 +70,8 @@ rather than a default this library invented: `--max-traces`, `--max-completed`,
 `--max-pending-bytes`. `--poll-seconds` and `--once` apply to a file,
 `--host` and `--requests` to the socket. `spanweave-live <command> --help`
 prints every flag, each policy and bound with the `SPEC.md` section that
-specifies it, including the two traps worth knowing before you rely on them:
+specifies it, including the first two of the three traps worth knowing before
+you rely on them; the third is the policies' own:
 
 - **`--max-completed` can overwrite a graph.** Forgetting a completed trace id
   loses its generation, so a later record for a forgotten id writes
@@ -80,6 +81,16 @@ specifies it, including the two traps worth knowing before you rely on them:
 - **Line numbers after a `fragment_too_long` are the framer's, not the
   input's**, because each fragment of a cut line is numbered as a line. Events
   call that field `framer_line` for exactly this reason (`SPEC.md` §3.4).
+- **A policy that fires before a trace's parents arrive completes it early,
+  and again for each later batch of its records.** Each completion writes the
+  batch graph of what arrived since the one before — `<trace_id>.json`, then
+  `<trace_id>.2.json`, and so on — and a generation whose parents are in a
+  later one carries `orphan_parent`, as a batch build of those records does.
+  That is the policy you chose showing, not a defect; generations are never
+  merged, and a `late_arrival` event opens each one after the first. And
+  `--root-grace` alone never completes a trace whose root never arrives: give
+  `--quiet` or `--cap` beside it, or only end of input completes it
+  (`SPEC.md` §5.3, §5.5).
 
 Exit codes (`SPEC.md` §8.6): `0` the input ended and everything was delivered ·
 `1` it could not start · `2` usage · `3` it ran to the end but something it had

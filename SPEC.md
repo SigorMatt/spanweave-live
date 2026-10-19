@@ -963,7 +963,8 @@ Of the four captures on which the audit saw a trace complete once per body
 under `--quiet 0` (L3: Z3, Z1, Z2 and Z6, the real runs), each completes
 **once** here, at the tick after its last record, and its graph carries no
 `orphan_parent`: fed whole, nothing is missing a parent, and the early
-generations the audit counted were the policy firing early.
+generations the audit counted were the policy firing early, and §5.5 says
+what each of them holds.
 
 ## 5. Completion — when is a trace finished?
 
@@ -1121,6 +1122,43 @@ the first tick at which its condition holds, not the one after.
 - **`RootEnded(grace_seconds)`** is the only one that looks at the graph, and
   §5.6 is what it is allowed to look at.
 
+**What the three do at values the zoo's audit never ran** (V3). The audit ran
+one policy, `--quiet 0` (its `PROBES.md` L3); `tests/test_zoo_policies.py` pins
+each of the three over the zoo's captures (§4.8) on a fake clock. These are
+readings of the definitions above, not new behaviour: no policy changed for
+them. The schedule is one for every policy: body *k* of a capture, counting
+from 0, is fed at `now = k`, and after it the router is ticked twice, at
+`now = k` and at `now = k + 0.5`; *last* is the last body's *k*. On the four
+captures the audit saw complete once per body — Z3, Z1, Z2 and Z6, the real
+runs, whose root arrives in the last body:
+
+- `Quiet(0.5)` completes the trace **once per body**, at each `k + 0.5`, and
+  §5.5 says what each of those generations holds.
+- `Quiet(2.0)` completes nothing between bodies a second apart, and completes
+  once at the tick at `now = last + 2.0`, with the end-of-input graph (§4.8)
+  byte for byte.
+- `RootEnded(1.0)` completes nothing until the last body, because no prefix
+  before it has an ended root (§5.6); the tick at `now = last` sees the root ended,
+  and the tick at `now = last + 1.0` completes once, with the same graph.
+  The grace runs from the tick that **first saw** the root ended (§5.6), not
+  from the last record: without the tick at `now = last`, the first to see it
+  is `last + 0.5`, the tick at `last + 1.0` completes nothing, and the one at
+  `now = last + 1.5` completes the trace.
+- `Cap(N)`, with *N* the capture's record count and a tick after every
+  record, completes at the *N*-th record, with the same graph.
+
+**`RootEnded` alone never completes a trace whose root never ends**, and a
+trace whose root never arrives is one. Z5's, real and recorded, is: every one
+of its nodes that has no `parent` edge carries `orphan_parent`, so by §5.6 its
+graph has no root. `RootEnded(S)` for S in {0, 1, 3600} therefore completes
+nothing at any tick up to `now = 10^6`, and that is the definition working,
+not a defect — the receiver cannot see the end of a span that was never sent.
+A caller whose stream can lose a root composes `RootEnded` with `Quiet` or
+`Cap` (§5.4's any-of), and on Z5 each of those completes it: `Quiet(S)` once,
+at the tick at `now = last + S`, for each of the same S; `Cap(4)` at the fourth
+record; and `Cap(5)` never, so only the end-of-input `Cap(0)` (§8.5) completes
+it, with the batch graph.
+
 ### 5.4 `tick()` — evaluate, then materialize, write and release
 
 `Router.tick()` takes one clock reading, evaluates the policies against every
@@ -1231,6 +1269,35 @@ for as long as the completion is **remembered**, which with the default
 `max_completed=None` is forever; a caller that bounds the book has chosen
 otherwise, and the paragraph on `max_completed` below says exactly what that
 costs.
+
+**What a generation is** (V3). A generation is the batch graph of what its
+builder had absorbed when the caller's policy fired, and nothing else: the
+first generation's graph is `spanweave.build` of the trace's records up to
+that tick, and each later one's is `spanweave.build` of the records that
+arrived after the previous generation was completed — **not** of the stream's
+prefix, because generations are never merged. So a policy that fires before a
+trace's parents have arrived yields exactly the `orphan_parent` diagnostics a
+batch build of those records yields. That is the caller's policy showing, not
+a defect, and not the receiver losing a parent: the parent is in a later
+generation, which opens on the next record as `late_arrival` (above). The
+zoo's audit saw this as a trace completing once per body under `--quiet 0`
+(its `PROBES.md` L3); under §5.3's schedule `Quiet(0.5)` does the same, and
+every generation's written file is, byte for byte, `spanweave.build` of its
+own body:
+
+| Capture | Bodies | Generations | `late_arrival` | With `orphan_parent` | With an ended root |
+|---|---|---|---|---|---|
+| `z1/2026-10-13-real` | 2 | 2 | 1 | 1 | 1 |
+| `z2/2026-10-14-real` | 3 | 3 | 2 | 2 | 1 |
+| `z3/2026-10-13-real` | 4 | 4 | 3 | 3 | 1 |
+| `z6/2026-10-14-real` | 11 | 11 | 10 | 10 | 1 |
+
+The generations carrying `orphan_parent` are exactly the ones before the last,
+and the one with an ended root is the last, which holds the root. Fed whole,
+the same four traces complete once with no `orphan_parent` at all (§4.8). A
+reader who wants the whole trace folds the generations, as the paragraph above
+says; the receiver does not, because a generation is a report it already made.
+The table is `tests/test_zoo_policies.py`'s measurement, read from here.
 
 **What remembering a completion costs, stated rather than hidden.** The gap and
 the generation are facts about a trace whose builder is gone, so the router keeps
