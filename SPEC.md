@@ -2864,17 +2864,28 @@ EOF are the two stops that **are** end of input, and only those two flush
 
 ### 8.7 What this section is tested against
 
-`tests/test_cli.py`, and **72 of its 81 collected items run the CLI as a
+`tests/test_cli.py`, and **77 of its 86 collected items run the CLI as a
 process** — `subprocess`, a pipe, an exit status — because an in-process call
 would test the functions and not the thing a human runs. The other **nine** read
 the package in-process, because that is the only way to ask what they ask: the
 parser, so §8.1's usage block can be held against it flag by flag and its two
-commands against §8's two (two items); `real.py`'s four bindings, its absence
-from `__all__`, and the allowlist naming it and not `cli.py` (four); §8.3's codes
-and layers against the module (one); the gate's own rules run over `cli.py`
-against an **empty** allowlist (one); and that no dataclass was reinvented for
-the CLI (one). The file's own docstring states the same exception — the counts
-here are the measured ones, not a round claim about all of them.
+commands against §8's two (two items:
+`test_the_usage_block_in_SPEC_is_the_parser_the_code_has` and
+`test_the_two_commands_are_the_two_SPEC_declares`); `real.py`'s four bindings,
+its absence from `__all__`, and the allowlist naming it and not `cli.py` (four:
+`test_the_binding_module_binds_the_real_things`,
+`test_the_binding_module_is_not_public_api`,
+`test_the_seam_allowlist_names_one_file_and_two_modules` and
+`test_the_exempted_file_is_the_binding_module_and_not_the_cli`); §8.3's codes
+and layers against the module (one:
+`test_the_cli_codes_and_layers_are_the_ones_SPEC_names`); the gate's own rules
+run over `cli.py` against an **empty** allowlist (one:
+`test_the_cli_itself_imports_no_clock_and_no_socket`); and that no dataclass
+was reinvented for the CLI (one:
+`test_dataclasses_are_not_reinvented_for_the_cli`). The file's own docstring
+states the same exception — the counts here are the measured ones, not a round
+claim about all of them, and `tests/test_record.py` re-derives both from the
+file's collection and these nine names.
 
 Its central test is **gate A's comparison reached through a process**: every
 line-delimited corpus rendering is piped to `spanweave-live tail - --out <dir>`,

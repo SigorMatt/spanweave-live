@@ -9,7 +9,9 @@ batches in the order they ran and each with the commit that closed it, the
 decisions log is the length it says, the reader's half of L1 is the commit
 spanweave's own registry says it is, and `CLAUDE.md` says whether a series is
 open as the tree does, names every source of a trace id `SPEC.md` §1.1 names,
-and names on its `make conformance` line the files that target runs.
+and names on its `make conformance` line the files that target runs; and
+`SPEC.md` §8.7's count of the CLI's process tests is `tests/test_cli.py`'s
+collection, measured.
 
 The registry's commits are read from history, so this file needs a clone with
 history: CI's `check` job checks out with `fetch-depth: 0` for it, and a
@@ -17,8 +19,10 @@ shallow clone fails here with the command that fixes it rather than passing
 without having looked.
 """
 
+import ast
 import re
 import subprocess
+import sys
 import tomllib
 from pathlib import Path
 
@@ -295,3 +299,78 @@ def test_ci_s_check_job_has_the_history_this_file_reads():
     workflow = (REPO / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     check = workflow[workflow.index("  check:") : workflow.index("  conformance:")]
     assert re.search(r"^\s+fetch-depth: 0$", check, re.M)
+
+
+def _reaches_a_process(source: str) -> set[str]:
+    """The module-level names in `source` whose bodies start the CLI, closed.
+
+    A name starts it when its body names `CLI` (the argv a run is given) or
+    `subprocess`, or names another module-level name that does: `run` and
+    `serving` directly, and through them every test that calls one.
+    """
+    tree = ast.parse(source)
+    uses = {
+        node.name: {n.id for n in ast.walk(node) if isinstance(n, ast.Name)}
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.ClassDef))
+    }
+    reaching = {name for name, used in uses.items() if used & {"CLI", "subprocess"}}
+    while True:
+        grown = reaching | {name for name, used in uses.items() if used & reaching}
+        if grown == reaching:
+            return reaching
+        reaching = grown
+
+
+def test_spec_s_count_of_the_cli_s_process_tests_is_the_measured_one():
+    """§8.7's two numbers and its nine names, re-derived from `tests/test_cli.py`.
+
+    The items are pytest's own collection of the file, each parametrized case
+    one item; an item runs the CLI as a process when its test function reaches
+    `CLI` or `subprocess` (`_reaches_a_process`). The nine §8.7 names must be
+    exactly the items that do not. The sentence said 72 of 81 from the receiver
+    series until the bounded fix review of PR #2 measured 77 of 86 (its R-3).
+    """
+    text = section(
+        SPEC.read_text(encoding="utf-8"), "### 8.7 What this section is tested against"
+    )
+    paragraph = text.split("\n\n")[1]
+    stated = re.search(
+        r"\*\*(\d+) of its (\d+) collected items run the CLI as a\s+process\*\*",
+        paragraph,
+    )
+    other = re.search(r"The other \*\*(\w+)\*\*", paragraph)
+    assert stated is not None and other is not None
+    process, total = int(stated.group(1)), int(stated.group(2))
+    named = re.findall(r"`(test_\w+)`", paragraph)
+    assert len(set(named)) == len(named) == WORDS[other.group(1)] == total - process
+
+    collected = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "--collect-only",
+            "-q",
+            "-p",
+            "no:cacheprovider",
+            "tests/test_cli.py",
+        ],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert collected.returncode == 0, collected.stdout + collected.stderr
+    items = [
+        line.split("::", 1)[1]
+        for line in collected.stdout.splitlines()
+        if line.startswith("tests/test_cli.py::")
+    ]
+    functions = [item.split("[", 1)[0] for item in items]
+    source = (REPO / "tests" / "test_cli.py").read_text(encoding="utf-8")
+    reaching = _reaches_a_process(source)
+    in_process = [name for name in functions if name not in reaching]
+    assert len(items) == total
+    assert len(functions) - len(in_process) == process
+    assert sorted(in_process) == sorted(named)

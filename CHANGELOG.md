@@ -20,6 +20,41 @@ and the event-code set grew (`no_trace`, V2; `no_graph`, after the close). Under
 this heading are the zoo series' batches V0–V4 and, above them, the commits made
 after its close, newest first.
 
+### §8.7's count of the CLI's process tests is the measured one (2026-10-20)
+
+Derived parent `ca9e774`. The fourth of the five commits that disposition the
+bounded fix review of PR #2, answering its R-3. §8.7 said "72 of its 81"
+collected items of `tests/test_cli.py` run the CLI as a process, true when the
+receiver series wrote it (`7ca6e91`); this series grew the file to 86 items
+(`d52669c` added the last), all five new ones process tests, and no test
+re-derived the number. The nine in-process tests were still the nine §8.7
+describes.
+
+Changed
+
+- **`SPEC.md` §8.7**: "72 of its 81" is now "77 of its 86", and each of the
+  nine in-process tests the paragraph describes is named by its function, so a
+  test can hold the list.
+
+Added
+
+- **`tests/test_record.py`**: a test that reads §8.7's two numbers, its "nine"
+  and its nine names, collects `tests/test_cli.py` with `pytest
+  --collect-only` in a subprocess (each parametrized case one item), and
+  classifies each item by whether its test function reaches `CLI` or
+  `subprocess` through the file's module-level names (by `ast`, nothing run).
+  The stated total must be the collection's, the stated process count the
+  reaching items', and the nine names exactly the items that do not reach.
+
+Red on the parent `ca9e774` with this test overlaid: 1 failed, 11 passed
+(§8.7 names no test there). Mutations, each run over `tests/test_record.py`:
+§8.7 set back to "72 of its 81", 1 failed, 11 passed; one of the nine renamed
+in `tests/test_cli.py`, 1 failed, 11 passed; a tenth in-process test added
+unnamed, 1 failed, 11 passed; a parametrized process test of two cases added,
+1 failed, 11 passed; the classifier's closure removed (direct references
+only), 1 failed, 11 passed; `CLI` dropped from the classifier's roots, 12
+passed, a survivor, because `run` and `serving` both name `subprocess` too.
+
 ### §7.2 names the other departure from OTLP (2026-10-20)
 
 Derived parent `5062951`. The third of the five commits that disposition the
