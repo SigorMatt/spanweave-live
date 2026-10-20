@@ -444,6 +444,94 @@ def test_a_gzipped_protobuf_body_is_inflated_and_reads_as_the_plain_one(
     assert _routed(records) == sum(zoo_records()["z1/2026-10-13-recorded"])
 
 
+def test_a_protobuf_bodys_diagnostics_reach_the_exchange_beside_its_records() -> None:
+    """A protobuf body's diagnostics reach the exchange, not only its records.
+
+    §7.2: a protobuf body's `Records` "are what the exchange carries", and §1.5
+    says nothing is dropped silently. All 29 zoo raw bodies read with no
+    diagnostic, so no other protobuf `200` here carries one. This body does: a
+    hand-made `ExportTraceServiceRequest` with one span, and a field number the
+    installed schema does not define appended at its root, which is where the
+    bytes after a serialized message land. `read_protobuf` reads it without
+    the field and says so with one `unknown_fields`, so the read is a `200`
+    with a record and a diagnostic, and the exchange carries both.
+    """
+    from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import (
+        ExportTraceServiceRequest,
+    )
+    from opentelemetry.proto.trace.v1.trace_pb2 import ResourceSpans, ScopeSpans, Span
+
+    request = ExportTraceServiceRequest(
+        resource_spans=[
+            ResourceSpans(
+                scope_spans=[
+                    ScopeSpans(
+                        spans=[
+                            Span(
+                                trace_id=bytes(range(1, 17)),
+                                span_id=bytes(range(1, 9)),
+                                name="a",
+                                start_time_unix_nano=1,
+                                end_time_unix_nano=2,
+                            )
+                        ]
+                    )
+                ]
+            )
+        ]
+    )
+    # Field 99, wire type 0 (varint), value 1: the tag `99 << 3 | 0`, which is
+    # 792, is the varint `98 06`, and the value is `01`.
+    assert 99 not in ExportTraceServiceRequest.DESCRIPTOR.fields_by_number
+    plain = request.SerializeToString()
+    body = plain + b"\x98\x06\x01"
+
+    # The premises, from the library alone: the plain body reads as one record
+    # and no diagnostic; the appended field costs no record and adds exactly
+    # one `unknown_fields`, naming the field at the request's root.
+    read = spanweave.read_protobuf(body)
+    assert spanweave.read_protobuf(plain).diagnostics == ()
+    assert read.records == spanweave.read_protobuf(plain).records
+    assert len(read.records) == 1
+    assert read.skipped_records == 0
+    assert [(d.code, d.source) for d in read.diagnostics] == [
+        (
+            "unknown_fields",
+            {
+                "path": "",
+                "fields": [
+                    {
+                        "number": 99,
+                        "wire_type": 0,
+                        "defined": False,
+                        "expected_wire_type": None,
+                    }
+                ],
+            },
+        )
+    ]
+
+    endpoint = Endpoint()
+    exchange = endpoint.handle(
+        Request(
+            method="POST",
+            target=TRACES_TARGET,
+            body=body,
+            content_type=PROTOBUF_TYPE,
+        )
+    )
+
+    assert exchange.response == Response(
+        status=200, body=b"", content_type=PROTOBUF_TYPE
+    )
+    assert exchange.records == read
+    assert "unknown_fields" in [d.code for d in exchange.records.diagnostics]
+    # A body read with a diagnostic is not a refusal: the diagnostic says what
+    # was not read, and there is no event to count (§7.2).
+    assert exchange.events == ()
+    assert endpoint.counts == {}
+
+
 def test_a_truncated_protobuf_body_is_400_by_the_existing_second_case(
     posting: Posting,
 ) -> None:

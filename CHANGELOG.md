@@ -20,6 +20,56 @@ and the event-code set grew (`no_trace`, V2; `no_graph`, after the close). Under
 this heading are the zoo series' batches V0–V4 and, above them, the commits made
 after its close, newest first.
 
+### A protobuf body's diagnostics reach the exchange (2026-10-20)
+
+Derived parent `26ca329`. The fourth commit after the series' close, answering
+the first mutation of R-3 of the first half of its cold review (run 1, archived
+under `reviews/` by a later commit of these); its second, a protobuf answer
+labelled `application/x-protobuf` over `{}`, V1a already holds. A pin, not a
+fix: **no behaviour changed**. Only `tests/test_endpoint.py` and this file
+moved, and `SPEC.md` is untouched, because §7.2 already says what the test
+holds (a protobuf body's `Records` are what the exchange carries), and no
+sentence anywhere says the case is untested. Until now it was: all 29 zoo raw
+bodies read with no diagnostic, so no protobuf `200` in the suite carried one,
+and the review's mutation, the protobuf read's diagnostics dropped and its
+records kept, passed every test.
+
+Added
+
+- **One test**, `test_a_protobuf_bodys_diagnostics_reach_the_exchange_beside_its_records`,
+  in `tests/test_endpoint.py` beside the gzipped protobuf test, at the pure
+  `Endpoint.handle` layer and with no socket. The body is made inside the test
+  with the `otlp` extra's runtime, which a test may import and the package may
+  not: an `ExportTraceServiceRequest` with one span, and field 99 (a varint,
+  value 1) appended at its root, a number the installed schema does not define.
+  It asserts its premises from the library alone first: the plain body reads
+  as one record and no diagnostic, and the appended field costs no record and
+  adds one `unknown_fields`, whose `source` names field 99, wire type 0, at the
+  request's root. Then, posted as `application/x-protobuf`: `200` with that
+  type and `b""`, `exchange.records == read_protobuf(body)`, `unknown_fields`
+  among the exchange's diagnostics, no event, and `counts {}`.
+
+Green on the parent (`26ca329`, worktree under the scratchpad), with the test
+file overlaid: the whole suite gives 0 failed, 911 passed. It is green there
+because nothing moved, as commit 3's pin and V1a's guards were: the code was
+right, and the test holds it. The mutation is what shows it can fail.
+Mutations, each of `spanweave_live/endpoint.py`, run against the whole suite
+(911 tests) and against the parent's own 910 without the new test:
+- the review's, a protobuf read that kept records handed over with no
+  diagnostics (`_read`): 1 failed, 910 passed (the new test, on
+  `exchange.records`). Against the parent's own 910 tests it passes all 910;
+- every protobuf read's diagnostics dropped, the literal reading (`_read`): 3
+  failed, 908 passed (the new test, the truncated protobuf `400` test and the
+  test that the header names the reader); 2 failed, 908 passed without the new
+  test, which is why the review's survivor is the narrower one;
+- every `200`'s diagnostics dropped, either media type, and kept on the `400`
+  alone (`_decide`): 2 failed, 909 passed (the new test, and the header test's
+  protobuf body declared JSON); 1 failed, 909 passed without the new test, so
+  for a protobuf `200` only the new test holds it;
+- a protobuf read carrying any diagnostic answered `400` `unreadable_body`
+  (`_decide`): 1 failed, 910 passed (the new test, on the status). Against the
+  parent's own 910 tests it passes all 910.
+
 ### An unpacked record two adapters claim is refused, and the envelope is not asked (2026-10-20)
 
 Derived parent `d52669c`. The third commit after the series' close, answering
