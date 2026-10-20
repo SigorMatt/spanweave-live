@@ -20,6 +20,31 @@ and the event-code set grew (`no_trace`, V2; `no_graph`, after the close). Under
 this heading are the zoo series' batches V0–V4 and, above them, the commits made
 after its close, newest first.
 
+### §7.2 names the other departure from OTLP (2026-10-20)
+
+Derived parent `5062951`. The third of the five commits that disposition the
+bounded fix review of PR #2, answering its R-2. `41cc44d` set out to make §7
+say what OTLP says, named the refusal body's departure from OTLP and called it
+a choice, and said a body the reader read in part "gets the same answer" as
+full success, quoting the `partial_success` docstring's paragraph on an empty
+value and not its first rule, which asks for more.
+
+Changed
+
+- **`SPEC.md` §7.2**: after "A body the reader read in part gets the same
+  answer", a paragraph names that answer as the other departure from OTLP,
+  quotes the installed `trace_service_pb2.pyi`'s `partial_success` docstring
+  (opentelemetry-proto 1.45.1): a server that accepts only part of a request
+  "MUST initialize the `partial_success` field and MUST set the
+  `rejected_<signal>` with the number of items it rejected", and gives the
+  reason: the reader's `skipped_records` counts records, not spans, and
+  counting the spans a request carried is a dialect read (§1.1). The
+  behaviour is unchanged and R6's (`8ae7a5d`); a conformant
+  `partial_success` is a thread for the next receiver series.
+
+Prose only. No behaviour or test logic changes, so there is no red-on-parent
+run or mutation to show.
+
 ### Every sentence about what max_traces bounds says what it bounds (2026-10-20)
 
 Derived parent `d511a48`. The second of the five commits that disposition the

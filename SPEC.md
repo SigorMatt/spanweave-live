@@ -2332,6 +2332,19 @@ one answer the receiver can give without counting spans, and a truthful
 A body the reader read in part gets the same answer, and the exchange's
 diagnostics say what was skipped (above).
 
+That answer is **the other departure from OTLP**, beside the refusal body's
+below, because for a body read in part OTLP asks for more than full success.
+The same `.pyi`'s `partial_success` property, after its summary line, says:
+"If the request is only partially accepted (i.e. when the server accepts only
+parts of the data and rejects the rest) the server MUST initialize the
+`partial_success` field and MUST set the `rejected_<signal>` with the number
+of items it rejected." The receiver does neither, because the reader's
+`skipped_records` counts records, not spans, and counting the spans a request
+carried is a dialect read (§1.1). The behaviour is unchanged and older than
+the sentence naming it: R6 (`8ae7a5d`) answered a JSON body read in part so.
+A conformant `partial_success` for a body read in part is a thread for the
+next receiver series.
+
 A refusal answers `{"code": "<the receiver's code>"}`, serialized with
 `sort_keys=True`, as `application/json` for **either** media type, so the
 poster is told what the event says. That is OTLP's `google.rpc.Status` in
