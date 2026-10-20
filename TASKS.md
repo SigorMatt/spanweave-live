@@ -72,10 +72,11 @@ and a reader resolves it with `git log`.
 
 ## Decisions taken  *(`WORKPLAN.md` §3, folded)*
 
-Nine rows: eight moved here as they stood but for one sentence of one row, and
-the last, the dispositions of the series' cold review, taken after the close.
-These are the decisions the maintainer took during the series and its review;
-a batch never took one of these itself.
+Ten rows: eight moved here as they stood but for one sentence of one row, and
+the last two taken after the close, the dispositions of the series' cold
+review and then those of the bounded fix review read with Qodo's review of the
+PR. These are the decisions the maintainer took during the series and its
+reviews; a batch never took one of these itself.
 
 | Date | Batch | Decision | By |
 |---|---|---|---|
@@ -88,16 +89,26 @@ a batch never took one of these itself.
 | 2026-10-19 | V1a | A protobuf request is answered in its encoding, with the one message the receiver can write without an encoder: the empty response, zero bytes. A refusal stays JSON, and SPEC says why. | maintainer |
 | 2026-10-16 | V3 | Generations are not merged and early completion is not a defect: the caller chose the policy, the receiver says what it absorbed when it fired, and a batch build of the same prefix says the same. The receiver's job is to make that plain in SPEC and README, and to pin the policies' behaviour at values the audit never ran, not to second-guess a policy. | maintainer |
 | 2026-10-20 | review | The cold review's two halves, run 1 (R-1 to R-22) and run 2 and the close (R-1 to R-20), are dispositioned as one set and graded by the series' merge rule: blocking if this series introduced the defect or a claim it makes depends on it, else a thread. Accepted: every blocking finding of both halves; run 2's R-8 and the sentence of its R-9, because its R-5 depends on them; its R-12, because V4 wrote the sentence; and its R-17, because the fix commits need it. Run 1's R-3's second mutation is already held by V1a. The rest are threads or notes, registered or recorded here. Run 1's R-1 is decided as behaviour: at completion a graph the library refuses as `adapter_unconfident` is a counted `no_graph` event, not `not_written`, and exit 3 does not count it; a trace counts against `max_traces` from the first claimed record it absorbs, and at the cap the claimed record that would make a trace of unclaimed records count is `refused_at_cap`; `RootEnded` alone never completes a trace with no graph, and `Quiet`, `Cap` and end of input do; and the sentences that called the refusal unreachable go. | maintainer |
+| 2026-10-20 | review | The bounded review of the nine fix commits (`e883fa3..c76f74e`, R-1 to R-8) and Qodo's first review of PR #2 at `c76f74e` (findings 1 and 2) are dispositioned as one set, graded by the same merge rule. Accepted: the bounded review's R-1 to R-5, all blocking; its R-6, a thread, because it is one sentence beside text this series rewrote; and Qodo's finding 1, a defect `d52669c` introduced. Registered as threads, for the next receiver series: the bounded review's R-7 and R-8, and Qodo's finding 2, which this PR did not introduce in kind. **The loop ends here**: by the series' bounded rule (`git show 3077bec:WORKPLAN.md` §2), these fixes go to the merge on green CI without a further review. After the push, Qodo's post-push diff, then the merge; a Qodo finding new in that diff blocks only if it is a defect this PR introduces. | maintainer |
 
 The one sentence moved is in the 2026-10-19 V2 row, and it moved by the
 maintainer's direction, given with V4's row as thread V2(c) (below). As the
 plan held it, the row said the receiver "never says which field failed: the
 library's message does". That read as though the event said it through the
-library; it does not, by design, because every receiver event carries a code
-and never a sentence (`SPEC.md` §4.4, §7.2). The row now says what is true:
-the event carries the library's code; which field failed is the library's
-sentence, which the receiver does not carry. The plan's wording is at
-`git show 3077bec:WORKPLAN.md`.
+library; it does not, by design: a `no_trace` event's `detail` is one of
+three words (`unclaimed`, `no_envelope`, `no_id`), never the library's
+message, and where the library refused the envelope the event carries the
+library's code as `spanweave_code` (`spanweave_live/routing.py`, `NO_TRACE`).
+The row now says what is true: the event carries the library's code; which
+field failed is the library's sentence, which the receiver does not carry.
+The plan's wording is at `git show 3077bec:WORKPLAN.md`. Until 2026-10-20
+this paragraph gave the reason as "every receiver event carries a code and
+never a sentence (`SPEC.md` §4.4, §7.2)", which was never true: §4.4 says no
+such thing, and other events' `detail` is a sentence the receiver composes
+(`written`'s is the path), some ending in the library's message, as
+`no_graph`'s, `delta_unavailable`'s, `delta_unsent`'s and a refused graph's
+`not_written` do, and a `refused` event's is that message alone,
+`str(refusal)` (the bounded fix review's R-4, under *The review* below).
 
 The 2026-10-16 V3 row's "a batch build of the same prefix says the same" is the
 decision as it was taken, and V3 measured the narrower fact: a generation is
@@ -254,13 +265,14 @@ commit body, where `git show` reads it.
 | V1(ii) | A protobuf body declared `application/json` is read as JSON, partially, and not sniffed | **kept as V1 left it**, at the run-1 decision point: telling a body's encoding from its bytes is deciding what the bytes mean (`SPEC.md` §1.1). The poster declared JSON and is read as JSON under §7.2's partial-read rule, and a test pins it |
 | V2(a) | The router given `adapter=` sends a record two adapters claim to the no-trace builder with no event | **open, for the next receiver series.** Older than this series: `trace_id_of` classifies across every adapter whatever `adapter` the router was given, so under a named adapter the record is ambiguous to routing, and the no-trace builder, given the name, absorbs it without refusing — where `spanweave.build` under the same name reads it as that adapter's. Stated in `SPEC.md` §4.3 and pinned by `tests/test_routing.py::test_under_a_named_adapter_an_ambiguous_record_reaches_no_trace_unannounced`. Making routing honour the name changes what §4.1's `adapter` means for routing, so it is a decision, not a patch. The sentences this series wrote saying that a record reaching the no-trace builder is announced were checked, and each names the exception now: §4.3 did already; §4.2's sentence on an ambiguous record, the `NO_TRACE` comment in `spanweave_live/routing.py`, the section comment in `tests/test_routing.py` and README's `Router` row are corrected by this commit; `CHANGELOG.md`'s V2 entry names it in its own "An older gap" bullet and is dated history, so it is left as it stands. **The check missed one**, which this cell did not say until 2026-10-20: `SPEC.md` §1.1's V2 sentence still said every record without a trace id is announced by `no_trace` (run 2's R-1). Commit 6 of the review's dispositions, `54dba83`, set it right, with README's `Router` row and §8.3's count (run 1's R-5, run 2's R-7). The thread's second shape, a record no adapter claims under a named adapter, is registered with run 1's R-9 (*The review*, below) |
 | V2(b) | Routing tells an unpacked record by `isinstance(record, spanweave.read.Unpacked)`, a type spanweave's `SPEC.md` §7 names and `spanweave/__init__` does not export | **kept, and open for spanweave's next series.** It is the one place the receiver tells an unpacked record — the `from spanweave.read import Unpacked` import in `spanweave_live/routing.py` and its one `isinstance`, in `_identify` — and the pin holds spanweave fixed. The thread for spanweave: a public way to tell an unpacked record (`Unpacked` exported, or `EnvelopeError` codes that tell "not unpacked" from "an envelope that is incomplete"), after which the receiver drops the import |
-| V2(c) | `no_trace` carries the library's code, not its `EnvelopeError` message | **by design, and closed by this commit's fold.** Every receiver event carries a code and never a sentence (`SPEC.md` §4.4, §7.2). The 2026-10-19 V2 decision row said the library's message says which field failed; folded above, it says: the event carries the library's code; which field failed is the library's sentence, which the receiver does not carry |
+| V2(c) | `no_trace` carries the library's code, not its `EnvelopeError` message | **by design, and closed by this commit's fold.** The `no_trace` event carries the library's code (`spanweave_code`, where the library refused the envelope), and its `detail` is one of three words (`unclaimed`, `no_envelope`, `no_id`), not the library's message; other events' `detail` is a sentence, some ending in the library's (`refused`'s is the library's message alone). Until 2026-10-20 this cell said every receiver event carries a code and never a sentence (`SPEC.md` §4.4, §7.2), which was never true (the bounded fix review's R-4, under *The review* below). The 2026-10-19 V2 decision row said the library's message says which field failed; folded above, it says: the event carries the library's code; which field failed is the library's sentence, which the receiver does not carry |
 | V2(d) | `CLAUDE.md`'s standing rule 1 did not name the envelope as a source of trace ids, as the plan's §0.6 did | **closed by this commit**: rule 1 names spanweave's public `envelope()` in §0.6's words, and `tests/test_record.py` holds it to the sources `SPEC.md` §1.1 names |
 
 These are the threads the series registered at its close. The ones its cold
 review raised are registered with their findings, under *The review* below,
 each with the review's measurements, for the next receiver series unless the
-line names spanweave's.
+line names spanweave's; so are the ones the bounded fix review and Qodo's
+review of the PR raised, under the same heading.
 
 ## What remains before the merge  *(`WORKPLAN.md` §2, folded)*
 
@@ -283,11 +295,17 @@ that set's commits, CI green and Qodo's post-push diff; and the merge.
 halves and its findings are dispositioned as one set (*The review*, below), by
 nine commits after the close: `1df7a35`, `d52669c`, `26ca329`, `2bb1aed`,
 `84cbdf2`, `54dba83`, `41cc44d`, `05cd4be`, and the commit that archived the
-review, which `git log -1 -- reviews/2026-10-19-zoo-run1.md` resolves. Next,
-in the plan's order: the PR `zoo` → `main`; then together one bounded review
-of those nine commits and Qodo's review of the PR (its first fetch archived),
-dispositioned as one set; that set's commits, CI green and Qodo's post-push
-diff; and the merge.
+review, which `git log -1 -- reviews/2026-10-19-zoo-run1.md` resolves. The
+PR `zoo` → `main` is open, as #2. The bounded review of those nine commits and
+Qodo's review of the PR (its first fetch archived) have run, and are
+dispositioned as one set (*The review*, below) by five more commits:
+`d511a48`, `5062951`, `ca9e774`, `567febe`, and the commit that archived the
+two, which `git log -1 -- reviews/2026-10-20-zoo-fixes.md` resolves. **The
+fixes are made, and the loop ends there** (the second 2026-10-20 `review` row
+above). Next: the push; CI green on the tip; Qodo's post-push diff, where a
+new finding blocks only if it is a defect this PR introduces; and the merge.
+Until the commit that archived the two, this paragraph said the PR and the
+bounded review came next.
 
 The merge rule is spanweave's decisions log D39 and D40, adopted here from the
 start (the 2026-10-19 `series` rows above): only a defect this series
@@ -349,7 +367,7 @@ the ninth, the commit that archived the review.
 
 | # | Finding | Disposition |
 |---|---|---|
-| R-1 | `6d78ad9`: since V2, an export no adapter claims, with a valid trace id, is an identified trace whose graph the library refuses (`adapter_unconfident`). Nobody chose what followed: `not_written` and exit 3 for ordinary traffic, under `RootEnded` a cap slot only end of input releases (all 31 of `z1/2026-10-13-recorded`'s records `refused_at_cap` behind one health-check trace), and three sentences calling the refusal unreachable | **closed by `d52669c`** (commit 2), the one behaviour change. At completion such a refusal is a counted `no_graph` event carrying the code, not `not_written`, and exit 3 does not count it; a trace counts against `max_traces` from the first claimed record it absorbs; `RootEnded` alone never completes a trace with no graph, and `Quiet`, `Cap` and end of input do (`SPEC.md` §4.5, §5.1, §5.3, §5.4, §5.5, §5.7, §8.3 and §8.6). It removed the "unreachable" sentences, `SPEC.md` §5.4's and §5.7's and `spanweave_live/routing.py`'s two, and with §5.4's the claim the receiver series' thread **T2** is about (its run-2 threads, below); T2's row is left as it stands |
+| R-1 | `6d78ad9`: since V2, an export no adapter claims, with a valid trace id, is an identified trace whose graph the library refuses (`adapter_unconfident`). Nobody chose what followed: `not_written` and exit 3 for ordinary traffic, under `RootEnded` a cap slot only end of input releases (all 31 of `z1/2026-10-13-recorded`'s records `refused_at_cap` behind one health-check trace), and three sentences calling the refusal unreachable | **closed by `d52669c`** (commit 2), the one behaviour change. At completion such a refusal is a counted `no_graph` event carrying the code, not `not_written`, and exit 3 does not count it; a trace counts against `max_traces` from the first claimed record it absorbs; `RootEnded` alone never completes a trace with no graph, and `Quiet`, `Cap` and end of input do (`SPEC.md` §4.5, §5.1, §5.3, §5.4, §5.5, §5.7, §8.3 and §8.6). It removed the "unreachable" sentences, `SPEC.md` §5.4's and §5.7's and `spanweave_live/routing.py`'s two, and with §5.4's the claim the receiver series' thread **T2** is about (its run-2 threads, below); T2's row was left as it stood by that commit, and since 2026-10-20 says so in place (the bounded fix review's R-5, below) |
 | R-2 | `6d78ad9`: mutation xi, the envelope asked for an `Unpacked` record more than one adapter claims, survived all 831 tests and completed a phantom trace; the suite's only ambiguous record was flat | **closed by `26ca329`** (commit 3): one OTLP span carrying `openinference.span.kind` and `gen_ai.*`, a default `Router()`, is `refused` (`adapter_ambiguous`) with no builder made and `counts {'refused': 1}`, and `spanweave.build` refuses alike; xi is red on it |
 | R-3 | `9641d75`: two mutations of V1's protobuf path survived every test but gate A, which never reaches the endpoint: the protobuf read's diagnostics dropped with its records kept, and a protobuf request's answer labelled `application/x-protobuf` over `{}` | **the first closed by `2bb1aed`** (commit 4): a hand-made body with a field the installed schema does not define, posted as `application/x-protobuf`, is `200` with `exchange.records == read_protobuf(body)` and its `unknown_fields` among the diagnostics. **The second is held by V1a** (`a856ec2`), whose "non-empty protobuf success body" mutation is red 36 (run 2's table of run 1's findings) |
 | R-4 | `6d78ad9`, `024fc66`: `CLAUDE.md` described the receiver before V0 and V2: rule 1 named no envelope, `corpus/` was "used only to build `fixtures/conformance/`", and the `make conformance` line named gate A alone | **closed by `84cbdf2`** (commit 5), with rule 1 already closed by V4 (`e883fa3`, thread V2(d)). `corpus/` is read in place for the zoo too, the zoo gate's obligation is stated beside gate A, and a test holds the `make conformance` line to the files the Makefile's target runs |
@@ -416,6 +434,79 @@ the ninth, the commit that archived the review.
 | R-18 | `e883fa3`: `tests/test_record.py` needs a git binary and a clone with history | **a record line and a thread.** The record line: "a merge commit through `main`'s ruleset" (*What remains before the merge*), which the review did not check, is checked: ruleset `25363236` allows only merge commits, and *The series opens*, above, now says so. **The thread, for the next receiver series** (with run 2's R-16): a `--depth 1` clone gives 8 passed and 2 errors, on the fixture's assertion; a `git archive` export with no `.git`, which is what an sdist is (it ships `tests/`), gives 8 passed and 2 errors, with a message that wrongly says "this clone is shallow"; with no git binary it is an error. It never passes unread |
 | R-19 | `e883fa3`: two measured facts of the plan's §4 are in no tracked file: the ruleset's id, and V3's "41 pins" | **record lines, set right**: ruleset `25363236` (*The series opens*, above), and V3's parent run, 41 pins and 3 red (V3's entry, above) |
 | R-20 | `a856ec2`, `beb4871`: `beb4871`'s body names no derived parent (the CHANGELOG has `5369cac`), and `a856ec2`'s first-byte mutation count, "(3)", is 4, 2 or 4 by how the guess is written | **recorded**; a commit body cannot be amended |
+
+### The bounded fix review and Qodo's review of PR #2 (2026-10-20)
+
+The plan's §2 order put the PR next, then together one bounded review of the
+nine fix commits and Qodo's review of the PR. Both ran at `c76f74e`. The
+bounded review was made as the cold review was, by an aux session reading
+detached worktrees at fixed shas, which **edited no tracked file and committed
+nothing**; it applies the per-commit rules and the cold review's own survivors
+and probes, and opens no new search. Qodo reviewed the PR on GitHub. Both are
+here **byte for byte**:
+
+| archived as | written as | bytes | sha256 |
+|---|---|---|---|
+| `reviews/2026-10-20-zoo-fixes.md` | `patches/REVIEW-2026-10-20.md` | 30358 | `f81d9caabc94f8d9528144c262b9e00948bf2a2af17eabcb614f81337669c92d` |
+| `reviews/2026-10-20-qodo-pr2.md` | `patches/qodo-pr2/`, three bodies | 15668 | `bc630574882fe1fb85bc18c032752a0f6d4f141d7905dcc14f1e3b6edb94ce9d` |
+
+- **The bounded review** is a `cp`, `cmp` silent.
+- **Qodo's** is assembled, because GitHub holds it as three comments: a short
+  header naming the PR, the head sha `c76f74e` and the three comment ids, then
+  the bodies of the review comment `6296023724` (findings 1 and 2) and of its
+  two inline copies `4327578965` and `4327578975` (review `5588358612`, whose
+  own body is empty), each unchanged as first fetched, between marker lines the
+  header states. Each body was first checked equal, byte for byte, to the
+  `body` field of the API's JSON for its comment; the archive was written by a
+  script as the header's bytes and each body's bytes between fixed
+  separators; and each body was then extracted back out of the archive by its
+  markers and `cmp`-ed against its source, silent all three. The summary
+  comment `6295966440` carries no findings and is not archived, which the
+  header says.
+
+Below, **R-n** is the bounded review's, and **Qodo n** is Qodo's finding *n*.
+**Graded by the same merge rule.** The maintainer's second decision of
+2026-10-20 (*Decisions taken*, above) accepted the bounded review's R-1 to R-5,
+all blocking, its R-6, a thread, because it is one sentence beside text this
+series rewrote, and Qodo 1, a defect `d52669c` introduced; R-7, R-8 and Qodo 2
+are threads, registered here with their measurements. The fixes are the five
+commits *Where that order stands* names, numbered below in the order they
+landed; the record lines are set right in place by the fifth, the commit that
+archived the two. **The loop ends with them**: they go to the merge on green
+CI without a further review.
+
+#### The bounded review — `reviews/2026-10-20-zoo-fixes.md`, five blocking findings
+
+| # | Finding | Disposition |
+|---|---|---|
+| R-1 | `d52669c`: since it, `max_traces` bounds the traces that hold a claimed record, and not the builders, books and cursors of traces no adapter claims (§4.5 says so); six older sentences still said it bounds them, the `--max-traces` help among them | **closed by `5062951`** (commit 2): the six set right in §4.5's words — the help, `SPEC.md` §2.3, §6.4 with `spanweave_live/subscriptions.py`'s docstring, `spanweave_live/routing.py`'s eviction docstring, and §6.2 — and three more making the same claim: §5.5's "it bounds builders", `routing.py`'s comment on `max_completed`, and a `tests/test_subscriptions.py` docstring. No test reads the help text |
+| R-2 | `41cc44d`: §7.2 answers a body read in part with OTLP's full-success message, and quoted the `partial_success` docstring's paragraph on an empty value, not its first, by which a server that accepts only part of a request MUST set `partial_success` and the count it rejected | **closed by `ca9e774`** (commit 3): §7.2 names it as the other departure from OTLP, quotes that paragraph from the installed `trace_service_pb2.pyi` (`opentelemetry-proto` 1.45.1), and gives the reason: the reader's `skipped_records` counts records, not spans, and counting the spans a request carried is a dialect read (§1.1). The behaviour is unchanged and R6's; conformant `partial_success` is a thread (below) |
+| R-3 | `d52669c`, and V0–V2 before it: §8.7's "72 of its 81", true when the receiver series wrote it (`7ca6e91`); `tests/test_cli.py` collects 81, 83, 85 and 86 at `0de9f55`, `024fc66`, `e883fa3` and `d52669c`, and no test re-derived the number | **closed by `567febe`** (commit 4), by a test: §8.7 says 77 of 86 and names its nine in-process tests, and `tests/test_record.py` re-derives both numbers and the nine names from the file's collection |
+| R-4 | `e883fa3` (V4): V2(c) and the paragraph under the decisions log said every receiver event carries a code and never a sentence; a `refused` event's `detail` is `str(refusal)`, and `d52669c`'s `no_graph` ends in the library's message | **record lines, set right** in both places above, dated: the `no_trace` event carries the library's code, and its `detail` is one of three words, not the library's message; other events' `detail` is a sentence, some ending in the library's |
+| R-5 | `6d78ad9` (V2) falsified the receiver series' R2-3, which still said **open**, and `c76f74e` left it; T2 beside it, which `d52669c` closed, said **open** too | **record lines, set right** in the receiver series' rows, dated: R2-3 closed by V2 (`6d78ad9`, the `no_trace` code), T2 by `d52669c` (the claim removed, and the stub test `test_a_graph_refusal_with_any_other_code_is_still_not_written` added) |
+
+#### The bounded review — three threads
+
+| # | Thread | Disposition |
+|---|---|---|
+| R-6 | The receiver series' (`696702f`, reworded at `7ca6e91`): `CHANGELOG.md:7`'s "each entry names the batch", false since `7ca6e91`'s own post-close entry in 0.0.1 | **closed by the commit that archived the two**, accepted because it is one sentence beside text this series rewrote: the preamble says an entry names its batch or, after a series' close, what it fixes |
+| R-7 | `1df7a35`: the CHANGELOG entries test holds "newest first" by date alone, and every post-close entry is dated 2026-10-20 | **open, for the next receiver series**: swapping the newest and the oldest post-close entries at `c76f74e` left the whole suite green, 912 passed. The order there was in fact newest first, as the 0.0.2 sentence and the test's docstring say |
+| R-8 | `84cbdf2`: the new test holds `CLAUDE.md`'s `make conformance` line alone | **open, for the next receiver series**, with run 2's R-16 (above), whose shape it is: `CLAUDE.md:32` set back to "used only to build `fixtures/conformance/`", and rule 5 back to "A refusal, a cap, a late arrival or a consumer error", each left the whole suite green at `c76f74e`, 912 passed. Nothing in it is false today, and prose need not be tested; only a number must be |
+
+#### Qodo — `reviews/2026-10-20-qodo-pr2.md`, two findings
+
+| # | Finding | Disposition |
+|---|---|---|
+| Qodo 1 | `d52669c`: "Active traces can complete as quiet". The held trace's refusal at the cap returned before `_activity`, so a trace holding only unclaimed records, whose claimed records kept arriving at a full cap, completed under `Quiet` while they arrived, against §5.3's "absorbed or refused" | **closed by `d511a48`** (commit 1): a claimed record refused at the cap for a trace the router holds refreshes that trace's activity before the refusal is returned, and one for a new trace still makes no builder, no book and no activity (`SPEC.md` §4.5, §5.3). Its test was red on `c76f74e`, 1 failed and 913 passed |
+| Qodo 2 | `d52669c`: "Max-traces cap no longer bounds memory in serve". The cap counts only traces holding a claimed record, so exports with fresh trace ids and no claimed span make builders and books past `--max-traces`, and under `RootEnded` alone, or no policy, nothing releases them before end of input | **open, for the next receiver series**: a bound for the builders of traces no adapter claims, with a counted refusal at it and a CLI flag beside `--max-traces`. **Not introduced by this PR in kind**: before V2 the same records accumulated in the no-trace builder, which nothing releases (§5.4); since `d52669c` they accumulate per trace, and `Quiet`, `Cap` and end of input release them. A client that can POST can grow either without bound, which `SPEC.md` §4.5 now says of these builders ("`max_traces` does not bound the builders of traces no adapter claims"). The bounded review's `cap_bound.py` (its R-1) measured it: `Router(max_traces=1)`, one subscriber on every trace, one claimed trace, then 100 health checks each with its own trace id, held **101** builders and **101** subscription cursors at `c76f74e` with no event, where `1df7a35` held 1 and 1 and emitted 200 `refused_at_cap` |
+
+One more thread is registered with these, for the next receiver series, the
+one R-2's fix names: **conformant `partial_success`** for a body the reader
+read in part, OTLP's MUST, which `SPEC.md` §7.2 now names as a departure. Its
+measurement is the bounded review's: a two-line body, one claimed record and
+one `{not json}`, reads as 1 record, `skipped_records` 1 and one
+`malformed_record`, and `Endpoint.handle` answers it `200` with `{}`, OTLP's
+full-success message.
 
 ## Origins  *(`WORKPLAN.md` §5, folded)*
 
@@ -1091,7 +1182,7 @@ Nothing blocked run 2.
 | R1-5 | `SPEC.md` §3.4's "no cap" was prose with no guard — nothing would fail if a later batch quietly capped or truncated the remainder | **superseded by R2b** (`d152c3b`): §3.4 is now the cap policy, with the boundary tested, and **R5a** added the `0` and the negative-cap cases (F9) |
 | R1-6 | The BOM-split consequence of §3.2 is untested (`BOM` appears only in prose) | **open.** `MULTI_BYTE_STREAM` still carries no BOM prefix. The claim was verified true by the review; the fix is one prefix, after which the existing two-way split sweep covers the BOM boundaries for free |
 | R2-2 | Gate A's interleaving is **line-atomic**: `replay()` drains each arrival's chunks before the next arrival's, so the framer's remainder never holds one trace's partial line while the other trace's bytes arrive (instrumented: 0 arrivals) | **open.** §4.7's prose suggests a cross-trace framing state the test never reaches. Extra coverage, not a bug — R1 already tests the remainder within one stream. The fix is to chunk the concatenated interleaved stream, or add one test that does |
-| R2-3 | An unclaimed record is accounted for only by `no_trace.version`: a stream of nothing but unclaimed records yields no event and no count, and `no_trace.graph()` then refuses, so R7 — which writes every event to stderr — has nothing to write for them | **open**, and bounded: nothing is dropped (the records are in the builder), and `SPEC.md` §4.3 names the library's own `missing_trace_id`/`unclaimed_record` diagnostics as the account. Surfacing an unclaimed **count** is a spec sentence; a new event **code** would be a decision, not a patch |
+| R2-3 | An unclaimed record is accounted for only by `no_trace.version`: a stream of nothing but unclaimed records yields no event and no count, and `no_trace.graph()` then refuses, so R7 — which writes every event to stderr — has nothing to write for them | **open**, and bounded: nothing is dropped (the records are in the builder), and `SPEC.md` §4.3 names the library's own `missing_trace_id`/`unclaimed_record` diagnostics as the account. Surfacing an unclaimed **count** is a spec sentence; a new event **code** would be a decision, not a patch. **Closed by V2** (`6d78ad9`, the zoo series), which took that decision (its 2026-10-16 row): a record that reaches the no-trace builder is one counted `no_trace` event with the reason, and three flat unclaimed records give three `no_trace` (`unclaimed`) events and `counts {'no_trace': 3}` (that review's measurement, at `c76f74e`). This row said **open** until 2026-10-20 (the zoo series' bounded fix review, R-5) |
 | P-3 | `WORKPLAN.md` §4's gate-A arithmetic omitted a factor of two: "1354 pairs × 10 seeds = 27 080" is 13 540; the real figure is `2 × 1354 × 10`, two graphs compared per pair | **closed by this commit**: the R2 entry above writes the equation out with the factor. Every input number checked out independently (53 renderings, 29 scenarios, 1354 cross-scenario pairs), and `CHANGELOG.md` gave the total with no equation and was correct as written |
 | P-4 | Finding 3 (`push` is not a second way to read a document) was understated in the surviving documents: §3.3 asserted the chunked-loss direction only, and the whole-body direction lived in a test docstring | **closed by R2a**: §3.3 states the trap in full and asserts both directions, which is how R6 met it in the spec rather than in a docstring |
 
@@ -1119,7 +1210,7 @@ Nothing blocked run 3.
 | # | Thread | Disposition |
 |---|---|---|
 | T1 | `Router.completion` is a mutable public field, and a completion attached **after** records have been routed measures `Quiet` from the tick rather than from the records: `route` creates a `_Book` only when `now is not None`, so `tick` builds it with `first_record_at = last_record_at = now` and `Completed.seconds` reports 0 for a trace open for an hour | **reached, and harmless where it is reached — but not for the reason first recorded here.** R7's CLI **does** reassign `router.completion` at end-of-input finalisation, to `Completion(policies=(Cap(0),), …)`, before one final tick (`spanweave_live/cli.py:274`, `SPEC.md` §8.5). An earlier reading of this disposition said "`Cap(0)` completes immediately and reads no accumulated silence, **so** nothing is mismeasured". That is a **non-sequitur**, and three fake-clock probes separate the cause from the claim: (A) the CLI's own shape — router built with its policy, one record, clock +3600 s, `completion` reassigned to `Cap(0)`, tick — reports `seconds=3600.0`; (B) the thread's own precondition, routing with `completion=None` and attaching `Quiet(1.0)` afterwards, does not fire at +3600 and reports `seconds=1.0` one second later; (C) **the same `Cap(0)` reassignment onto B's router reports `seconds=0.0`**. So the reassignment *does* mismeasure when the router was routed without a policy. What makes the CLI safe is the other half of the thread's sentence: **the CLI constructs the router with its policy**, so `route` opens a `_Book` on the first record and the books carry a true `first_record_at` for the final tick to subtract from. The thread's *prediction* was right about the fact, and this disposition had credited the wrong cause. **Still open** as the thread states it, which was never in doubt: no §5 sentence says what happens when a policy is added mid-stream, and no test covers the `Quiet` case. Either state it in §5.2 or make `completion` constructor-only |
-| T2 | §5.4's "unreachable today" claim rests on spanweave's current refusal set, and R2c is a pin move | **open, and the claim survived the move.** The review probed the one live-looking route (`Router(adapter="otel_genai")` against an OpenInference record) and the pinned `Builder` **absorbs** it as a `NodeKind.UNKNOWN` node rather than refusing. Nothing fails if a future pin move adds a refusal that makes the branch reachable; a synthetic `Builder` stub whose `graph()` raises would close it for one test |
+| T2 | §5.4's "unreachable today" claim rests on spanweave's current refusal set, and R2c is a pin move | **open, and the claim survived the move.** The review probed the one live-looking route (`Router(adapter="otel_genai")` against an OpenInference record) and the pinned `Builder` **absorbs** it as a `NodeKind.UNKNOWN` node rather than refusing. Nothing fails if a future pin move adds a refusal that makes the branch reachable; a synthetic `Builder` stub whose `graph()` raises would close it for one test. **Closed by `d52669c`** (the zoo series, after its close): it removed §5.4's "unreachable" claim, and added that stub, `tests/test_completion.py::test_a_graph_refusal_with_any_other_code_is_still_not_written`, a `Builder` whose `graph()` raises a code the receiver has no account of, which is `not_written`. This row said **open** until 2026-10-20 (the zoo series' bounded fix review, R-5) |
 | T3 | The forgetting policy is due **before** R7, not after it: R7's `tail`/`serve` is the first caller that runs unbounded in wall-clock time and has no window to build | **closed: decided and built as R3a** (`baa32cb`), before R7 (`d21859d`). The decision is the 2026-10-06 `forgetting` row above; the measurement is in `SPEC.md` §5.5; and the thread's second requirement — that a late arrival after the horizon be distinguishable from a first sighting — is why a record for a forgotten id emits **no** `late_arrival` and opens generation 1, stated in §5.5 rather than left to be discovered |
 | T4 | The cursor's advance on `delta_unavailable` is unspecified: `due()` advances before the consumer is called, so a window lost to a refusal is never retried and never re-reported | **open**, and benign: §6.2 states this explicitly for the *raising* case ("a subscriber that raised still advances") and §6.5 is silent for the *unavailable* case. The behaviour looks right — the consumer's first received update starts its own fold from `builder.graph()`. One sentence in §6.5, not a defect |
 | T5 | R3's `released` still carries its version in `detail` only, now that `Event.version` exists | **open.** §4.1 and §6.1 both say so and both say it is §5's edit to make. Registered so it is not lost. An earlier reading of this disposition said `released` "has since been joined by `flush`/`forget` (R5a, §6.5)", which names two things that are not event codes: `released` **is** a code (`spanweave_live/completion.py:56`, `RELEASED: Final = "released"`), while `flush` and `forget` are **`Subscriptions` methods** (`spanweave_live/subscriptions.py:222` and `:251`) — neither appears as a code literal anywhere under `spanweave_live/`. What R5a actually did is replace R4's `released` *on `Subscriptions`* with those two methods, declared in **§6.1** and not §6.5 (§6.5 is the three codes, `consumer_error`/`delta_unavailable`/`delta_unsent`), and §6.1 is also where "R3's `released` keeps its version in `detail`; moving it is §5's edit" is written down. So the edit this thread asks for is **one code**, `released`, moving its version out of `detail` into `Event.version`; the two method names were never part of it, and the instruction to "take all of them together" was unfollowable as written |

@@ -4,12 +4,12 @@ All notable changes to this project. **Nothing here is frozen**: the version is
 `0.0.x`, and until that changes any entry below may be undone by the next one.
 
 The format is loosely [Keep a Changelog](https://keepachangelog.com/); the unit
-of change is a **batch**, each entry names the batch, and `TASKS.md` is the
-registry that lists them one line apiece. A batch entry may cite its series'
-`WORKPLAN.md`, which was deleted at that series' close; each such citation is
-dated history, resolvable at `git show 3077bec:WORKPLAN.md` for the zoo
-series' entries (V0–V4) and at `git show b500342:WORKPLAN.md` for the receiver
-series' (R0–R9).
+of change is a **batch**: an entry names its batch or, after a series' close,
+what it fixes, and `TASKS.md` is the registry that lists the batches one line
+apiece. A batch entry may cite its series' `WORKPLAN.md`, which was deleted at
+that series' close; each such citation is dated history, resolvable at
+`git show 3077bec:WORKPLAN.md` for the zoo series' entries (V0–V4) and at
+`git show b500342:WORKPLAN.md` for the receiver series' (R0–R9).
 
 ## Unreleased
 
@@ -19,6 +19,114 @@ The version moved from `0.0.1` at the series' close (V4): nothing is frozen,
 and the event-code set grew (`no_trace`, V2; `no_graph`, after the close). Under
 this heading are the zoo series' batches V0–V4 and, above them, the commits made
 after its close, newest first.
+
+### The bounded fix review and Qodo's review of PR #2, archived byte for byte, and their dispositions (2026-10-20)
+
+Derived parent `567febe`. The fifth and last of the five commits that
+disposition the bounded fix review of PR #2 and Qodo's review of it, read as
+one set. It archives both and dispositions every finding of both in
+`TASKS.md`, sets the record lines the review graded right in place, and
+answers the review's R-6 here. **Prose only**, one file copied and one
+assembled: no behaviour changed and no test changed, and `SPEC.md` is
+untouched. So the bar's *confirmed red on the parent* and *named mutation*
+lines do not apply to this entry, as they did not to the cold review's archive
+(*The series' cold review, both halves, archived byte for byte*, below), and no
+worktree and no parent run were made. Nothing under `tests/` reads `reviews/`
+by a list of its files: `tests/install_check.py` keeps the directory out of
+the wheel and the sdist by its prefix, and the other tests cite archives by
+name in docstrings and comments only, so there was none to extend.
+
+Added
+
+- **`reviews/2026-10-20-zoo-fixes.md`**, `patches/REVIEW-2026-10-20.md`
+  unchanged: a `cp`, `cmp` silent. 30358 bytes, sha256
+  `f81d9caabc94f8d9528144c262b9e00948bf2a2af17eabcb614f81337669c92d`.
+- **`reviews/2026-10-20-qodo-pr2.md`**, Qodo's review of PR #2 at `c76f74e`
+  as first fetched: a short header naming the PR, the head sha and the three
+  comment ids, then the bodies of the review comment `6296023724` and its two
+  inline copies `4327578965` and `4327578975`, unchanged, between marker lines
+  the header states. 15668 bytes, sha256
+  `bc630574882fe1fb85bc18c032752a0f6d4f141d7905dcc14f1e3b6edb94ce9d`.
+  Assembled by a script, header bytes then each body's bytes between fixed
+  separators; each body was checked equal to its comment's API `body` field
+  before, and extracted back out of the archive by its markers and `cmp`-ed
+  against its source after, silent all three. The summary comment
+  `6295966440` carries no findings and is not archived. Both archives are in
+  `TASKS.md`'s table under *The review*, with their sizes, and `git
+  check-ignore` ignores neither.
+- **One disposition line per finding**, ten in all, under *The review*: the
+  bounded review's five blocking findings (R-1 to R-5) and three threads (R-6
+  to R-8), and Qodo's two. R-1 is closed by `5062951`, R-2 by `ca9e774`, R-3
+  by `567febe`, Qodo 1 by `d511a48`; R-4 and R-5 are record lines set right
+  here, and R-6 is answered here. R-7, R-8 and Qodo 2 are registered as
+  threads for the next receiver series, with their measurements, and so is
+  conformant `partial_success` for a body read in part, which `ca9e774`'s
+  §7.2 names a thread.
+- **A row of the decisions log**, dated 2026-10-20, batch `review`, the
+  maintainer's: the set's dispositions, and **the loop's end**. By the
+  series' bounded rule these fixes go to the merge on green CI without a
+  further review; after the push, Qodo's post-push diff, then the merge, and a
+  Qodo finding new in that diff blocks only if it is a defect this PR
+  introduces. The log now says it is ten rows, and `tests/test_record.py`
+  holds that.
+
+Fixed
+
+The record lines, set right in `TASKS.md` where each false sentence was, each
+now saying what it said until 2026-10-20:
+
+- **V2(c), and the paragraph under the decisions log** (the review's R-4) said
+  every receiver event carries a code and never a sentence (`SPEC.md` §4.4,
+  §7.2). The `no_trace` event carries the library's code where the library
+  refused the envelope, and its `detail` is one of three words, `unclaimed`,
+  `no_envelope` or `no_id`, not the library's message; other events' `detail`
+  is a sentence, some ending in the library's, and a `refused` event's is the
+  library's message alone.
+- **The receiver series' R2-3 and T2** (the review's R-5) still said
+  **open**. R2-3 is closed by V2 (`6d78ad9`, the `no_trace` code), and T2 by
+  `d52669c`, which removed §5.4's "unreachable" claim and added the stub test
+  `test_a_graph_refusal_with_any_other_code_is_still_not_written`. The cold
+  review's run 1 R-1 line, which said T2's row is left as it stands, says
+  where it is closed.
+- **This file's preamble** (the review's R-6, a thread, accepted as one
+  sentence beside text this series rewrote) said each entry names the batch,
+  untrue since 0.0.1's own post-close entry: an entry names its batch or,
+  after a series' close, what it fixes.
+
+Changed
+
+- ***What remains before the merge*** says where the order stands: the PR is
+  open as #2, the bounded review and Qodo's are dispositioned by five commits,
+  the fixes are made and the loop ends there, and next come the push, CI
+  green on the tip, Qodo's post-push diff, and the merge. *Threads,
+  registered* says where this set's threads are.
+
+Measured for this entry, in the main checkout, whose library and tests are the
+derived parent's:
+
+- **The archives**: `cmp` printed nothing for the copy and for each of the
+  three extracted bodies; each body equals its comment's `body` in the
+  fetched JSON and in the fetch's full listings; `sha256sum` and `wc -c` gave
+  the digests and sizes above.
+- **V2(c)'s truth**, read in `spanweave_live/routing.py`: the `no_trace`
+  event's `detail` is `identity.why`, one of `UNCLAIMED`, `NO_ENVELOPE` and
+  `NO_ID`, with `spanweave_code` the library's code where it refused the
+  envelope; `refused`'s `detail` is `str(refusal)`; `no_graph`'s,
+  `delta_unavailable`'s, `delta_unsent`'s and a refused graph's
+  `not_written` end in the library's message; `written`'s is the path.
+- **T2's stub**: `tests/test_completion.py` defines
+  `test_a_graph_refusal_with_any_other_code_is_still_not_written`, and `git
+  log -S` gives `d52669c` as the commit that added it.
+
+Shown anyway: the count sentence set back to "Nine rows" makes
+`tests/test_record.py` 1 failed, 11 passed.
+
+`make check` green (ruff, `ruff format --check`, mypy --strict on 9 source
+files, 915 passed, gates and pins 71), `make conformance` 97 passed, `make
+showcase` 12 passed. `make install-check` was run although no packaging, no
+dependency and no pin moved, because `reviews/` grew and the install check is
+what keeps it out of what ships: OK, the wheel library-only and the sdist
+"no submodule and no reviews/".
 
 ### §8.7's count of the CLI's process tests is the measured one (2026-10-20)
 
