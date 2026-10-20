@@ -440,8 +440,10 @@ def _common(parser: argparse.ArgumentParser) -> None:
         type=int,
         metavar="N",
         help=(
-            "hold builders for at most N identified traces; at the cap a new "
-            "trace is refused_at_cap, counted, never dropped (SPEC.md 4.5)"
+            "hold builders for at most N traces with a claimed record; at the "
+            "cap a claimed record that would make one more is refused_at_cap, "
+            "counted, never dropped; a trace no adapter claims is held and not "
+            "counted (SPEC.md 4.5)"
         ),
     )
     parser.add_argument(

@@ -345,7 +345,8 @@ class Router:
     #: How many **completed** trace ids this router will remember, or `None` to
     #: remember every one of them, which is what R3 shipped (`SPEC.md` §5.5).
     #: Beside `max_traces` because the two are this router's two bounds: that
-    #: one bounds builders, this one bounds the book that outlives them.
+    #: one bounds the builders of traces with a claimed record, this one
+    #: bounds the book that outlives them.
     max_completed: int | None = None
     adapter: str | None = None
     temporal: bool = True
@@ -901,7 +902,9 @@ class Router:
           still holds a builder for is that open trace's own state -- `Quiet`
           reads `last_record_at` off it -- so evicting one would complete a trace
           early for a reason no caller could see. Those are bounded by the
-          builders held, which is `max_traces`' job.
+          builders held: `max_traces` bounds those of traces holding a claimed
+          record, and only completion releases those of traces no adapter
+          claims (`SPEC.md` §4.5).
         - The **oldest completion** goes first, which is the order this router
           completed them in and not a sort on the caller's clock: `_complete`
           moves a book to the end of `_books` as it books the completion, so

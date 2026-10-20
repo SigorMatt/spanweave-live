@@ -20,6 +20,47 @@ and the event-code set grew (`no_trace`, V2; `no_graph`, after the close). Under
 this heading are the zoo series' batches V0–V4 and, above them, the commits made
 after its close, newest first.
 
+### Every sentence about what max_traces bounds says what it bounds (2026-10-20)
+
+Derived parent `d511a48`. The second of the five commits that disposition the
+bounded fix review of PR #2, answering its R-1. Since `d52669c` (the held
+trace off the cap), `max_traces` bounds the traces that hold a claimed record,
+and not the builders, books and subscription cursors of traces no adapter
+claims; `SPEC.md` §4.5 states that cost. Six sentences older than the series
+still said it bounded every trace, and `d52669c` amended none of them.
+
+Changed
+
+- **The `--max-traces` help** (`cli.py`): "hold builders for at most N
+  identified traces; at the cap a new trace is refused_at_cap" now says N
+  traces with a claimed record, that the refused record is the claimed one
+  that would make one more, and that a trace no adapter claims is held and not
+  counted. No test reads this help text, so none is updated.
+- **`SPEC.md` §2.3**: "`max_traces` (§4) is a cap with a counted event rather
+  than unbounded growth" now says it caps the traces holding a claimed record
+  and does not bound the traces no adapter claims, whose cost §4.5 states.
+- **`SPEC.md` §6.2**: "A record refused at `max_traces` (§4.5) has no builder
+  at all" was false for a claimed record refused for a held trace. It now says
+  the record is not absorbed: a new trace has no builder, and a held trace's
+  builder keeps the version it had.
+- **`SPEC.md` §6.4** and the `Subscriptions` docstring (`subscriptions.py`):
+  the cursors are bounded by the builders held, so `max_traces` bounds those of
+  traces holding a claimed record and not those of traces no adapter claims,
+  which only completion releases. §6.4's "the unbounded cost this receiver
+  does have is the one §5.5 names" now names §4.5's beside it.
+- **`routing.py`**: the eviction docstring's "bounded by the builders held,
+  which is `max_traces`' job" says the same split, and the comment on
+  `max_completed` ("that one bounds builders") says whose builders.
+- Two sentences the review did not list, set right for the same reason:
+  `SPEC.md` §5.5's "`max_traces` (§4.5) bounds none of it — it bounds
+  builders", and the docstring of
+  `test_released_forgets_the_cursors_so_they_are_bounded_by_the_builders`.
+
+Prose, docstrings and one help string only. With docstrings removed, the ASTs
+of the changed `.py` files are identical to the parent's except for the help
+string literal in `cli.py`, so no behaviour changes and no test's logic
+changes, and there is no red-on-parent run or mutation to show.
+
 ### A claimed record refused at the cap for a held trace is activity (2026-10-20)
 
 Derived parent `c76f74e`. The first of the five commits that disposition the

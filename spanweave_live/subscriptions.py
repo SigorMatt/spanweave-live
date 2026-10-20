@@ -123,9 +123,11 @@ class Subscriptions:
     subscription list is something consumers join. The router is handed this and
     the caller keeps its reference.
 
-    The cursors are bounded: one `int` per subscription per trace the router
-    **currently holds a builder for**, forgotten when the builder is released
-    (`SPEC.md` §6.4, §6.5), so `max_traces` bounds them.
+    The cursors are bounded by the builders: one `int` per subscription per
+    trace the router **currently holds a builder for**, forgotten when the
+    builder is released (`SPEC.md` §6.4, §6.5). So `max_traces` bounds those of
+    the traces holding a claimed record, and not those of the traces no adapter
+    claims, which only completion releases (§4.5).
     """
 
     _registered: list[Subscription] = field(default_factory=list, init=False)

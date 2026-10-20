@@ -298,8 +298,10 @@ library about the same bytes for reasons no fixture could pin.
 
 **What it makes ours.** The receiver's cost is in `feed` and in materialization,
 not in framing, so that is where its policies live: completion (§5) releases a
-builder so a finished trace stops costing memory, `max_traces` (§4) is a cap
-with a counted event rather than unbounded growth, and retention (§6) is set
+builder so a finished trace stops costing memory, `max_traces` (§4.5) caps the
+traces holding a claimed record with a counted event rather than unbounded
+growth — and does not bound the traces no adapter claims, whose cost §4.5
+states — and retention (§6) is set
 from the longest window a subscriber actually asked for rather than kept "just
 in case". A delta is handed out per record because that is what a live consumer
 wants; it is not handed out per record *because it is free*.
@@ -1375,7 +1377,8 @@ overhead and not the id. At ten traces a second a receiver reaches 10^6 complete
 traces in **about 28 hours** (`reviews/2026-10-06-run2.md` §0(b), F1). The
 numbers are here rather than in the plan because a reader deciding what to do
 about this needs them, and the plan is deleted at series close. `max_traces`
-(§4.5) bounds none of it — it bounds builders. The figures were measured before
+(§4.5) bounds none of it — it bounds the builders of traces holding a claimed
+record. The figures were measured before
 the bound below existed and they are what it is for, so they stay: they are how
 a caller turns a bound into bytes.
 
@@ -1654,7 +1657,8 @@ each window is exactly `N` wide.
 version does not move (§4.4), so there is nothing that changed to report, and
 reporting `delta(since=version - 1)` anyway would hand the *previous* record's
 difference over a second time. The refusal is already an event. A record refused
-at `max_traces` (§4.5) has no builder at all.
+at `max_traces` (§4.5) is not absorbed either: for a new trace there is no
+builder at all, and a held trace's builder keeps the version it had.
 
 **The iteration order is registration order**, 0-based on `Subscription.order`,
 and it is the order consumers are called in, for every record, in every process.
@@ -1740,12 +1744,15 @@ Three boundaries of that rule, each chosen rather than fallen into:
 unbounded growth, and bounds one that was already there: a `Builder` retains
 `"all"` by default, so every router since R2 has held one journal entry per
 absorbed record, and a trace with a subscriber on it now holds a fixed number
-instead. The cursors are bounded too — one `int` per subscription per trace the
-router **currently holds a builder for**, forgotten when the builder is released
-(§6.5), so `max_traces` bounds them. The unbounded cost this receiver does have
-is the one §5.5 names and does not pretend to have fixed: the per-trace-id book
-that outlives completion, awaiting a forgetting policy. Nothing here makes it
-worse, and nothing here depends on how it is settled.
+instead. The cursors are bounded by the builders — one `int` per subscription
+per trace the router **currently holds a builder for**, forgotten when the
+builder is released (§6.5) — so `max_traces` bounds those of the traces holding
+a claimed record, and not those of the traces no adapter claims, which only
+completion releases (§4.5). The unbounded costs this receiver does have are the
+ones §4.5 and §5.5 name and this section does not pretend to fix: the builders
+of traces no adapter claims, and the per-trace-id book that outlives
+completion, awaiting a forgetting policy. Nothing here makes either worse, and
+nothing here depends on how they are settled.
 
 ### 6.5 The three codes, and what each refuses to be silent about
 

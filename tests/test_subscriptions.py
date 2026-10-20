@@ -780,7 +780,7 @@ def test_a_completion_nobody_is_behind_on_reports_no_unsent_window():
 
 def test_released_forgets_the_cursors_so_they_are_bounded_by_the_builders():
     """§6.4's second half: the cursors are one `int` per subscription per trace
-    the router **currently holds**, which `max_traces` bounds."""
+    the router **currently holds**, so they are bounded by the builders held."""
     subscriptions = Subscriptions()
     subscription = subscriptions.subscribe(Collector())
     router = Router(
