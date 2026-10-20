@@ -20,6 +20,51 @@ and the event-code set grew (`no_trace`, V2; `no_graph`, after the close). Under
 this heading are the zoo series' batches V0–V4 and, above them, the commits made
 after its close, newest first.
 
+### An unpacked record two adapters claim is refused, and the envelope is not asked (2026-10-20)
+
+Derived parent `d52669c`. The third commit after the series' close, answering
+R-2 of the first half of its cold review (run 1, archived under `reviews/` by
+a later commit of these). A pin, not a fix: **no behaviour changed**. Only
+`tests/test_routing.py` and this file moved, and `SPEC.md` is untouched,
+because §4.2 already says what the test holds (a record more than one adapter
+claims goes to the no-trace builder and stays `refused` and nothing else), and
+no sentence anywhere says the case is untested. Until now it was, for an
+unpacked record: the suite's only ambiguous record was flat, and the review's
+mutation xi, the envelope asked for an unpacked record more than one adapter
+claims, passed every test and completed a phantom trace.
+
+Added
+
+- **One test**, `test_an_unpacked_record_two_adapters_claim_is_refused_and_its_envelope_not_asked`,
+  in `tests/test_routing.py` beside the flat ambiguous test it is the twin of,
+  built from the file's hand-made export helpers: one OTLP/JSON span carrying
+  `openinference.span.kind` and two `gen_ai.*` attributes, through
+  `Framer().document`. It asserts its premises first: the record is
+  `spanweave.read.Unpacked`, `classify` gives two adapters, and the envelope
+  states the export's trace id. Then, under a default `Router()`: `trace_id`
+  `None`, the record at the no-trace builder and absorbed by nothing (version
+  `0`), one `refused` event with no trace id and `adapter_ambiguous`, no
+  builder for the export's trace, `trace_ids ()`, `counts {'refused': 1}`; and
+  `spanweave.build` of the same export refuses with the same code.
+
+Green on the parent (`d52669c`, worktree under the scratchpad), with the test
+file overlaid: the whole suite gives 0 failed, 910 passed. It is green there
+because nothing moved, as V3's pins and V1a's guards were: the code was right,
+and the test holds it. The mutation is what shows it can fail. Mutations, each
+of `_identify` in `spanweave_live/routing.py`, run against the whole suite (910
+tests):
+- xi, the envelope asked when more than one adapter claims an `Unpacked`
+  record: 1 failed, 909 passed (the new test, at `trace_id` `None`: the record
+  was routed to the export's trace). Against the parent's own 909 tests, without
+  the new one, xi passes all 909;
+- the envelope branch's guard widened from no claimant to not exactly one
+  (`len(claimants) != 1`): 4 failed, 906 passed (the new test and three flat
+  ambiguous tests, the flat record now announced as `unclaimed`);
+- the ambiguity branch removed, so the first claimant's `parse` routes: 4
+  failed, 906 passed (the new test and three flat ambiguous tests);
+- the ambiguous record announced as `no_trace` (`unclaimed`) before its
+  refusal: 4 failed, 906 passed (the same four as the widened guard).
+
 ### A trace no adapter can read is announced as no_graph, and stays off the cap until it holds a claimed record (2026-10-20)
 
 Derived parent `1df7a35`. The second commit after the series' close, and the

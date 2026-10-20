@@ -551,6 +551,47 @@ def test_an_ambiguous_record_is_refused_and_not_also_announced_as_no_trace():
     assert router.counts == {REFUSED: 1}
 
 
+def test_an_unpacked_record_two_adapters_claim_is_refused_and_its_envelope_not_asked():
+    """The test above, for a span of an export: no single claimant is not none.
+
+    The envelope is asked only where **no** adapter claims an unpacked record
+    (`SPEC.md` §4.2). This span carries both `openinference.span.kind` and
+    `gen_ai.*`, so both shipped adapters claim it, and its envelope states the
+    export's trace id -- there to be misread. A receiver that asked the
+    envelope whenever there is no single claimant would file the span under
+    that trace and make it a builder, which completion would then report on;
+    this one sends it to the no-trace builder, whose refusal is `refused` and
+    nothing else, as `spanweave.build` of the same export refuses.
+    """
+    from spanweave.adapters import classify
+    from spanweave.read import Unpacked
+
+    span = otlp_span("aaaaaaaaaaaaaaaa")
+    span["attributes"] += [
+        {"key": "gen_ai.operation.name", "value": {"stringValue": "chat"}},
+        {"key": "gen_ai.system", "value": {"stringValue": "demo"}},
+    ]
+    export = otlp_export(span)
+    (record,) = Framer().document(export).records
+    assert isinstance(record, Unpacked), "the reader unpacked it"
+    assert len(classify(record)) == 2, "both adapters claim it"
+    assert spanweave.envelope(record).trace_id == EXPORT_TRACE, "there to be misread"
+
+    router = Router()
+    routed = router.route(record)
+    assert routed.trace_id is None
+    assert routed.builder is router.no_trace and routed.version == 0
+    assert [(e.code, e.trace_id, e.spanweave_code) for e in routed.events] == [
+        (REFUSED, None, "adapter_ambiguous")
+    ]
+    assert router.builder(EXPORT_TRACE) is None, "no builder made for the trace"
+    assert router.trace_ids == ()
+    assert router.counts == {REFUSED: 1}
+    with pytest.raises(spanweave.SpanweaveError) as refusal:
+        spanweave.build(export)
+    assert refusal.value.code == "adapter_ambiguous"
+
+
 def test_under_a_named_adapter_an_ambiguous_record_reaches_no_trace_unannounced():
     """A pin of an older gap, stated in `SPEC.md` §4.3 and not fixed by V2.
 
