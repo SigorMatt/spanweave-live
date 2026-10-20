@@ -44,6 +44,7 @@ from tests import gates
 # Gate A's own corpus helpers and its comparison, imported rather than
 # reimplemented (`SPEC.md` §4.7, §8.7).
 from tests.test_conformance import loaded, rendering_id, renderings, undigested
+from tests.test_zoo_gate import json_bodies, raw_requests
 
 REPO = pathlib.Path(__file__).resolve().parent.parent
 
@@ -210,6 +211,39 @@ def test_a_document_posted_to_serve_is_written_as_gate_As_graph(path, tmp_path) 
     assert written.read_bytes() == rendering.graph
 
 
+def test_protobuf_posted_to_serve_is_written_as_the_batch_graph(tmp_path) -> None:
+    """What a stock exporter sends, through a socket the CLI bound (`§8.1`).
+
+    Z1's real run as its exporter sent it: two `application/x-protobuf` bodies,
+    two requests. The file written at the end is the batch graph of the same
+    export's JSON bodies, which is the zoo gate's comparison (`§4.8`) reached
+    through a process.
+    """
+    capture = "z1/2026-10-13-real"
+    requests = raw_requests(capture)
+    joined = b"\n".join(json_bodies(capture)) + b"\n"
+    batch = spanweave.build(joined)
+    out = tmp_path / "out"
+    with serving("--out", str(out), "--requests", str(len(requests))) as server:
+        # A guard and not a schedule: nothing here waits on it when the
+        # receiver is right. A protobuf body read as JSON lines instead would
+        # put hundreds of `malformed_record` lines on a stderr pipe this test
+        # drains only at exit, the process would block on the full pipe before
+        # answering, and without a bound the test would hang there rather
+        # than fail.
+        statuses = [
+            server.post(
+                request.body, content_type=str(request.content_type), timeout=60
+            )[0]
+            for request in requests
+        ]
+    assert statuses == [200] * len(requests)
+    assert server.returncode == 0, server.stderr.decode()
+    written = out / f"{batch.trace_id}.json"
+    assert written.read_bytes() == spanweave.dumps(undigested(batch))
+    assert sorted(p.name for p in out.iterdir()) == [written.name]
+
+
 class serving:
     """`spanweave-live serve --port 0`, with the bound port read off stderr.
 
@@ -252,8 +286,9 @@ class serving:
         body: bytes,
         content_type: str = "application/json",
         target: str = "/v1/traces",
+        timeout: float | None = None,
     ) -> tuple[int, bytes]:
-        connection = http.client.HTTPConnection(self.host, self.port)
+        connection = http.client.HTTPConnection(self.host, self.port, timeout=timeout)
         try:
             connection.request("POST", target, body, {"Content-Type": content_type})
             response = connection.getresponse()
@@ -261,7 +296,12 @@ class serving:
         finally:
             connection.close()
 
-    def __exit__(self, *_: object) -> None:
+    def __exit__(self, failure: type[BaseException] | None, *_: object) -> None:
+        if failure is not None:
+            # The block failed, so the requests the process is still waiting
+            # for will never come: end it rather than wait out the timeout
+            # below and leave it running.
+            self.process.kill()
         self.stdout, rest = self.process.communicate(timeout=120)
         self.stderr = (
             b"".join(json.dumps(line).encode() + b"\n" for line in self.prologue) + rest
@@ -339,6 +379,42 @@ def test_finished_is_the_last_line_and_carries_the_counts(tmp_path) -> None:
     assert isinstance(counts, dict)
     assert counts == {"completed": 1, "released": 1, "written": 1}
     assert codes(result.stderr).count("finished") == 1
+
+
+def test_a_record_that_reaches_no_trace_is_a_router_line_and_finished_counts_it(
+    tmp_path,
+) -> None:
+    """V2: a record that reaches the no-trace builder is said, and counted.
+
+    One claimed span of the corpus' trace and one flat record no adapter
+    claims. The second is one `router` line of code `no_trace`, `detail`
+    `unclaimed`, with no `spanweave_code` key because the library refused
+    nothing (§8.3 leaves a `None` out). `finished` counts it beside the
+    trace's own completion, the exit is `0` because it is an observation
+    (§8.6), and the no-trace builder writes no file (§8.5).
+    """
+    rendering = loaded(by_id(MULTI), second=False)
+    first = rendering.data.splitlines(keepends=True)[0]
+    mystery = json.dumps({"trace_id": "t1", "span_id": "s9", "name": "?"}).encode()
+    out = tmp_path / "out"
+    result = run("tail", "-", "--out", str(out), stdin=first + mystery + b"\n")
+    assert result.returncode == 0, result.stderr.decode()
+    said = only(result.stderr, "no_trace")
+    assert said == {
+        "code": "no_trace",
+        "layer": "router",
+        "index": 2,
+        "detail": "unclaimed",
+    }
+    finished = lines(result.stderr)[-1]
+    assert finished["routed"] == 2
+    assert finished["counts"] == {
+        "completed": 1,
+        "no_trace": 1,
+        "released": 1,
+        "written": 1,
+    }
+    assert sorted(path.name for path in out.iterdir()) == [f"{rendering.trace_id}.json"]
 
 
 def test_the_cli_codes_and_layers_are_the_ones_SPEC_names() -> None:
@@ -616,6 +692,50 @@ def test_a_graph_that_could_not_be_written_is_exit_3(tmp_path) -> None:
     assert only(result.stderr, "not_written")["layer"] == "router"
     assert "completed" in codes(result.stderr)
     assert lines(result.stderr)[-1]["exit"] == 3
+
+
+def test_a_trace_no_adapter_can_read_is_no_graph_and_the_run_exits_0(
+    tmp_path,
+) -> None:
+    """Ordinary traffic is not a failed delivery (`SPEC.md` §5.4, §8.6).
+
+    A plain HTTP health check exported over OTLP, replayed with `--once` and
+    `--root-grace 0`: no root the receiver can see, so only end of input's
+    `Cap(0)` completes it. It is one `router` line of code `no_graph` with the
+    library's code, no `not_written`, no file, and `finished` counts it with
+    `exit` `0`.
+    """
+    from tests.test_routing import EXPORT_TRACE, unread_export
+
+    source = tmp_path / "health.jsonl"
+    source.write_bytes(unread_export() + b"\n")
+    out = tmp_path / "out"
+    result = run(
+        "tail",
+        str(source),
+        "--out",
+        str(out),
+        "--once",
+        "--poll-seconds",
+        "0",
+        "--root-grace",
+        "0",
+    )
+    assert result.returncode == 0, result.stderr.decode()
+    said = only(result.stderr, "no_graph")
+    assert {key: said[key] for key in said if key != "detail"} == {
+        "code": "no_graph",
+        "layer": "router",
+        "index": 2,
+        "trace_id": EXPORT_TRACE,
+        "spanweave_code": "adapter_unconfident",
+    }
+    assert "not_written" not in codes(result.stderr)
+    assert "Cap(records=0)" in str(only(result.stderr, "completed")["detail"])
+    finished = lines(result.stderr)[-1]
+    assert finished["exit"] == 0
+    assert finished["counts"] == {"completed": 1, "no_graph": 1, "released": 1}
+    assert not out.exists() or list(out.iterdir()) == []
 
 
 def test_a_refused_body_is_an_observation_and_the_run_exits_0(tmp_path) -> None:

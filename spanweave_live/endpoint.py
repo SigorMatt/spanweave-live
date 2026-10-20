@@ -1,10 +1,15 @@
-"""Ingest: the OTLP/HTTP JSON endpoint (`SPEC.md` §7.2).
+"""Ingest: the OTLP/HTTP endpoint, JSON and protobuf (`SPEC.md` §7.2).
 
 The sixth piece, and the second of the two ingests. §7.1's `tail` and `stdin`
-answer "how do the bytes reach the framer?" for a file and a pipe; this answers
+answer "how do the bytes reach the reader?" for a file and a pipe; this answers
 it for an exporter that POSTs them. It frames nothing of its own, routes
-nothing, and reads no dialect: a body goes to `Framer.document` and the
-`spanweave.Records` that came back go to the caller (`SPEC.md` §1.1, §1.2).
+nothing, and reads no dialect: a JSON body goes to `Framer.document`, a
+protobuf body -- what a stock exporter sends -- goes to
+`spanweave.read_protobuf`, and the `spanweave.Records` that came back go to the
+caller (`SPEC.md` §1.1, §1.2). Which of the two readers is the request's
+`Content-Type`'s answer, never the bytes': the receiver does not sniff a body,
+and it does not transcode one either. The protobuf runtime is the reader's
+extra, imported by `spanweave` alone (V1, the zoo's L1).
 
 **`Framer.document`, never `Framer.push`.** That is the whole of this module's
 one hard rule and it is a trap rather than a preference (`SPEC.md` §3.3). A
@@ -57,7 +62,7 @@ from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, replace
 from typing import Any, BinaryIO, Final, Protocol
 
-from spanweave import Records
+from spanweave import Records, read_protobuf
 
 from spanweave_live.framing import Framer
 from spanweave_live.routing import Event
@@ -65,17 +70,30 @@ from spanweave_live.routing import Event
 #: The one request this endpoint serves. OTLP/HTTP's own path for traces.
 TRACES_TARGET: Final = "/v1/traces"
 
-#: The one media type it reads. Parameters (`; charset=utf-8`) are allowed and
-#: ignored; the type itself is matched case-insensitively, as HTTP says it is.
+#: The first of the two media types it reads: OTLP/HTTP JSON, handed to
+#: `Framer.document`. Parameters (`; charset=utf-8`) are allowed and ignored;
+#: the type itself is matched case-insensitively, as HTTP says it is. It is
+#: also the type of every refusal, whichever media type the request had, and of
+#: the answer to an accepted JSON request.
 JSON_MEDIA_TYPE: Final = "application/json"
+
+#: The second: OTLP/HTTP protobuf, the media type a stock exporter sends every
+#: export as, handed to `spanweave.read_protobuf` (V1, the zoo's L1). Matched by
+#: the same rule as the first. An accepted request of this type is answered in
+#: it (V1a).
+PROTOBUF_MEDIA_TYPE: Final = "application/x-protobuf"
+
+#: The media types this endpoint reads, in the order the refusal names them.
+_MEDIA_TYPES: Final = (JSON_MEDIA_TYPE, PROTOBUF_MEDIA_TYPE)
 
 #: The one content coding it accepts beside no coding at all.
 GZIP_ENCODING: Final = "gzip"
 
 #: The request was not the one this endpoint serves -- a different method, a
-#: different target, a media type it does not read, a content coding it cannot
-#: undo, or a transfer coding it cannot unframe. Answered `415`, counted, and
-#: the `detail` says which of the five it was (`SPEC.md` §1.5, §7.2).
+#: different target, a media type it does not read (neither of the two), a
+#: content coding it cannot undo, or a transfer coding it cannot unframe.
+#: Answered `415`, counted, and the `detail` says which of the five it was
+#: (`SPEC.md` §1.5, §7.2).
 UNSUPPORTED_MEDIA_TYPE: Final = "unsupported_media_type"
 
 #: The request *was* the one this endpoint serves and the body could not be
@@ -92,10 +110,15 @@ UNREADABLE_BODY: Final = "unreadable_body"
 #: code is the fact that the answer never arrived (`SPEC.md` §1.5, §7.2).
 CLIENT_ABORTED: Final = "client_aborted"
 
-#: What an accepted body answers. `{}` and not OTLP's `partialSuccess` envelope:
-#: see `SPEC.md` §7.2 for why an empty one would be a claim this receiver cannot
-#: make and a filled one would be a dialect read.
-_ACCEPTED_BODY: Final = b"{}"
+#: What an accepted body answers, in the media type the request declared, as
+#: OTLP asks. `{}` for JSON: the empty `ExportTraceServiceResponse`, with
+#: `partial_success` unset, which is OTLP's full-success answer and the one
+#: answer this receiver can give without counting spans; a filled
+#: `partialSuccess` would be a dialect read (`SPEC.md` §7.2). For protobuf, the
+#: same message -- the same claim, `{}`'s and no more -- which encodes as **zero
+#: bytes**, so answering in the request's encoding needs no encoder and no
+#: protobuf import here (V1a). A refusal is JSON for either: `_coded` below.
+_ACCEPTED: Final = {JSON_MEDIA_TYPE: b"{}", PROTOBUF_MEDIA_TYPE: b""}
 
 #: Read nothing, and said so. A request that was refused still yields one of
 #: these, as a poll that read nothing still yields in §7.1: "nothing arrived"
@@ -246,11 +269,16 @@ class Endpoint:
     def handle(self, request: Request) -> Exchange:
         """Decide about one request, and read its body if it is the one.
 
-        `POST /v1/traces` with `Content-Type: application/json` and no coding
-        this endpoint cannot undo goes to `Framer.document`. Everything else is
-        a `415` with an `unsupported_media_type` event naming which of the five
-        checks it failed. A body that cannot be inflated, or that the reader
-        skipped every line of, is a `400` with an `unreadable_body` event.
+        `POST /v1/traces` with `Content-Type: application/json` or
+        `application/x-protobuf` and no coding this endpoint cannot undo is
+        the one request: a JSON body goes to `Framer.document`, a protobuf
+        body to `spanweave.read_protobuf`. Everything else is a `415` with an
+        `unsupported_media_type` event naming which of the five checks it
+        failed. A body that cannot be inflated, or that the reader skipped
+        every line of and read no record from, is a `400` with an
+        `unreadable_body` event -- for either media type, because
+        `read_protobuf` answers a body that does not parse as one skipped
+        `malformed_record`, which is the JSON reader's answer too.
 
         It never raises for anything a request can carry, which is §4.4's rule
         one layer up: a refusal is an event and the endpoint keeps serving.
@@ -311,7 +339,7 @@ class Endpoint:
                 f"the body declared {GZIP_ENCODING!r} and could not be "
                 f"inflated ({type(error).__name__}: {error})",
             )
-        read = self._framer.document(body)
+        read = self._read(request, body)
         if not read.records and read.skipped_records:
             # The reader skipped every line and produced no record: these bytes
             # are not records in any dialect it knows. Its own diagnostics ride
@@ -331,9 +359,15 @@ class Endpoint:
                     ),
                 ),
             )
+        # The request passed `_unsupported`, so its declared media type is one
+        # of the two keys: the answer is in that type, never in one the bytes
+        # suggest (`SPEC.md` §7.2).
+        media_type = _media_type(request.content_type)
         return Exchange(
             request=request,
-            response=Response(status=200, body=_ACCEPTED_BODY),
+            response=Response(
+                status=200, body=_ACCEPTED[media_type], content_type=media_type
+            ),
             records=read,
         )
 
@@ -358,10 +392,11 @@ class Endpoint:
                 f"one target this endpoint serves"
             )
         media_type = _media_type(request.content_type)
-        if media_type != JSON_MEDIA_TYPE:
+        if media_type not in _MEDIA_TYPES:
             return (
-                f"{media_type!r} is not {JSON_MEDIA_TYPE!r}; this endpoint "
-                f"reads OTLP/HTTP JSON and not protobuf"
+                f"{media_type!r} is neither {JSON_MEDIA_TYPE!r} nor "
+                f"{PROTOBUF_MEDIA_TYPE!r}, the two media types this endpoint "
+                f"reads OTLP/HTTP traces as"
             )
         transfer = _coding(request.transfer_encoding)
         if transfer != "identity":
@@ -383,6 +418,24 @@ class Endpoint:
         if _coding(request.content_encoding) == GZIP_ENCODING:
             return gzip.decompress(request.body)
         return request.body
+
+    def _read(self, request: Request, body: bytes) -> Records:
+        """The reader the `Content-Type` names, and nothing decided by the bytes.
+
+        A protobuf body is not lines, so the framer has nothing to decide about
+        it: it goes whole to `spanweave.read_protobuf`, which renders it as the
+        OTLP/JSON the Collector writes and reads that with the JSON reader --
+        the same records, marked unpacked, that the JSON body of the same
+        export reads as (`spanweave` `SPEC.md` §7). A JSON body goes to
+        `Framer.document`, unsplit, never to `push` (`SPEC.md` §3.3).
+
+        `read_protobuf` raises `SpanweaveError` only when its `otlp` extra is
+        missing, which this package's dependency rules out (`SPEC.md` §0.1);
+        nothing a request carries can make it raise.
+        """
+        if _media_type(request.content_type) == PROTOBUF_MEDIA_TYPE:
+            return read_protobuf(body)
+        return self._framer.document(body)
 
     def _refused(
         self, request: Request, status: int, code: str, detail: str
@@ -408,6 +461,12 @@ class Endpoint:
     @staticmethod
     def _coded(code: str) -> bytes:
         """A refusal's body: the receiver's own code, and nothing else.
+
+        JSON whichever media type the request declared, and OTLP's
+        `google.rpc.Status` in neither encoding: a `Status`'s `code` is an
+        integer, so the receiver's code could ride only in its `message`, and
+        for a protobuf request only encoded. Keeping the code over OTLP's type
+        is a choice, and `SPEC.md` §7.2 says it is one.
 
         `sort_keys=True` and a separator with no spaces, because a response is
         output and output here is byte-identical for identical input

@@ -30,6 +30,7 @@ from pathlib import Path
 
 import spanweave
 from packaging.requirements import Requirement
+from packaging.utils import canonicalize_name
 from packaging.version import Version
 
 REPO = Path(__file__).resolve().parent.parent
@@ -45,12 +46,21 @@ SHOWCASE_SUBMODULE_PATH = "showcase"
 SHA = re.compile(r"\b[0-9a-f]{40}\b")
 
 
+def _name(requirement: str) -> str:
+    """A requirement's project name, read as a resolver reads it.
+
+    Since V0 the dependency is `spanweave[otlp] @ git+...`, and the text before
+    the `@` is no longer the name: the extra is part of it. `packaging` parses
+    the requirement the way `uv` does, extras and all, so the name is what the
+    resolver resolves rather than what a split happened to leave.
+    """
+    return canonicalize_name(Requirement(requirement).name)
+
+
 def _spanweave_requirement() -> str:
     data = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))
     requirements = [
-        req
-        for req in data["project"]["dependencies"]
-        if req.split("@")[0].strip().replace("_", "-").lower() == "spanweave"
+        req for req in data["project"]["dependencies"] if _name(req) == "spanweave"
     ]
     assert len(requirements) == 1, (
         f"expected exactly one spanweave dependency, got {requirements}"
@@ -63,7 +73,7 @@ def _agentgolden_requirement() -> str:
     requirements = [
         req
         for req in data["project"]["optional-dependencies"]["dev"]
-        if req.split("@")[0].strip().replace("_", "-").lower() == "agentgolden"
+        if _name(req) == "agentgolden"
     ]
     assert len(requirements) == 1, (
         f"expected exactly one agentgolden dev dependency, got {requirements}"
@@ -107,6 +117,35 @@ def test_the_dependency_pin_is_a_full_sha():
         f"spanweave must be pinned to a full 40-character sha, not a tag, a "
         f"branch or an abbreviation; got {requirement!r}"
     )
+
+
+def test_the_dependency_carries_the_otlp_extra_and_no_other():
+    """V0: the receiver depends on `spanweave[otlp]`, unconditionally.
+
+    The zoo series' decision for V1 (`TASKS.md`, its decisions log,
+    2026-10-16): a receiver exists to receive what stock exporters send, and
+    they send protobuf, which only `spanweave.read_protobuf` reads, and only
+    with the `otlp` extra installed.
+    So the extra is part of the runtime requirement, not an extra of this
+    package a user has to know to ask for. Exactly `otlp`: an extra added
+    beside it would be a second optional surface of the library arriving in
+    every install with no batch that asked for it.
+    """
+    assert Requirement(_spanweave_requirement()).extras == {"otlp"}
+
+
+def test_the_otlp_extra_is_installed_with_the_dependency():
+    """The extra resolved, rather than being written and then ignored.
+
+    `uv` resolves an extra by adding its packages to the lock; a requirement
+    whose extra had been dropped there would install a `spanweave` whose
+    `read_protobuf` raises `SpanweaveError` (`otlp_extra_not_installed`) on
+    every body, the empty one included. Read rather than looked up: an empty
+    export is no records and no diagnostics, and only an installed extra can
+    say so. `make install-check` asks the same of the installed wheel.
+    """
+    records = spanweave.read_protobuf(b"")
+    assert (records.records, records.diagnostics) == ((), ())
 
 
 def test_every_submodule_is_cloned_over_https_too():
@@ -194,10 +233,7 @@ def test_the_showcase_dependency_is_a_dev_dependency_and_not_a_runtime_one():
     source text cannot see.
     """
     data = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))
-    runtime = [
-        req.split("@")[0].strip().replace("_", "-").lower()
-        for req in data["project"]["dependencies"]
-    ]
+    runtime = [_name(req) for req in data["project"]["dependencies"]]
     assert runtime == ["spanweave"], (
         f"the receiver has exactly one runtime dependency; got {runtime}"
     )
@@ -278,3 +314,24 @@ def test_the_installed_spanweave_is_the_pinned_commit_and_not_a_released_one():
     assert found.group(0) in direct, (
         f"the installed spanweave is not the pinned commit:\n  {direct}"
     )
+
+
+def test_the_spec_names_the_pin_and_the_version_the_install_has():
+    """`SPEC.md` §0.1's pin paragraph, read and held (V0).
+
+    The paragraph states the sha both halves of the pin name and the version
+    the library has there. Each is a citation: the sha is held to
+    `pyproject.toml` (and through the tests above to `corpus/` and `uv.lock`),
+    and the version to the `spanweave` that is really installed, so a pin move
+    that leaves the paragraph behind fails here rather than in a reader's head.
+    """
+    spec = (REPO / "SPEC.md").read_text(encoding="utf-8")
+    start = spec.index("### 0.1 ")
+    section = spec[start : spec.index("\n### ", start + 1)]
+    stated = re.search(r"The pin is `([0-9a-f]{40})` since V0", section)
+    version = re.search(r"version `([^`]+)`", section)
+    assert stated is not None and version is not None
+    found = SHA.search(_spanweave_requirement())
+    assert found is not None
+    assert stated.group(1) == found.group(0)
+    assert version.group(1) == spanweave.__version__

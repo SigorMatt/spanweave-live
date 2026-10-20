@@ -4,9 +4,9 @@ Work here arrives in **batches**: one batch is one concern, one commit, and one
 agent or person's sitting. The bar below is what every batch must clear. It
 began as the receiver series' batch brief written out, with the reason for each
 line, because a bar whose reasons are not written gets negotiated away one batch
-at a time — and it is now the only copy: the series' execution state
-(`WORKPLAN.md`) was deleted at its close, and `TASKS.md` registers what that
-series did.
+at a time — and between series it is the only copy: each series' execution
+state (`WORKPLAN.md`) is deleted at its close, and `TASKS.md` registers what
+each series did.
 
 Read first: `CLAUDE.md` (the invariants — the standing rules are not style
 preferences), then the part of `SPEC.md` you are touching.

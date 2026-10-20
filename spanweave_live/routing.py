@@ -7,9 +7,12 @@ record, score it, hold it, or read what the graph came to say: it partitions,
 and the graphs are the caller's (`SPEC.md` §1.2, §1.3).
 
 **It never reads a dialect.** A record's trace id comes from
-`spanweave.adapters.classify` and the claiming adapter's `parse`, and from
-nowhere else -- no key table, no `record["trace_id"]`, no container walk
-(`SPEC.md` §1.1, §4.2). The cheap-looking alternative works on every fixture
+`spanweave.adapters.classify` and the claiming adapter's `parse` -- or, for a
+record the reader unpacked from an OTLP export that no adapter claims, from
+`spanweave.envelope`, the transport's statement read through the library's
+public function -- and from nowhere else: no key table, no
+`record["trace_id"]`, no container walk (`SPEC.md` §1.1, §4.2). The
+cheap-looking alternative works on every fixture
 anyone would write and is a second dialect reader that can disagree with the
 library about the same bytes, for reasons no fixture of the receiver's own can
 pin. The cost of doing it properly is a second parse per record, measured at
@@ -36,13 +39,15 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Final
 
-from spanweave import Builder, Delta, Graph, SpanweaveError
+from spanweave import Builder, Delta, EnvelopeError, Graph, SpanweaveError, envelope
 from spanweave.adapters import classify, get
+from spanweave.read import Unpacked
 
 from spanweave_live.completion import (
     COMPLETED,
     FORGOTTEN,
     LATE_ARRIVAL,
+    NO_GRAPH,
     NOT_WRITTEN,
     RELEASED,
     WRITTEN,
@@ -77,6 +82,35 @@ REFUSED: Final = "refused"
 #: A record named a trace the router has no room for (`SPEC.md` §4.5). Refused
 #: in the open rather than dropped: silence was the alternative.
 REFUSED_AT_CAP: Final = "refused_at_cap"
+
+#: A record reached the no-trace builder with one of the three answers below
+#: (`SPEC.md` §4.2, §4.3). Not a refusal -- the builder absorbs it, and the
+#: library's own account of it is in that builder's graph -- but a routing
+#: decision, and §1.5 says a decision is never silent. `detail` is exactly one
+#: of the three. A record the library refuses -- more than one claimant, or a
+#: `SpanweaveError` while classifying or parsing -- reaches that builder too,
+#: and is `refused` instead (§4.4). One exception, older than this code and
+#: stated in §4.3: under a router given an `adapter`, a record two adapters
+#: claim reaches that builder with no event.
+NO_TRACE: Final = "no_trace"
+
+#: `no_trace`'s detail: no adapter claimed a record the reader did not unpack
+#: from an export, so there is no claimant and no envelope to ask.
+UNCLAIMED: Final = "unclaimed"
+
+#: `no_trace`'s detail: no adapter claimed a record the reader unpacked from an
+#: export, and `spanweave.envelope` refused it. The event carries the
+#: library's code; the receiver never says which field failed.
+NO_ENVELOPE: Final = "no_envelope"
+
+#: `no_trace`'s detail: the one claimant reported no single trace id -- none on
+#: the spans it parsed, or more than one distinct id across them.
+NO_ID: Final = "no_id"
+
+#: The library's code for a builder no adapter can read, which completion
+#: reports as `no_graph` (`SPEC.md` §5.4). `spanweave`'s own code, read rather
+#: than redefined, as `completion.py` reads `orphan_parent`.
+_ADAPTER_UNCONFIDENT: Final = "adapter_unconfident"
 
 
 @dataclass(frozen=True, slots=True)
@@ -192,36 +226,87 @@ class _Book:
     completed_at: float | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class _Identity:
+    """What the library said about which trace a record belongs to.
+
+    `trace_id` is the answer. Where it is `None`, `why` is the `no_trace`
+    detail that says which "no" it was -- or `None` itself where the answer is
+    the library's **refusal** (an ambiguous record, or a `SpanweaveError` while
+    classifying or parsing), which the no-trace builder's `feed` raises again
+    and `Router.route` reports as `refused` (`SPEC.md` §4.4) -- except an
+    ambiguous record under a router given an `adapter`, which that builder
+    absorbs and nothing reports (`SPEC.md` §4.3). `spanweave_code` is the
+    library's code where it refused the envelope.
+
+    `claimed` is whether one adapter claimed the record, which is what the cap
+    counts a trace from (`SPEC.md` §4.5): a trace id read off the envelope is
+    a trace no adapter has yet claimed a record of.
+    """
+
+    trace_id: str | None
+    why: str | None = None
+    spanweave_code: str | None = None
+    claimed: bool = False
+
+
+def _identify(record: Record) -> _Identity:
+    """`trace_id_of`, with the reason kept for the event (`SPEC.md` §4.2).
+
+    Two sources and no third. A record one adapter claims is that claimant's
+    `parse`. A record **no** adapter claims is asked of its envelope only if
+    the reader unpacked it from an export -- the mark is the record's type,
+    `spanweave.read.Unpacked`, which only the reader sets (`spanweave`
+    `SPEC.md` §7), and never a key -- and `spanweave.envelope` either states
+    the transport's trace id or refuses. A refusal is the answer: nothing is
+    read past it.
+    """
+    try:
+        claimants = classify(record)
+    except SpanweaveError:
+        return _Identity(None)
+    if not claimants:
+        if not isinstance(record, Unpacked):
+            return _Identity(None, UNCLAIMED)
+        try:
+            return _Identity(envelope(record).trace_id)
+        except EnvelopeError as refusal:
+            return _Identity(None, NO_ENVELOPE, refusal.code)
+    if len(claimants) > 1:
+        return _Identity(None)
+    try:
+        reported = {
+            span.trace_id for span in get(claimants[0]).parse([record]) if span.trace_id
+        }
+    except SpanweaveError:
+        return _Identity(None)
+    if len(reported) != 1:
+        return _Identity(None, NO_ID)
+    return _Identity(next(iter(reported)), claimed=True)
+
+
 def trace_id_of(record: Record) -> str | None:
-    """The trace a record belongs to, through the adapter surface alone.
+    """The trace a record belongs to, through the library alone (`SPEC.md` §4.2).
 
     `classify` says which adapters claim this one record; the single claimant's
     `parse` translates it; the trace id is what the resulting spans report.
-    That is the whole mechanism, and there is no other branch in it
-    (`SPEC.md` §4.2).
+    Where **no** adapter claims a record the reader unpacked from an OTLP
+    export, the trace id is the one its envelope states, read through
+    `spanweave.envelope` -- the transport's, which spanweave's T1 decided is
+    not a dialect's. That is the whole mechanism.
 
-    `None` -- "no trace id" -- for each of the four ways the library declines
-    to say: nobody claimed the record, more than one adapter claimed it, the
-    claimant reported no trace id, or it reported more than one distinct id
-    across the spans of one record. §1.1 fixes that answer: an id that cannot
-    be had through the adapter surface is absent, not looked up.
+    `None` -- "no trace id" -- for each of the ways the library declines to
+    say: nobody claimed a flat record; nobody claimed an unpacked one and the
+    library refused its envelope; more than one adapter claimed it; the
+    claimant reported no trace id, or more than one distinct id across the
+    spans of one record. §1.1 fixes that answer: an id that cannot be had
+    through the library is absent, not looked up.
 
     A `SpanweaveError` is also `None`, and is not swallowed by it: the record
     goes to the no-trace builder, whose `feed` reaches the same code and raises
     the same refusal, and `Router.route` reports it with the library's own code.
     """
-    try:
-        claimants = classify(record)
-        if len(claimants) != 1:
-            return None
-        reported = {
-            span.trace_id for span in get(claimants[0]).parse([record]) if span.trace_id
-        }
-    except SpanweaveError:
-        return None
-    if len(reported) != 1:
-        return None
-    return next(iter(reported))
+    return _identify(record).trace_id
 
 
 @dataclass(slots=True, kw_only=True)
@@ -253,13 +338,15 @@ class Router:
     the stream, which is the cost `SPEC.md` §2.3 is about.
     """
 
-    #: How many identified traces this router will hold builders for, or `None`
-    #: for no cap (`SPEC.md` §4.5).
+    #: How many identified traces holding a claimed record this router will hold
+    #: builders for, or `None` for no cap (`SPEC.md` §4.5). A trace no adapter
+    #: has claimed a record of is held and not counted.
     max_traces: int | None = None
     #: How many **completed** trace ids this router will remember, or `None` to
     #: remember every one of them, which is what R3 shipped (`SPEC.md` §5.5).
     #: Beside `max_traces` because the two are this router's two bounds: that
-    #: one bounds builders, this one bounds the book that outlives them.
+    #: one bounds the builders of traces with a claimed record, this one
+    #: bounds the book that outlives them.
     max_completed: int | None = None
     adapter: str | None = None
     temporal: bool = True
@@ -276,6 +363,11 @@ class Router:
     _counts: dict[str, int] = field(default_factory=dict, init=False)
     _index: int = field(default=0, init=False)
     _books: dict[str, _Book] = field(default_factory=dict, init=False)
+    #: The traces whose builder has absorbed a claimed record: the ones
+    #: `max_traces` counts (`SPEC.md` §4.5). Membership and size only, never
+    #: iterated, and dropped with the builder, so it is bounded by the builders
+    #: held.
+    _claimed: set[str] = field(default_factory=set, init=False)
     #: The retention this router has applied to each builder it holds, so the
     #: window is re-asserted when it *changes* and not once per record
     #: (`SPEC.md` §6.4). Dropped with the builder, so it is bounded by the
@@ -334,7 +426,8 @@ class Router:
         """
         self._index += 1
         index = self._index
-        trace_id = trace_id_of(record)
+        identity = _identify(record)
+        trace_id = identity.trace_id
         # One reading, and only where there is a policy to measure against: a
         # router with no completion reads no clock at all, which is why R2's
         # behaviour -- gate A included -- is untouched by R3 (`SPEC.md` §5.2).
@@ -343,14 +436,36 @@ class Router:
 
         if trace_id is None:
             builder = self.no_trace
+            if identity.why is not None:
+                # Said before the feed: it is where the record was sent and
+                # why. A refusal by that builder, if one follows, is §4.4's.
+                events += (
+                    self._counted(
+                        Event(
+                            code=NO_TRACE,
+                            index=index,
+                            trace_id=None,
+                            spanweave_code=identity.spanweave_code,
+                            detail=identity.why,
+                        )
+                    ),
+                )
         else:
             existing = self._builders.get(trace_id)
+            if (
+                identity.claimed
+                and trace_id not in self._claimed
+                and self.max_traces is not None
+                and len(self._claimed) >= self.max_traces
+            ):
+                # The record that would make this trace count, new or held
+                # with only unclaimed records so far (`SPEC.md` §4.5). One for
+                # a trace the router holds is still activity of that trace,
+                # refused or not (§5.3); one for a new trace makes no state.
+                if existing is not None and now is not None:
+                    self._activity(trace_id, now)
+                return self._at_cap(index, trace_id, held=existing is not None)
             if existing is None:
-                if (
-                    self.max_traces is not None
-                    and len(self._builders) >= self.max_traces
-                ):
-                    return self._at_cap(index, trace_id)
                 existing = Builder(adapter=self.adapter, temporal=self.temporal)
                 self._builders[trace_id] = existing
                 events += self._began(index, trace_id, now)
@@ -381,6 +496,10 @@ class Router:
                 version=builder.version,
                 events=events,
             )
+        if identity.claimed and trace_id is not None:
+            # The trace counts against the cap from the first claimed record
+            # it **absorbs**: a refused one returned above (`SPEC.md` §4.5).
+            self._claimed.add(trace_id)
         # Only an absorbed record fans out: a refusal returned above, because
         # the version did not move and there is nothing that changed to report
         # (`SPEC.md` §6.2).
@@ -674,9 +793,16 @@ class Router:
             graph = builder.graph()
         except SpanweaveError as error:
             refusal = error
+        unread = False
+        if refusal is not None and refusal.code == _ADAPTER_UNCONFIDENT:
+            # A fact about the input, said at materialization whether or not
+            # there is a directory, and the end of it: there is no graph, so
+            # there is nothing a write could fail to deliver (`SPEC.md` §5.4).
+            unread = True
+            events.append(self._no_graph(index, trace_id, refusal))
 
         path: pathlib.Path | None = None
-        if completion.out_dir is not None:
+        if completion.out_dir is not None and not unread:
             path, written = self._write(
                 completion, index, trace_id, book.generation, graph, refusal
             )
@@ -684,6 +810,7 @@ class Router:
 
         version = builder.version
         del self._builders[trace_id]
+        self._claimed.discard(trace_id)
         # The next generation is a different builder with a journal of its own
         # (`SPEC.md` §5.5), so the window is applied to it afresh.
         self._retained.pop(trace_id, None)
@@ -775,7 +902,9 @@ class Router:
           still holds a builder for is that open trace's own state -- `Quiet`
           reads `last_record_at` off it -- so evicting one would complete a trace
           early for a reason no caller could see. Those are bounded by the
-          builders held, which is `max_traces`' job.
+          builders held: `max_traces` bounds those of traces holding a claimed
+          record, and only completion releases those of traces no adapter
+          claims (`SPEC.md` §4.5).
         - The **oldest completion** goes first, which is the order this router
           completed them in and not a sort on the caller's clock: `_complete`
           moves a book to the end of `_books` as it books the completion, so
@@ -871,6 +1000,28 @@ class Router:
             )
         )
 
+    def _no_graph(self, index: int, trace_id: str, refusal: SpanweaveError) -> Event:
+        """A completed trace no adapter can read has no graph (`SPEC.md` §5.4).
+
+        The library's `adapter_unconfident`, as `spanweave.build` of the same
+        records refuses: since V2 a trace whose every record reached it by its
+        envelope is one (`SPEC.md` §4.5). An observation, as `no_trace` is, and
+        not a delivery the receiver failed at.
+        """
+        return self._counted(
+            Event(
+                code=NO_GRAPH,
+                index=index,
+                trace_id=trace_id,
+                spanweave_code=refusal.code,
+                detail=(
+                    f"no adapter can read the records the builder of "
+                    f"{trace_id!r} absorbed, so the library has no graph of it "
+                    f"and there is nothing to write: {refusal}"
+                ),
+            )
+        )
+
     def _write(
         self,
         completion: Completion,
@@ -887,11 +1038,12 @@ class Router:
         the filesystem refused. None of them raises -- a receiver that died on
         one unwritable file would lose every other trace it was holding.
 
-        The first of the three is **unreachable** through the public surface
-        today and kept deliberately (`SPEC.md` §5.4): a builder refuses a graph
-        only when nothing in it was claimed, and an identified trace has a
-        claimed record by construction. `graph()`'s refusals are the library's to
-        define and a pin move can add one.
+        The first of the three is a refusal with any code **but**
+        `adapter_unconfident`, which `_no_graph` has already said and which is
+        never asked to be written. `graph()`'s refusals are the library's to
+        define and a pin move can add one; one the receiver has no account of
+        is a failed delivery (`SPEC.md` §5.4), and a test stubs one to hold it
+        so.
         """
         if graph is None:
             return None, self._counted(
@@ -949,11 +1101,14 @@ class Router:
 
         A graph the library **refuses** is "no root seen yet" and no event: the
         alternative is one event per tick for the life of the stream, which is
-        the unbounded accumulation §4.6 exists to avoid, and the condition is
-        permanent and reaches the caller the moment it asks for the graph
-        (`SPEC.md` §5.7). Nothing was dropped -- a decision was not made.
+        the unbounded accumulation §4.6 exists to avoid, and the condition lasts
+        until the builder absorbs a claimed record and reaches the caller the
+        moment it asks for the graph (`SPEC.md` §5.7). Nothing was dropped -- a
+        decision was not made.
 
-        Unreachable today for `_write`'s reason, and kept for the same one.
+        A trace no adapter can read is that case, since V2, so `RootEnded`
+        alone never completes one: `Quiet`, `Cap` and end of input do, as
+        `no_graph` (`SPEC.md` §5.3, §5.4).
         """
         try:
             graph = builder.graph()
@@ -1011,16 +1166,32 @@ class Router:
         )
 
     def _activity(self, trace_id: str, now: float) -> None:
-        """A record reached this trace's builder, absorbed or refused (`§5.3`).
+        """A record was routed to a trace the router holds, absorbed or refused
+        -- by its builder, or at the cap (`§5.3`, `§4.5`).
 
-        Either way it is activity: a re-sent span is the exporter still talking
-        about this trace, and counting a refusal as silence would complete a
-        trace that is plainly still arriving.
+        Either way it is activity: a re-sent span, or a claimed span the cap
+        has no room for, is the exporter still talking about this trace, and
+        counting a refusal as silence would complete a trace that is plainly
+        still arriving.
         """
         self._book(trace_id, now).last_record_at = now
 
-    def _at_cap(self, index: int, trace_id: str) -> Routed:
-        """A new trace the router has no room for. Refused, in the open."""
+    def _at_cap(self, index: int, trace_id: str, *, held: bool) -> Routed:
+        """A claimed record the router has no room to count. Refused, in the open.
+
+        `held` is a trace the router holds a builder for with no claimed record
+        in it yet: the record would make it count, so it is refused as a new
+        trace's first record is, and the builder keeps what it had (`SPEC.md`
+        §4.5). Its arrival is still that trace's activity, which `route`
+        records before calling this (§5.3); a new trace's refused record makes
+        no builder, no book and no activity.
+        """
+        where = (
+            f"the record, which would be the first an adapter claims in the "
+            f"builder {trace_id!r} holds, was not absorbed into it"
+            if held
+            else f"no builder was made for {trace_id!r} and the record was not absorbed"
+        )
         event = self._counted(
             Event(
                 code=REFUSED_AT_CAP,
@@ -1028,9 +1199,8 @@ class Router:
                 trace_id=trace_id,
                 spanweave_code=None,
                 detail=(
-                    f"this router already holds {len(self._builders)} traces, "
-                    f"which is max_traces, so no builder was made for "
-                    f"{trace_id!r} and the record was not absorbed"
+                    f"this router already holds {len(self._claimed)} traces with "
+                    f"a claimed record, which is max_traces, so {where}"
                 ),
             )
         )

@@ -51,9 +51,9 @@ SEEDS = (0, 1, 2, 3, 7, 11, 13, 101, 1009, 20261004)
 # What the corpus holds at the pinned sha. Asserted below, so a sweep that
 # silently stops covering something fails rather than quietly getting smaller.
 # `tests/test_pins.py` is what keeps the sha still.
-SCENARIOS_EXPECTED = 29
-RENDERINGS_EXPECTED = 53
-PAIRS_EXPECTED = 1354
+SCENARIOS_EXPECTED = 30
+RENDERINGS_EXPECTED = 55
+PAIRS_EXPECTED = 1460
 
 #: The trace id every corpus rendering uses, and the id one side of each pair is
 #: moved to so that the two are two traces rather than one.
@@ -229,6 +229,27 @@ def test_the_corpus_is_the_size_the_sweep_claims():
     assert len(documents) == 2, "the OTLP container renderings, framed whole"
 
 
+def test_the_readme_states_the_sweep_this_file_runs():
+    """README's gate-A sentence is a citation, and this re-derives it.
+
+    It states the pairs, the seeds, the graphs per pair and their product.
+    Each is held to this file's own constants -- the pairs to the corpus
+    count asserted above -- so a pin move that grows the corpus fails here
+    until the sentence moves with it (V0 moved it from 1354 to 1460).
+    """
+    readme = (REPO / "README.md").read_text(encoding="utf-8")
+    stated = re.search(
+        r"(\d+) cross-scenario pairs \N{MULTIPLICATION SIGN} (\d+) seeds "
+        r"\N{MULTIPLICATION SIGN} (\d+) graphs per pair =\s+"
+        r"([\d ]+) byte-for-byte comparisons",
+        readme,
+    )
+    assert stated is not None
+    pairs_, seeds, graphs, total = stated.groups()
+    assert (int(pairs_), int(seeds), int(graphs)) == (PAIRS_EXPECTED, len(SEEDS), 2)
+    assert int(total.replace(" ", "")) == PAIRS_EXPECTED * len(SEEDS) * 2
+
+
 def test_every_corpus_rendering_identifies_the_one_trace_the_relabelling_assumes():
     """The premise of the relabelling, swept over the whole corpus."""
     for path in renderings():
@@ -292,3 +313,69 @@ def test_interleaved_traces_produce_each_traces_own_batch_graph(seed: int) -> No
             )
             checked += 1
     assert checked == 2 * PAIRS_EXPECTED
+
+
+# --------------------------------------------------------------------------
+# An export with an unclaimed span among claimed ones, interleaved (V2).
+# --------------------------------------------------------------------------
+
+#: The corpus' one OTLP container with a span no adapter claims among spans
+#: one does: the zoo's Z4, recorded run -- one export, five spans, the root
+#: unclaimed (the zoo's `PROBES.md` S1). No conformance scenario has such a
+#: span (asserted below, not assumed), so gate A borrows this capture, read in
+#: place through `corpus/` as the zoo gate reads it, rather than a hand-made
+#: export of the receiver's own.
+UNCLAIMED_AMONG_CLAIMED = "z4/2026-10-12-recorded"
+
+
+def test_no_corpus_rendering_holds_an_unclaimed_span_of_an_export() -> None:
+    """Why gate A borrows a zoo capture for V2: the scenarios have none."""
+    from spanweave.adapters import classify
+    from spanweave.read import Unpacked
+
+    for path in renderings():
+        records = spanweave.read_records(path.read_bytes()).records
+        unclaimed = [r for r in records if isinstance(r, Unpacked) and not classify(r)]
+        assert unclaimed == [], rendering_id(path)
+
+
+@pytest.mark.parametrize("seed", SEEDS)
+def test_an_export_with_an_unclaimed_span_interleaves_with_every_rendering(
+    seed: int,
+) -> None:
+    """Gate A's claim, with one side an export whose root nobody claims.
+
+    Z4's export arrives whole, as a document, at a seeded place among each
+    corpus rendering's arrivals. Its trace id is its own and not `t1`, so no
+    relabelling is needed and none is done. Both traces must come out as
+    their batch graphs byte for byte -- which, for Z4, needs the unclaimed
+    root routed to its trace by its envelope (`SPEC.md` §4.2), and nothing
+    left in the no-trace builder.
+    """
+    from tests.test_zoo_gate import json_bodies
+
+    (body,) = json_bodies(UNCLAIMED_AMONG_CLAIMED)
+    z4 = spanweave.build(body)
+    z4_graph = spanweave.dumps(undigested(z4))
+    assert z4.trace_id not in (None, "t1")
+
+    checked = 0
+    for path in renderings():
+        rendering = loaded(path, second=False)
+        rng = random.Random(seed)
+        items = interleave(rendering.arrivals, (("document", body),), rng)
+        router = replay(items, rng)
+
+        where = f"{rendering_id(path)} + zoo {UNCLAIMED_AMONG_CLAIMED} @ seed {seed}"
+        assert router.counts == {}, f"{where}: unexpected events {router.counts}"
+        assert router._no_trace is None, f"{where}: a record reached no trace"
+        assert sorted(router.trace_ids) == sorted({rendering.trace_id, z4.trace_id})
+        for trace_id, expected in (
+            (rendering.trace_id, rendering.graph),
+            (z4.trace_id, z4_graph),
+        ):
+            builder = router.builder(trace_id)
+            assert builder is not None, f"{where}: no builder for {trace_id}"
+            assert spanweave.dumps(undigested(builder.graph())) == expected, where
+            checked += 1
+    assert checked == 2 * RENDERINGS_EXPECTED

@@ -43,6 +43,7 @@ from spanweave_live import (
     LATE_ARRIVAL,
     NOT_WRITTEN,
     QUIET,
+    REFUSED_AT_CAP,
     RELEASED,
     ROOT_ENDED,
     WRITTEN,
@@ -640,6 +641,224 @@ def test_ticks_complete_in_trace_ids_order():
     clock.tick(5.0)
     completed = router.tick()
     assert [done.trace_id for done in completed] == ["t3", "t1", "t2"]
+
+
+# --------------------------------------------------------------------------
+# A trace no adapter can read: `no_graph`, never `not_written`, and off the
+# cap (`SPEC.md` §4.5, §5.3, §5.4; the zoo series' cold review, run 1, R-1).
+# --------------------------------------------------------------------------
+
+#: The code, spelled here rather than imported so that a receiver without it
+#: fails on what it completed and not on an import, as `tests/test_routing.py`
+#: spells `no_trace`. One test below holds the package's constant to it.
+NO_GRAPH = "no_graph"
+
+#: The library's code for the refusal, read rather than redefined.
+UNCONFIDENT = "adapter_unconfident"
+
+
+def unread_records() -> tuple:
+    from spanweave_live import Framer
+    from tests.test_routing import unread_export
+
+    return Framer().document(unread_export()).records
+
+
+def test_the_no_graph_code_is_the_package_s_constant():
+    import spanweave_live
+
+    assert spanweave_live.NO_GRAPH == NO_GRAPH
+    assert "NO_GRAPH" in spanweave_live.__all__
+
+
+@pytest.mark.parametrize("written", [False, True], ids=["no-out-dir", "out-dir"])
+@pytest.mark.parametrize("policy", [Quiet(0.5), Cap(2)], ids=repr)
+def test_a_trace_no_adapter_can_read_is_completed_as_no_graph(
+    policy, written, tmp_path
+):
+    """The health check completes, has no graph, and is not a failed write.
+
+    Live still equals batch: `spanweave.build` of the same line refuses with
+    the same code. The refusal is one `no_graph` carrying that code, made at
+    materialization whether or not a directory was named, and no
+    `not_written` follows it (`SPEC.md` §5.4).
+    """
+    from tests.test_routing import EXPORT_TRACE, unread_export
+
+    with pytest.raises(spanweave.SpanweaveError) as batch_refusal:
+        spanweave.build(unread_export())
+    assert batch_refusal.value.code == UNCONFIDENT
+
+    out = tmp_path / "out"
+    clock = Clock()
+    router = router_with(policy, clock=clock, out_dir=out if written else None)
+    for record in unread_records():
+        router.route(record)
+    clock.tick(0.5)
+
+    (done,) = router.tick()
+    assert done.trace_id == EXPORT_TRACE
+    assert done.policy == policy
+    assert done.graph is None and done.path is None
+    assert codes(done.events) == [COMPLETED, NO_GRAPH, RELEASED]
+    no_graph = done.events[1]
+    assert no_graph.spanweave_code == UNCONFIDENT
+    assert (no_graph.index, no_graph.trace_id) == (2, EXPORT_TRACE)
+    assert router.counts == {COMPLETED: 1, NO_GRAPH: 1, RELEASED: 1}
+    assert router.trace_ids == ()
+    assert not out.exists(), "nothing was written, so no directory was made"
+
+
+def test_root_ended_alone_never_completes_a_trace_with_no_graph():
+    """No graph, so no root the receiver can see (`SPEC.md` §5.3, §5.7).
+
+    Both spans ended, and the tick still sees no ended root, up to
+    `now = 10^6`: only the end-of-input `Cap(0)` completes it, as `no_graph`.
+    """
+    from tests.test_routing import EXPORT_TRACE
+
+    clock = Clock()
+    router = router_with(RootEnded(0.0), clock=clock)
+    for record in unread_records():
+        router.route(record)
+    for now in (clock.reading, clock.reading + 1.0, clock.reading + 10.0, 1e6):
+        clock.reading = now
+        assert router.tick() == ()
+    assert router.trace_ids == (EXPORT_TRACE,)
+
+    # End of input, as the CLI finalises it (`SPEC.md` §8.5).
+    router.completion = Completion(policies=(Cap(0),), now=clock)
+    (done,) = router.tick()
+    assert done.policy == Cap(0)
+    assert codes(done.events) == [COMPLETED, NO_GRAPH, RELEASED]
+
+
+def test_an_unread_trace_does_not_starve_the_zoo_at_the_cap():
+    """The review's measurement, re-run: z1 completes, none of it refused.
+
+    `Router(max_traces=1)` under `RootEnded(0.0)`: the health check's trace is
+    held, never completed by that policy, and never counted, so the one slot
+    is z1's and z1 completes with its graph.
+    """
+    from spanweave_live import Framer
+    from tests.test_routing import EXPORT_TRACE
+    from tests.test_zoo_gate import json_bodies, zoo_records
+
+    capture = "z1/2026-10-13-recorded"
+    clock = Clock()
+    router = router_with(RootEnded(0.0), clock=clock, max_traces=1)
+    for record in unread_records():
+        assert router.route(record).events == ()
+    clock.tick()
+    assert router.tick() == ()
+
+    framer = Framer()
+    zoo = [r for body in json_bodies(capture) for r in framer.document(body).records]
+    assert len(zoo) == sum(zoo_records()[capture]) == 31
+    said = [event.code for record in zoo for event in router.route(record).events]
+    assert REFUSED_AT_CAP not in said
+    clock.tick()
+    (done,) = router.tick()
+    assert done.trace_id != EXPORT_TRACE and done.version == 31
+    assert done.graph is not None
+    assert REFUSED_AT_CAP not in router.counts
+    assert router.trace_ids == (EXPORT_TRACE,), "held, and still off the cap"
+
+
+def test_a_claimed_record_refused_at_the_cap_for_a_held_trace_is_activity():
+    """Refused, and still the exporter talking about the trace (`SPEC.md` §5.3).
+
+    The health check's trace is held off a full cap; its claimed records keep
+    arriving, each `refused_at_cap`. `Quiet(0.5)` is "no record for this trace
+    for this long", and a record the router routed to a trace it holds is
+    activity, absorbed or refused, so the trace does not complete while they
+    arrive and completes at the first tick at or after the last one + 0.5
+    (Qodo, PR #2, finding 1). `t1` holds the one slot throughout: it absorbs a
+    record of its own at every arrival, so it is never quiet for 0.5 before the
+    end and the cap stays full while the held trace's records are refused.
+    """
+    from spanweave_live import Framer
+    from tests.test_routing import EXPORT_TRACE, otlp_export, otlp_span
+
+    clock = Clock(at=0.0)
+    router = router_with(Quiet(0.5), clock=clock, max_traces=1)
+    assert router.route(openinference("s0", trace="t1")).events == ()
+    for record in unread_records():
+        assert router.route(record).events == ()
+    held = router.builder(EXPORT_TRACE)
+    assert held is not None and held.version == 2
+
+    arrivals = (0.4, 0.8, 1.2, 1.6)
+    for n, now in enumerate(arrivals):
+        clock.reading = now
+        assert router.route(openinference(f"s{n + 1}", trace="t1")).events == ()
+        span = f"{n + 1:x}" * 16
+        (claimed,) = Framer().document(otlp_export(otlp_span(span))).records
+        refused = router.route(claimed)
+        assert [event.code for event in refused.events] == [REFUSED_AT_CAP]
+        assert refused.events[0].trace_id == EXPORT_TRACE
+        assert router.tick() == (), f"completed at {now} while its records arrive"
+    assert router.builder(EXPORT_TRACE) is held and held.version == 2
+    assert router.counts == {REFUSED_AT_CAP: len(arrivals)}
+
+    clock.reading = arrivals[-1] + 0.4
+    assert router.tick() == (), "completed before the silence lasted 0.5"
+    clock.reading = arrivals[-1] + 0.5
+    done = {completed.trace_id: completed for completed in router.tick()}
+    assert sorted(done) == sorted(["t1", EXPORT_TRACE])
+    assert done[EXPORT_TRACE].policy == Quiet(0.5)
+    assert codes(done[EXPORT_TRACE].events) == [COMPLETED, NO_GRAPH, RELEASED]
+
+
+def test_a_claimed_record_refused_at_the_cap_for_a_new_trace_leaves_no_state():
+    """The guard: no builder, no book, no activity for a trace not held (§4.5).
+
+    Under a policy, so the router reads its clock for the record: what it read
+    is written into no book, because there is no trace the router holds for
+    the record to be activity of.
+    """
+    clock = Clock()
+    router = router_with(Quiet(0.5), clock=clock, max_traces=1)
+    router.route(openinference("s0", trace="t1"))
+    trace_ids = router.trace_ids
+    books = {key: dataclasses.astuple(book) for key, book in router._books.items()}
+    clock.tick(0.25)
+
+    refused = router.route(openinference("s0", trace="t2"))
+    assert [event.code for event in refused.events] == [REFUSED_AT_CAP]
+    assert refused.builder is None
+    assert router.trace_ids == trace_ids == ("t1",)
+    assert router.builder("t2") is None
+    assert {
+        key: dataclasses.astuple(book) for key, book in router._books.items()
+    } == books, "the refusal wrote a book"
+
+
+def test_a_graph_refusal_with_any_other_code_is_still_not_written(
+    tmp_path, monkeypatch
+):
+    """The guard: only `adapter_unconfident` is `no_graph` (`SPEC.md` §5.4).
+
+    A pin move can add a refusal of `graph()`. The receiver has no account of
+    one, so it is the failed delivery it always was: `not_written`, carrying
+    the library's code, which the CLI's exit 3 counts.
+    """
+    from spanweave_live import routing
+
+    class Refusing(spanweave.Builder):
+        def graph(self) -> spanweave.Graph:
+            raise spanweave.SpanweaveError("a refusal from a later pin", code="later")
+
+    monkeypatch.setattr(routing, "Builder", Refusing)
+    clock = Clock()
+    router = router_with(Cap(1), clock=clock, out_dir=tmp_path / "out")
+    router.route(openinference("a"))
+
+    (done,) = router.tick()
+    assert done.graph is None and done.path is None
+    assert codes(done.events) == [COMPLETED, NOT_WRITTEN, RELEASED]
+    assert done.events[1].spanweave_code == "later"
+    assert NO_GRAPH not in router.counts
 
 
 # --------------------------------------------------------------------------

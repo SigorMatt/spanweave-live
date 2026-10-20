@@ -40,6 +40,11 @@ jobs:
           # token, which is why the submodule URL in .gitmodules is HTTPS and
           # not SSH: an unauthenticated clone has to resolve it.
           submodules: true
+          # The whole history, not the tip alone: `tests/test_record.py` (V4)
+          # reads each commit `TASKS.md` registers, and the plan files it
+          # cites with `git show <sha>:WORKPLAN.md`, out of it. A shallow
+          # clone fails that test by name rather than passing it unread.
+          fetch-depth: 0
       - name: Install uv
         uses: astral-sh/setup-uv@v8.1.0
         with:

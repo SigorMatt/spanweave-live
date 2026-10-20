@@ -76,10 +76,11 @@ EXIT_INTERRUPTED: Final = 130
 
 #: The three codes that mean "it had something and could not hand it over",
 #: which is what exit 3 is about -- and the only thing it is about. A refusal, a
-#: cap, a late arrival, a truncation, a 415, a 400 and a `client_aborted` are
-#: observations and leave the exit code at 0 (`SPEC.md` §1.3, §8.6). A poster
-#: that went away before reading its answer is not a graph this run failed to
-#: hand over: the records it posted were read and routed like any others.
+#: cap, a late arrival, a `no_graph`, a truncation, a 415, a 400 and a
+#: `client_aborted` are observations and leave the exit code at 0 (`SPEC.md`
+#: §1.3, §8.6). A poster that went away before reading its answer is not a graph
+#: this run failed to hand over: the records it posted were read and routed like
+#: any others. Nor is a trace no adapter can read: it had no graph to hand over.
 UNDELIVERED: Final = ("not_written", DELTA_UNSENT, CONSUMER_ERROR)
 
 #: What a `forgotten` costs where files are being written, said in full because
@@ -439,8 +440,10 @@ def _common(parser: argparse.ArgumentParser) -> None:
         type=int,
         metavar="N",
         help=(
-            "hold builders for at most N identified traces; at the cap a new "
-            "trace is refused_at_cap, counted, never dropped (SPEC.md 4.5)"
+            "hold builders for at most N traces with a claimed record; at the "
+            "cap a claimed record that would make one more is refused_at_cap, "
+            "counted, never dropped; a trace no adapter claims is held and not "
+            "counted (SPEC.md 4.5)"
         ),
     )
     parser.add_argument(
@@ -501,8 +504,9 @@ def build_parser() -> argparse.ArgumentParser:
             "could not start (the path would not open, or the socket would not "
             "bind); 2 usage; 3 it ran to the end but something it had could "
             "not be delivered (not_written, delta_unsent or consumer_error); "
-            "130 interrupted. A refusal, a cap, a late arrival, a 415 and a "
-            "400 are observations and leave the code at 0 (SPEC.md 8.6). "
+            "130 interrupted. A refusal, a cap, a late arrival, a trace no "
+            "adapter can read (no_graph), a 415 and a 400 are observations and "
+            "leave the code at 0 (SPEC.md 8.6). "
             "Events go to stderr as one JSON line each, with a code; stdout "
             "carries deltas and nothing else."
         ),
@@ -544,7 +548,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     served = commands.add_parser(
         "serve",
-        help="receive OTLP/HTTP JSON over a socket this process binds",
+        help="receive OTLP/HTTP, JSON or protobuf, over a socket this process binds",
         description=f"Serve POST /v1/traces on one socket. {_FROZEN}",
     )
     served.add_argument(

@@ -48,6 +48,13 @@ print(json.dumps({
 }))
 """
 
+#: One OTLP protobuf export on stdin, read by the installed library: the number
+#: of records it yields, or a traceback if the `otlp` extra did not ship.
+PROTOBUF_PROBE = """
+import sys, spanweave
+print(len(spanweave.read_protobuf(sys.stdin.buffer.read()).records))
+"""
+
 
 def run(args: list[str], *, cwd: Path) -> subprocess.CompletedProcess[str]:
     print(f"  $ {' '.join(str(a) for a in args)}   (in {cwd})")
@@ -165,6 +172,33 @@ def check_installed(wheel: Path) -> None:
         written = sorted(path.name for path in out.iterdir())
         print(f"  shipped tail wrote    : {written}")
         assert written == ["t1.json"], written
+
+        # And the library's `otlp` extra arrives with the receiver (V0,
+        # `SPEC.md` §0.1): the installed `spanweave` reads one of the zoo's raw
+        # protobuf bodies. Without the extra `read_protobuf` raises
+        # `otlp_extra_not_installed` and this fails; the body is Z4's recorded
+        # export, which the zoo counts as five records.
+        raw = (
+            REPO
+            / "corpus"
+            / "fixtures"
+            / "zoo"
+            / "z4"
+            / "2026-10-12-recorded"
+            / "raw"
+            / "0001.body"
+        ).read_bytes()
+        read = subprocess.run(
+            [str(python), "-c", PROTOBUF_PROBE],
+            cwd=outside,
+            input=raw,
+            capture_output=True,
+        )
+        if read.returncode != 0:
+            sys.stderr.write(read.stderr.decode())
+            raise SystemExit("FAILED: the installed spanweave cannot read protobuf")
+        print(f"  shipped otlp extra    : {read.stdout.decode().strip()} records")
+        assert read.stdout.decode().strip() == "5", read.stdout
 
 
 def main() -> int:

@@ -15,8 +15,14 @@ The load-bearing claims:
   compacted onto one line: the last two are what an HTTP body ordinarily looks
   like, and the two a `Framer.push` would lose. The first is the one it would
   not, which is why the rule is a trap and not a bug (`SPEC.md` §3.3, §7.2).
-- **One request is served and everything else is `415`**, counted, with the
-  check it failed named in the event.
+- **What a stock exporter sends is served** (V1, the zoo's L1): each of the
+  zoo's raw `application/x-protobuf` bodies, POSTed as its manifest records
+  it, is a `200` and routes as many records as its JSON pair; truncated, each
+  is the existing second `400` case. The `200` is answered in the request's
+  own encoding, `application/x-protobuf` and zero bytes -- the empty
+  `ExportTraceServiceResponse` -- and every refusal stays JSON (V1a).
+- **One request is served, in two media types, and everything else is
+  `415`**, counted, with the check it failed named in the event.
 - **A body that cannot be read is `400` and an event, never a traceback**, and
   its diagnostics still come out in the exchange's `records`.
 - **Nothing here imports a socket into the package.** The handler's base class
@@ -27,6 +33,7 @@ The load-bearing claims:
 
 from __future__ import annotations
 
+import ast
 import dataclasses
 import gzip
 import json
@@ -67,7 +74,30 @@ from tests.test_conformance import loaded, rendering_id, renderings
 # §4.1's own block test, reused for §7.2's three dataclasses.
 from tests.test_routing import declared_fields
 
+# The zoo gate's own readers of the captures, for the same reason (`SPEC.md`
+# §4.8): one reading of the manifests, not two.
+from tests.test_zoo_gate import captures, json_bodies, raw_requests, zoo_records
+
 JSON = {"Content-Type": JSON_MEDIA_TYPE}
+
+#: What a stock OTLP/HTTP exporter sends (V1, the zoo's L1). Spelled rather than
+#: imported, so that an endpoint which does not serve it fails on its answer
+#: rather than on an import; `test_the_protobuf_media_type_is_the_one_otlp_names`
+#: holds the exported constant to this spelling.
+PROTOBUF_TYPE = "application/x-protobuf"
+PROTOBUF = {"Content-Type": PROTOBUF_TYPE}
+
+
+def zoo_pairs() -> list[tuple[str, int]]:
+    """Every raw body in the zoo, as `(capture, k)`: its `k`-th pair."""
+    return [
+        (capture, k) for capture in captures() for k in range(len(json_bodies(capture)))
+    ]
+
+
+def zoo_pair_id(pair: tuple[str, int]) -> str:
+    capture, k = pair
+    return f"{capture}#{k + 1}"
 
 
 def documents() -> list[Path]:
@@ -113,6 +143,11 @@ class Posting:
         #: `post`, and a test that drives a bare connection sets it by hand.
         self.pending = 0
         self.asked = 0
+        #: The last reply's `Content-Type`, as the client read it off the wire.
+        #: Kept beside the three values `post` returns rather than as a fourth,
+        #: so that the answer's encoding is asserted where it is the claim
+        #: (V1a) and every other caller's unpacking stays as it was.
+        self.reply_type: str | None = None
         self.iterator = serve(self.endpoint, listener=self._listener, until=self._until)
 
     @property
@@ -183,6 +218,7 @@ class Posting:
         assert self.pending == 0
         reply = connection.getresponse()
         status, payload = reply.status, reply.read()
+        self.reply_type = reply.getheader("Content-Type")
         connection.close()
         return status, payload, records
 
@@ -274,6 +310,7 @@ def test_a_posted_rendering_is_the_graph_gate_a_asserts(
 
     assert status == 200
     assert reply == b"{}"
+    assert posting.reply_type == JSON_MEDIA_TYPE
     assert records.skipped_records == 0
     assert records.records, "the body produced no records at all"
 
@@ -344,6 +381,418 @@ def test_the_bodies_this_section_posts_are_bodies_a_push_would_lose(
 
 
 # --------------------------------------------------------------------------
+# What a stock exporter sends: `application/x-protobuf` (V1, the zoo's L1).
+# --------------------------------------------------------------------------
+
+
+def _routed(records: spanweave.Records) -> int:
+    router = Router()
+    for record in records.records:
+        router.route(record)
+    return router.routed
+
+
+@pytest.mark.parametrize("pair", zoo_pairs(), ids=zoo_pair_id)
+def test_every_zoo_raw_body_posted_is_200_and_routes_what_its_json_body_does(
+    posting: Posting, pair: tuple[str, int]
+) -> None:
+    """The zoo's L1, over the socket: each body a stock exporter sent.
+
+    Before V1 every one of these was a `415`. Each raw body is POSTed with the
+    media type and coding its manifest records, and the records routed must be
+    as many as its JSON pair's -- the zoo's own count for that body, so a
+    `200` that routed nothing, or a protobuf body read by the JSON reader (all
+    of it skipped lines), is red on the number.
+
+    The answer is in the request's own encoding (V1a): `application/x-protobuf`
+    and zero bytes, the empty `ExportTraceServiceResponse` -- before V1a it
+    was `{}` as `application/json`, where OTLP asks for the request's own
+    `Content-Type`.
+    """
+    capture, k = pair
+    request = raw_requests(capture)[k]
+    assert request.content_type == PROTOBUF_TYPE
+    headers = {"Content-Type": request.content_type}
+    if request.content_encoding is not None:
+        headers["Content-Encoding"] = request.content_encoding
+
+    status, reply, records = posting.post(request.body, headers=headers)
+
+    assert (status, posting.reply_type, reply) == (200, PROTOBUF_TYPE, b"")
+    assert records.skipped_records == 0
+    as_json = Framer().document(json_bodies(capture)[k])
+    assert _routed(records) == _routed(as_json) == zoo_records()[capture][k]
+    assert posting.endpoint.counts == {}
+    assert posting.endpoint.framer.pending_bytes == 0
+
+
+def test_a_gzipped_protobuf_body_is_inflated_and_reads_as_the_plain_one(
+    posting: Posting,
+) -> None:
+    """`Content-Encoding: gzip` is undone before the reader, whichever reader.
+
+    The zoo's exporters sent no coding, so this is the one place the inflate
+    is held for protobuf: the inflated body, not the gzip member, is what
+    reaches `spanweave.read_protobuf`.
+    """
+    (request,) = raw_requests("z1/2026-10-13-recorded")
+    status, _reply, records = posting.post(
+        gzip.compress(request.body),
+        headers={**PROTOBUF, "Content-Encoding": GZIP_ENCODING},
+    )
+    assert status == 200
+    assert records == spanweave.read_protobuf(request.body)
+    assert _routed(records) == sum(zoo_records()["z1/2026-10-13-recorded"])
+
+
+def test_a_protobuf_bodys_diagnostics_reach_the_exchange_beside_its_records() -> None:
+    """A protobuf body's diagnostics reach the exchange, not only its records.
+
+    §7.2: a protobuf body's `Records` "are what the exchange carries", and §1.5
+    says nothing is dropped silently. All 29 zoo raw bodies read with no
+    diagnostic, so no other protobuf `200` here carries one. This body does: a
+    hand-made `ExportTraceServiceRequest` with one span, and a field number the
+    installed schema does not define appended at its root, which is where the
+    bytes after a serialized message land. `read_protobuf` reads it without
+    the field and says so with one `unknown_fields`, so the read is a `200`
+    with a record and a diagnostic, and the exchange carries both.
+    """
+    from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import (
+        ExportTraceServiceRequest,
+    )
+    from opentelemetry.proto.trace.v1.trace_pb2 import ResourceSpans, ScopeSpans, Span
+
+    request = ExportTraceServiceRequest(
+        resource_spans=[
+            ResourceSpans(
+                scope_spans=[
+                    ScopeSpans(
+                        spans=[
+                            Span(
+                                trace_id=bytes(range(1, 17)),
+                                span_id=bytes(range(1, 9)),
+                                name="a",
+                                start_time_unix_nano=1,
+                                end_time_unix_nano=2,
+                            )
+                        ]
+                    )
+                ]
+            )
+        ]
+    )
+    # Field 99, wire type 0 (varint), value 1: the tag `99 << 3 | 0`, which is
+    # 792, is the varint `98 06`, and the value is `01`.
+    assert 99 not in ExportTraceServiceRequest.DESCRIPTOR.fields_by_number
+    plain = request.SerializeToString()
+    body = plain + b"\x98\x06\x01"
+
+    # The premises, from the library alone: the plain body reads as one record
+    # and no diagnostic; the appended field costs no record and adds exactly
+    # one `unknown_fields`, naming the field at the request's root.
+    read = spanweave.read_protobuf(body)
+    assert spanweave.read_protobuf(plain).diagnostics == ()
+    assert read.records == spanweave.read_protobuf(plain).records
+    assert len(read.records) == 1
+    assert read.skipped_records == 0
+    assert [(d.code, d.source) for d in read.diagnostics] == [
+        (
+            "unknown_fields",
+            {
+                "path": "",
+                "fields": [
+                    {
+                        "number": 99,
+                        "wire_type": 0,
+                        "defined": False,
+                        "expected_wire_type": None,
+                    }
+                ],
+            },
+        )
+    ]
+
+    endpoint = Endpoint()
+    exchange = endpoint.handle(
+        Request(
+            method="POST",
+            target=TRACES_TARGET,
+            body=body,
+            content_type=PROTOBUF_TYPE,
+        )
+    )
+
+    assert exchange.response == Response(
+        status=200, body=b"", content_type=PROTOBUF_TYPE
+    )
+    assert exchange.records == read
+    assert "unknown_fields" in [d.code for d in exchange.records.diagnostics]
+    # A body read with a diagnostic is not a refusal: the diagnostic says what
+    # was not read, and there is no event to count (§7.2).
+    assert exchange.events == ()
+    assert endpoint.counts == {}
+
+
+def test_a_truncated_protobuf_body_is_400_by_the_existing_second_case(
+    posting: Posting,
+) -> None:
+    """Not a new case: §7.2's second, which a JSON body reaches the same way.
+
+    `spanweave.read_protobuf` raises nothing an unreadable body can cause; it
+    answers one that does not parse as one `malformed_record` and no record,
+    so `records == ()` and `skipped_records > 0` hold exactly as they do for a
+    malformed JSON body, and the endpoint's rule is the one it already had.
+    Shown on a zoo raw body with its last byte gone.
+    """
+    (request,) = raw_requests("z4/2026-10-12-recorded")
+    status, reply, records = posting.post(request.body[:-1], headers=PROTOBUF)
+
+    assert status == 400
+    assert reply == b'{"code":"unreadable_body"}'
+    # A refusal stays JSON for a protobuf request, and is OTLP's
+    # `google.rpc.Status` in neither encoding: the receiver keeps its own code
+    # over OTLP's type, which §7.2 says is a choice (V1a).
+    assert posting.reply_type == JSON_MEDIA_TYPE
+    assert records.records == ()
+    assert records.skipped_records == 1
+    assert [d.code for d in records.diagnostics] == ["malformed_record"]
+    (event,) = posting.endpoint.events
+    assert event.code == UNREADABLE_BODY
+    assert event.spanweave_code == "malformed_record"
+    assert "1 skipped record(s)" in event.detail
+    assert posting.endpoint.counts == {UNREADABLE_BODY: 1}
+    # And the endpoint keeps serving: the whole body is answered normally.
+    assert posting.post(request.body, headers=PROTOBUF)[0] == 200
+    assert posting.endpoint.counts == {UNREADABLE_BODY: 1}
+
+
+@pytest.mark.parametrize("pair", zoo_pairs(), ids=zoo_pair_id)
+def test_every_zoo_raw_body_truncated_is_400_and_routes_nothing(pair) -> None:
+    """The same answer on every raw body in the zoo, at the pure layer."""
+    capture, k = pair
+    request = raw_requests(capture)[k]
+    endpoint = Endpoint()
+    exchange = endpoint.handle(dataclasses.replace(request, body=request.body[:-1]))
+    assert exchange.response.status == 400
+    assert exchange.records.records == ()
+    assert exchange.records.skipped_records > 0
+    assert endpoint.counts == {UNREADABLE_BODY: 1}
+
+
+def test_the_protobuf_answer_is_the_empty_export_response_encoded() -> None:
+    """Zero bytes is not a choice made here: it is what the message encodes as.
+
+    The premise V1a corrects (`SPEC.md` §7.2): answering a protobuf request in
+    its own encoding needs no encoder, because the one answer this receiver
+    gives an accepted body -- the empty `ExportTraceServiceResponse`, whose
+    OTLP/JSON encoding is the `{}` a JSON request already gets -- serializes
+    to no bytes at all. Re-derived
+    with the protobuf runtime the `otlp` extra ships, which a **test** may
+    import and the package may not; and the bytes read back as that message
+    with no `partial_success` set, which is OTLP's full-success answer: the
+    one answer this receiver can give without counting spans (§7.2).
+    """
+    from google.protobuf.json_format import MessageToJson
+    from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import (
+        ExportTraceServiceResponse,
+    )
+
+    (request,) = raw_requests("z1/2026-10-13-recorded")
+    exchange = Endpoint().handle(request)
+    assert exchange.response == Response(
+        status=200,
+        body=ExportTraceServiceResponse().SerializeToString(),
+        content_type=PROTOBUF_TYPE,
+    )
+    assert exchange.response.body == b""
+    answer = ExportTraceServiceResponse()
+    answer.ParseFromString(exchange.response.body)
+    assert not answer.HasField("partial_success")
+    assert answer == ExportTraceServiceResponse()
+    # And it is the very message a JSON request is answered with: `{}` is the
+    # same empty response in OTLP/JSON, so the two answers claim the same.
+    assert json.loads(MessageToJson(ExportTraceServiceResponse())) == json.loads(
+        Endpoint()
+        .handle(dataclasses.replace(request, body=b"", content_type=JSON_MEDIA_TYPE))
+        .response.body
+    )
+
+
+@pytest.mark.parametrize(
+    ("header", "encoding", "body", "answer"),
+    [
+        # The media type as the request declared it, by HTTP's rule for the
+        # header: case and parameters are the spelling, not the type.
+        (PROTOBUF_TYPE, None, "z1", (200, PROTOBUF_TYPE, b"")),
+        ("Application/X-Protobuf", None, "z1", (200, PROTOBUF_TYPE, b"")),
+        (
+            "application/x-protobuf; charset=binary",
+            None,
+            "z1",
+            (200, PROTOBUF_TYPE, b""),
+        ),
+        (PROTOBUF_TYPE, GZIP_ENCODING, "z1-gzip", (200, PROTOBUF_TYPE, b"")),
+        # An empty protobuf request is an empty export, read, and answered in
+        # its encoding as any accepted one is.
+        (PROTOBUF_TYPE, None, "empty", (200, PROTOBUF_TYPE, b"")),
+        # The same bytes declared JSON are answered as JSON: the reply's type
+        # is the request's declared type, never the bytes' (§7.2).
+        ("Application/JSON; charset=utf-8", None, "z5", (200, JSON_MEDIA_TYPE, b"{}")),
+        (JSON_MEDIA_TYPE, None, "empty", (200, JSON_MEDIA_TYPE, b"{}")),
+        # Every refusal stays `{"code": ...}` as JSON, whichever type asked.
+        (
+            PROTOBUF_TYPE,
+            None,
+            "z1-truncated",
+            (400, JSON_MEDIA_TYPE, b'{"code":"unreadable_body"}'),
+        ),
+        (
+            PROTOBUF_TYPE,
+            GZIP_ENCODING,
+            "z1",
+            (400, JSON_MEDIA_TYPE, b'{"code":"unreadable_body"}'),
+        ),
+        (
+            PROTOBUF_TYPE,
+            "deflate",
+            "z1",
+            (415, JSON_MEDIA_TYPE, b'{"code":"unsupported_media_type"}'),
+        ),
+        (
+            "application/protobuf",
+            None,
+            "z1",
+            (415, JSON_MEDIA_TYPE, b'{"code":"unsupported_media_type"}'),
+        ),
+    ],
+)
+def test_the_answer_is_in_the_requests_declared_encoding_and_a_refusal_is_json(
+    header: str, encoding: str | None, body: str, answer: tuple[int, str, bytes]
+) -> None:
+    """V1a at the pure layer: the reply's type follows the request's type.
+
+    An accepted request is answered in the media type it declared, matched as
+    §7.2 matches it; a refusal is JSON for either, and OTLP's
+    `google.rpc.Status` in neither: the receiver's code over OTLP's type, a
+    choice §7.2 states.
+    """
+    (z1,) = raw_requests("z1/2026-10-13-recorded")
+    (z5,) = raw_requests("z5/2026-10-13-recorded")
+    bodies = {
+        "z1": z1.body,
+        "z1-gzip": gzip.compress(z1.body),
+        "z1-truncated": z1.body[:-1],
+        "z5": z5.body,
+        "empty": b"",
+    }
+    response = (
+        Endpoint()
+        .handle(
+            Request(
+                method="POST",
+                target=TRACES_TARGET,
+                body=bodies[body],
+                content_type=header,
+                content_encoding=encoding,
+            )
+        )
+        .response
+    )
+    assert (response.status, response.content_type, response.body) == answer
+
+
+def test_a_protobuf_answer_is_written_as_zero_bytes_with_its_type() -> None:
+    """`respond` writes the type and a `Content-Length` of 0, and no body."""
+    (request,) = raw_requests("z1/2026-10-13-recorded")
+    handler = FakeHandler(
+        {"Content-Length": str(len(request.body)), **PROTOBUF}, request.body
+    )
+    exchange = respond(handler, Endpoint())  # type: ignore[arg-type]
+    assert exchange.response.status == 200
+    assert handler.wfile.getvalue() == b""
+    assert handler.sent == [
+        ("status", 200),
+        ("Content-Type", PROTOBUF_TYPE),
+        ("Content-Length", "0"),
+        ("end", None),
+    ]
+
+
+def test_the_header_names_the_reader_and_the_bytes_are_not_sniffed():
+    """A body under the other media type is read by the reader its header names.
+
+    Reading the bytes to decide which encoding they "really" are would be the
+    receiver reading a dialect (`SPEC.md` §1.1), so it does not: what comes
+    back is that reader's answer, and the status is §7.2's rule applied to it.
+    A JSON export declared as protobuf does not parse and is the second `400`
+    case. A protobuf export declared as JSON is split on its newline bytes and
+    read as lines; on Z5's body one of those happens to be a JSON value, so it
+    is a `200` with one stray record and every other line skipped -- the rule
+    for a body that held some readable record, unchanged, and the reason a
+    poster's `Content-Type` is the poster's to get right.
+    """
+    capture = "z5/2026-10-13-recorded"
+    (raw,) = raw_requests(capture)
+    (as_json,) = json_bodies(capture)
+    endpoint = Endpoint()
+
+    def posted(body: bytes, content_type: str) -> Exchange:
+        return endpoint.handle(
+            Request(
+                method="POST",
+                target=TRACES_TARGET,
+                body=body,
+                content_type=content_type,
+            )
+        )
+
+    json_as_protobuf = posted(as_json, PROTOBUF_TYPE)
+    assert json_as_protobuf.records == spanweave.read_protobuf(as_json)
+    assert json_as_protobuf.response.status == 400
+    assert json_as_protobuf.records.records == ()
+
+    protobuf_as_json = posted(raw.body, JSON_MEDIA_TYPE)
+    assert protobuf_as_json.records == spanweave.read_records(raw.body)
+    assert protobuf_as_json.records != spanweave.read_protobuf(raw.body)
+    assert protobuf_as_json.response.status == 200
+    assert len(protobuf_as_json.records.records) == 1
+    assert protobuf_as_json.records.skipped_records > 0
+
+    assert endpoint.counts == {UNREADABLE_BODY: 1}
+
+
+def test_the_protobuf_media_type_is_the_one_otlp_names() -> None:
+    """The exported constant, held to the spelling every test here posts."""
+    from spanweave_live import PROTOBUF_MEDIA_TYPE
+
+    assert PROTOBUF_MEDIA_TYPE == PROTOBUF_TYPE
+
+
+def test_no_module_under_the_package_imports_a_protobuf_runtime() -> None:
+    """No transcoding here: the reader's extra reads protobuf (`SPEC.md` §7.2).
+
+    The receiver hands the bytes to `spanweave.read_protobuf` and imports
+    neither `google.protobuf` nor `opentelemetry` itself -- a second reader of
+    the envelope is what standing rule 1 forbids.
+    """
+    banned = ("google", "opentelemetry")
+    found = []
+    for source in sorted(gates.PACKAGE_ROOT.glob("*.py")):
+        tree = ast.parse(source.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                names = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                names = [node.module or ""]
+            else:
+                continue
+            found += [
+                (source.name, name) for name in names if name.split(".")[0] in banned
+            ]
+    assert found == []
+
+
+# --------------------------------------------------------------------------
 # One request is served, and everything else is 415.
 # --------------------------------------------------------------------------
 
@@ -361,13 +810,25 @@ def test_the_bodies_this_section_posts_are_bodies_a_push_would_lose(
                 method="POST",
                 target=TRACES_TARGET,
                 body=b"{}",
-                content_type="application/x-protobuf",
+                content_type="text/plain",
             ),
-            "not protobuf",
+            "is neither 'application/json' nor 'application/x-protobuf'",
         ),
         (
             Request(method="POST", target=TRACES_TARGET, body=b"{}"),
-            "not protobuf",
+            "is neither 'application/json' nor 'application/x-protobuf'",
+        ),
+        (
+            # OTLP names `application/x-protobuf`; the unprefixed spelling is a
+            # media type this endpoint was not told it is, so it is refused
+            # rather than guessed at (`SPEC.md` §7.2).
+            Request(
+                method="POST",
+                target=TRACES_TARGET,
+                body=b"",
+                content_type="application/protobuf",
+            ),
+            "is neither 'application/json' nor 'application/x-protobuf'",
         ),
         (
             Request(
@@ -421,6 +882,25 @@ def test_the_media_type_is_matched_as_http_matches_it():
             )
         )
         assert exchange.response.status == 200, header
+    # The second media type by the same rule, and the rule decides the
+    # **reader** as well as the status: each spelling reads a zoo raw body as
+    # `read_protobuf` does. `b""` is an empty request in protobuf as `b"[]"` is
+    # an empty container in JSON (`SPEC.md` §7.2).
+    (raw,) = raw_requests("z5/2026-10-13-recorded")
+    for header in (
+        PROTOBUF_TYPE,
+        "Application/X-Protobuf",
+        "application/x-protobuf; charset=binary",
+        "  application/x-protobuf  ",
+    ):
+        for body in (raw.body, b""):
+            exchange = endpoint.handle(
+                Request(
+                    method="POST", target=TRACES_TARGET, body=body, content_type=header
+                )
+            )
+            assert exchange.response.status == 200, header
+            assert exchange.records == spanweave.read_protobuf(body), header
     assert endpoint.counts == {}
     # And `post`/`Post` is the same method.
     assert (
@@ -544,6 +1024,7 @@ def test_a_body_the_reader_read_is_200_even_when_it_held_no_record():
         )
         assert exchange.response.status == 200, body
         assert exchange.response.body == b"{}"
+        assert exchange.response.content_type == JSON_MEDIA_TYPE
         assert exchange.records.records == ()
         assert exchange.events == ()
     assert endpoint.counts == {}
@@ -565,7 +1046,7 @@ def test_handling_never_raises_for_anything_a_request_can_carry():
     endpoint = Endpoint()
     bodies = [b"", b"{", b"[[[", b"\xff" * 64, b"null", b"0", b'"a"', b"\x00"]
     for body in bodies:
-        for content_type in (None, JSON_MEDIA_TYPE, "", "text/plain"):
+        for content_type in (None, JSON_MEDIA_TYPE, PROTOBUF_TYPE, "", "text/plain"):
             for encoding in (None, GZIP_ENCODING, "deflate"):
                 exchange = endpoint.handle(
                     Request(
@@ -577,7 +1058,7 @@ def test_handling_never_raises_for_anything_a_request_can_carry():
                     )
                 )
                 assert exchange.response.status in (200, 400, 415)
-    assert endpoint.requests == len(bodies) * 4 * 3
+    assert endpoint.requests == len(bodies) * 5 * 3
 
 
 # --------------------------------------------------------------------------

@@ -18,7 +18,10 @@ completed-trace book makes it forget one, and R6 the OTLP/HTTP endpoint and the
 two codes it refuses with. The endpoint's **third** code, `CLIENT_ABORTED`, was
 added after the series closed and is not a refusal: a poster that goes away
 before reading its answer is an event with a code, not a traceback nobody
-counted (`SPEC.md` §7.2).
+counted (`SPEC.md` §7.2). The zoo series' V1 adds `PROTOBUF_MEDIA_TYPE`, the
+second media type the endpoint serves: what a stock exporter sends. After its
+close, `NO_GRAPH` is the code a completion emits for a trace no adapter can
+read (`SPEC.md` §5.4).
 
 **R7 adds nothing here**, which is the shape of that batch rather than an
 omission: the CLI (`SPEC.md` §8) is a *caller* of everything above, and its one
@@ -37,6 +40,7 @@ from spanweave_live.completion import (
     COMPLETED,
     FORGOTTEN,
     LATE_ARRIVAL,
+    NO_GRAPH,
     NOT_WRITTEN,
     QUIET,
     RELEASED,
@@ -54,6 +58,7 @@ from spanweave_live.endpoint import (
     CLIENT_ABORTED,
     GZIP_ENCODING,
     JSON_MEDIA_TYPE,
+    PROTOBUF_MEDIA_TYPE,
     TRACES_TARGET,
     UNREADABLE_BODY,
     UNSUPPORTED_MEDIA_TYPE,
@@ -79,8 +84,12 @@ from spanweave_live.ingest import (
     tail,
 )
 from spanweave_live.routing import (
+    NO_ENVELOPE,
+    NO_ID,
+    NO_TRACE,
     REFUSED,
     REFUSED_AT_CAP,
+    UNCLAIMED,
     Completed,
     Event,
     Routed,
@@ -112,6 +121,11 @@ __all__ = [
     "JSON_MEDIA_TYPE",
     "LATE_ARRIVAL",
     "NOT_WRITTEN",
+    "NO_ENVELOPE",
+    "NO_GRAPH",
+    "NO_ID",
+    "NO_TRACE",
+    "PROTOBUF_MEDIA_TYPE",
     "QUIET",
     "REFUSED",
     "REFUSED_AT_CAP",
@@ -121,6 +135,7 @@ __all__ = [
     "ROTATED",
     "TRACES_TARGET",
     "TRUNCATED",
+    "UNCLAIMED",
     "UNREADABLE_BODY",
     "UNSUPPORTED_MEDIA_TYPE",
     "VANISHED",
@@ -159,4 +174,4 @@ __all__ = [
     "trace_id_of",
 ]
 
-__version__ = "0.0.1"
+__version__ = "0.0.2"
