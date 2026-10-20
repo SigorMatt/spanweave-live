@@ -20,6 +20,148 @@ and the event-code set grew (`no_trace`, V2; `no_graph`, after the close). Under
 this heading are the zoo series' batches V0–V4 and, above them, the commits made
 after its close, newest first.
 
+### The series' cold review, both halves, archived byte for byte, and its dispositions (2026-10-20)
+
+Derived parent `05cd4be`. The ninth and last commit after the series' close.
+It archives the series' cold review, the first half (run 1) and the second
+(run 2 and the close), and dispositions every finding of both in `TASKS.md`.
+**Prose only**, and two files copied: no behaviour changed and no test
+changed, and `SPEC.md` is untouched. So the bar's *confirmed red on the
+parent* and *named mutation* lines do not apply to this entry, as they did not
+to `0.0.1`'s *The sixth sentence, and three in the tests*, and no worktree and
+no parent run were made. Nothing under `tests/` reads `reviews/` but
+`tests/install_check.py`, which keeps it out of the wheel and the sdist, and
+no test holds the receiver series' archives to their sha256, so there was
+none to extend to these two.
+
+Added
+
+- **`reviews/2026-10-19-zoo-run1.md`** and **`reviews/2026-10-19-zoo-run2.md`**,
+  `patches/REVIEW-2026-10-19.md` and `patches/REVIEW-2026-10-19b.md`
+  unchanged: each a `cp`, `cmp` silent. Run 1 is 41689 bytes, sha256
+  `ec0de1144846f70e086c5f547cde68ce10e91c1d9158a247a29f55f5253d2561`; run 2
+  is 43281 bytes, sha256
+  `6af6b2d771bedec2f1c76540dc94b7d87a48fa1b35c93ec0b87b56dd2306bb2c`. Both
+  are in `TASKS.md`'s table under the zoo series' *The review*, the receiver
+  series' table with a column for the size. `patches/` is `.gitignore`d, so
+  until now the findings the eight entries below answer, each "archived under
+  `reviews/` by a later commit of these", could not be read in a stranger's
+  checkout.
+- **One disposition line per finding**, 42 in all, under *The review*: run
+  1's eight blocking findings, seven threads and seven notes, and run 2's
+  seven, five and eight. Every blocking finding names the commit that closed
+  it, `1df7a35` to `05cd4be`, or the record line this commit sets right; run
+  1's R-3's second mutation is held by V1a (`a856ec2`), and R-7's heading half
+  was restored by V4 (`e883fa3`). Run 1's R-1 line also says that `d52669c`
+  removed the claim the receiver series' thread T2 is about; T2's row is left
+  as it stands. Each thread is registered with the review's measurements, for
+  the next receiver series, and run 1's R-15 for spanweave's. Among them is a
+  new one: the CLI's `no_trace` line carries the code, not which field
+  failed, the CLI half of run 1's R-11, whose other half is V2(c). Run 1's
+  R-10 and R-11 are V2(b) and V2(c), registered at V4, and its R-12 was closed
+  by V1a. The notes are recorded one line each.
+- **A row of the decisions log**, dated 2026-10-20, batch `review`, the
+  maintainer's: the grading by the series' merge rule, what was accepted and
+  why, and the four decisions that made run 1's R-1 a behaviour change
+  (`no_graph`, outside exit 3; the cap from the first claimed record;
+  `RootEnded` alone never; the "unreachable" sentences gone). The log now says it is nine
+  rows, and `tests/test_record.py` holds that.
+
+Fixed
+
+The record lines, set right in `TASKS.md` where each false sentence was, each
+now saying what it said until 2026-10-20:
+
+- **The registry's opening paragraph** said both series' §0.6 said "§3 and §4
+  folded" from the start (run 2's R-12). The zoo series' did; the receiver
+  series' opened with "§3 folded" alone (`git show 696702f:WORKPLAN.md`), and
+  "and §4" first appears at `9a2e40f`, its run-1 review decision, which
+  `b500342` keeps.
+- **The ruleset line of *The series opens*** said `main` is protected "by a
+  ruleset" (run 2's R-18 and R-19). It is ruleset `25363236`, whose one
+  allowed merge method is a merge commit, which `tests/test_record.py`'s
+  history reads need on `main`.
+- **V1's note on a protobuf body declared JSON** named Z5's body alone (run 1's
+  R-13): 23 of the 29 raw bodies answer `200`, and 6 answer `400`.
+- **V2(a)'s "the sentences … were checked"** missed `SPEC.md` §1.1 (run 2's
+  R-1), which `54dba83` set right.
+- **V3's schedule** was "the only schedule under which every clause holds"
+  (run 2's R-3): a tick at `now = k` and a second in `[k + 0.5, k + 1)` are
+  both needed.
+- **V3's parent run** was said to be in `beb4871`'s body, which gives no count
+  (run 2's R-19): it was 41 pins, 3 red.
+
+Changed
+
+- ***What remains before the merge*** says where the order stands: the
+  review has run and is dispositioned by nine commits after the close, and
+  next come the PR, then together one bounded review of those nine commits and
+  Qodo's review of the PR, in the plan's §2 order. *The review* no longer says
+  that the review is still to come, and *Threads, registered* says where the
+  review's threads are.
+
+Measured for this entry, in the main checkout, whose library and tests are the
+derived parent's:
+
+- **The archives**: `cmp` printed nothing for either, `sha256sum` gave the two
+  digests above, which are the ones run 2's preamble and the dispositions
+  give, and `wc -c` the two sizes. `git check-ignore` does not ignore them.
+- **The ruleset**, with `gh api repos/SigorMatt/spanweave-live/rulesets` and
+  `…/rulesets/25363236`, read-only: one ruleset, `25363236`, "main: pull
+  requests and CI", active on the default branch. Its `pull_request` rule's
+  `allowed_merge_methods` is `["merge"]`; it also has `deletion` and
+  `non_fast_forward` rules; and its required checks are the seven names
+  `TASKS.md` lists.
+- **The fold clause**: `git log --all -S'§3 and §4 folded' -- WORKPLAN.md`
+  gives the receiver series' `9a2e40f` as its first commit with the clause.
+  `9a2e40f^` says "§3 folded" alone, and so does `696702f`.
+- **The protobuf bodies declared JSON**: a probe in the scratchpad, run with
+  `python -I` and importing only `spanweave_live`, posted each of the 29 raw
+  bodies through `Endpoint.handle` as `application/json`. 23 answered `200`,
+  with 1 record each but for Z6 real's bodies 0002 (6) and 0003 (9) and Z6
+  recorded's (2), and each record is one `no_trace` event when a fresh
+  `Router` routes it. 6 answered `400` `unreadable_body`: Z4 real's two, Z4
+  recorded's, and Z6 real's bodies 0001, 0004 and 0011. That is run 1's count.
+- **The schedules**: a second probe drove the four L3 captures through one
+  `Framer` and one `Router` on its own fake clock, reading the captures with
+  `tests/test_zoo_gate.py`'s `json_bodies` and comparing generations with
+  `tests/test_zoo_policies.py`'s `batch_of`, and checked V3's four clauses:
+  `Quiet(0.5)` once per body, each generation its own body's build;
+  `Quiet(2.0)` once at `last + 2.0`; `RootEnded(1.0)` once at `last + 1.0`;
+  `Cap(N)` at the *N*-th record. Every clause holds with the ticks after body
+  *k* at `k, k + 0.5`, `k, k + 0.6`, `k, k + 0.75`, `k, k + 0.9`,
+  `k, k + 0.25, k + 0.5` and `k, k + 0.99`. `k + 0.5` alone completes
+  `RootEnded(1.0)` at `last + 1.5`, and `k + 0.6` alone at `last + 2.0`; `k`
+  alone, `k, k + 0.25` and `k, k + 0.49` give one `Quiet(0.5)` generation.
+  So run 2's table reproduces. A second tick at `k + 1` itself also holds
+  when it runs before the next body's records, which arrive at that instant;
+  run after them, it is the next body's own tick, and that is the `k`-alone
+  row.
+- **V3's 41**: `pytest --collect-only tests/test_zoo_policies.py` collects 41,
+  and the file is unchanged since `beb4871`. The 3 red are the plan's last §4
+  line and run 2's re-derivation (38 passed, 3 failed); no parent run was made
+  here.
+- **The lines the dispositions cite as they stood on 2026-10-20**:
+  `SPEC.md:2510` (§7.2's "ten"), `:1155`, `:1169` and `:1172` (§5.3's three
+  numbers), `spanweave_live/routing.py:1138` (`_began`'s reset of
+  `root_ended_at`) and `tests/test_zoo_policies.py:80` (`ROOTLESS`), read
+  with `grep -n`.
+
+Seen and not fixed here, because no finding of the review grades it: `TASKS.md`'s
+V2(c) row and the paragraph under the decisions log say every receiver event
+carries a code and never a sentence (`SPEC.md` §4.4, §7.2), where a `refused`
+event's `detail` is the library's message, `str(refusal)`
+(`spanweave_live/routing.py:481`), as run 1's R-11 says. Left as commit
+messages, which cannot be amended: the bodies run 1's R-16 and run 2's R-20
+name.
+
+`make check` green (ruff, `ruff format --check`, mypy --strict on 9 source
+files, 912 passed, gates and pins 71), `make conformance` 97 passed, `make
+showcase` 12 passed. `make install-check` was run although no packaging, no
+dependency and no pin moved, because `reviews/` grew and the install check is
+what keeps it out of what ships: OK, the wheel library-only and the sdist
+"no submodule and no reviews/".
+
 ### The CHANGELOG's record of the series made true (2026-10-20)
 
 Derived parent `41cc44d`. The eighth commit after the series' close, answering
