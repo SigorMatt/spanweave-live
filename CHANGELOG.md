@@ -20,6 +20,113 @@ and the event-code set grew (`no_trace`, V2; `no_graph`, after the close). Under
 this heading are the zoo series' batches V0–V4 and, above them, the commits made
 after its close, newest first.
 
+### §7 says what V1 and V1a made true, and what OTLP says (2026-10-20)
+
+Derived parent `54dba83`. The seventh commit after the series' close, answering
+R-6 of the first half of its cold review (run 1) and R-5, R-8, R-9 and R-13 of
+the second (run 2 and the close), both archived under `reviews/` by a later
+commit of these. **Prose only.** No behaviour changed, and no test's logic or
+assertions changed — only docstring and comment text, in
+`tests/test_endpoint.py` and `spanweave_live/endpoint.py` — so the bar's
+*confirmed red on the parent* and *named mutation* lines do not apply to this
+entry, as they did not to `0.0.1`'s *The sixth sentence, and three in the
+tests*, and no worktree and no parent run were made. V1 handed a protobuf body
+to `read_protobuf` and left §7's introduction saying every ingest hands its
+bytes to the framer (run 1's R-6). V1a's reason for answering a protobuf
+request in its own encoding was that a stock exporter cannot decode a JSON
+answer, and the zoo's exporter decodes none: every manifest names
+`opentelemetry-exporter-otlp-proto-http==1.45.1`, whose client,
+`opentelemetry-exporter-otlp-common==0.66b1`
+(`opentelemetry/exporter/otlp/common/http.py:203–204`, read in the local uv
+cache), returns success for `200 <= status_code < 400` without reading the
+body or its `Content-Type` (run 2's R-5, re-deriving run 1's R-12). OTLP's
+"MUST use the same `Content-Type`" is the reason, and it suffices. §7.2 also
+called an empty `partialSuccess` a claim of full success the receiver cannot
+make, where the `{}` and `b""` it sends are that claim already (run 2's R-8);
+named the protobuf refusal's deviation from OTLP and not the JSON one's (run
+2's R-9); and gave the encoder as the refusal's necessity (run 2's R-13).
+
+Fixed
+
+- **`SPEC.md` §7's introduction** asks how the bytes reach the reader, not the
+  framer: a file and a pipe hand the framer chunks (§7.1), and a POST body is
+  handed over whole, a JSON body to `Framer.document` and a protobuf body to
+  `spanweave.read_protobuf`, so a protobuf body never reaches the framer
+  (§7.2). §7.2's opening and `endpoint.py`'s module docstring already asked
+  the question that way.
+- **`SPEC.md` §7.2's answers**, one paragraph made three:
+  - the encoding's reason is OTLP's "MUST use the same `Content-Type` in the
+    response as it received in the request", and "a stock exporter cannot
+    decode a JSON answer to a protobuf request" is gone;
+  - the success answer, `{}` or `b""`, is the empty `ExportTraceServiceResponse`
+    with `partial_success` unset, which is OTLP's *Full Success* ("The server
+    MUST leave the `partial_success` field unset in case of a successful
+    response"), and so it claims full success; an empty `partialSuccess` would
+    claim the same (`trace_service_pb2.pyi:74–76` in `opentelemetry-proto`
+    1.45.1, the version `uv.lock` holds, read as data). It is the one answer the
+    receiver can give without counting spans (§1.1), and for a body read in part
+    the exchange's diagnostics say what was skipped. The sentence calling an
+    always-empty `partialSuccess` "a claim of full success this receiver cannot
+    make" is corrected;
+  - a refusal's `{"code": …}` as `application/json` is OTLP's
+    `google.rpc.Status` in neither encoding, because `Status.code` is an
+    integer. The receiver's code could ride in a `Status` only in `message`,
+    and for protobuf only encoded; a zero-byte `Status` would meet OTLP's MUSTs
+    and carry nothing; so the code over the type is stated as a choice, where
+    §7.2 said a `Status` "is not empty and so would need the encoder". A
+    conformant refusal body is a thread, registered by a later commit of these.
+- **This file's V1a entry**, corrected in place: V1 "answered it in JSON,
+  which that exporter cannot decode" now says "where OTLP asks for the
+  request's own `Content-Type`".
+- **Two comments in `spanweave_live/endpoint.py`.** `_ACCEPTED`'s, which said
+  an empty `partialSuccess` "would be a claim this receiver cannot make", names
+  the unset `partial_success` as OTLP's full-success answer. `_coded`'s
+  docstring, which said a protobuf `Status` "would need an encoder this
+  package does not have", says the code over the type is a choice.
+- **Four passages of `tests/test_endpoint.py`**:
+  `test_the_protobuf_answer_is_the_empty_export_response_encoded`'s "not a
+  claim of full success"; the zoo raw-body socket test's "which a stock
+  exporter cannot decode"; and the truncated-protobuf test's comment and the
+  pure-layer table's docstring, which each gave the encoder as the refusal's
+  necessity.
+
+Measured with a probe, not a test, in the main checkout's venv at the derived
+parent before any edit, with its `protobuf` runtime and a `google.rpc.Status`
+built from the three fields of its `.proto` (`int32 code = 1`, `string message
+= 2`, `repeated google.protobuf.Any details = 3`): an all-default `Status`
+serializes to `b""`, and `b""` parses as one; `{"code":"unreadable_body"}`
+and `{"code":"unsupported_media_type"}` each raise `ParseError` as an
+OTLP/JSON `Status`, and `{"code":3,"message":"unreadable_body"}` and
+`{"message":"unreadable_body"}` parse; `ExportTraceServiceResponse()`
+serializes to `b""` with `partial_success` unset, and to `b'\n\x00'`
+(`{"partialSuccess": {}}`) with an all-default one set. That re-derives run
+2's measurements. Every OTLP specification sentence §7.2 quotes is one run 2
+quotes from its fetch of `open-telemetry/opentelemetry-proto`'s
+`docs/specification.md`; nothing was fetched here.
+
+Checked and true as they stand: `README.md`'s `serve` example (`:59–61`) and
+its `tail` / `stdin` / `serve` row (`:156`), neither of which says how an
+answer is encoded or decoded; `SPEC.md` §7.2's opening (`:2093`), §7.2's V1a
+paragraph of what it is tested against (`:2483`), and §8.1's `serve`
+paragraph (`:2584`); `endpoint.py`'s module docstring (`:4`) and
+`PROTOBUF_MEDIA_TYPE`'s comment (`:80`); `spanweave_live/ingest.py`'s "how do
+the bytes reach the framer?" (`:4`), which is §7.1's two sources and true of
+them; `TASKS.md`'s V1(i) disposition (`:222`), "a refusal stays JSON, and §7.2
+says why"; and this file's R6 entry, "a truthful `rejectedSpans` needs a span
+count". Left as dated history: this file's V1a entry's "which would need an
+encoder" and "§7.2's `partialSuccess` reasoning is unchanged", V1a's own
+account of what it did, the first of them the necessity §7.2 now states as a
+choice; `TASKS.md`'s V1 thread text (`:138`), "as §7.2 then said"; and
+`TASKS.md`'s 2026-10-19 decision row (`:82`), the maintainer's, whose "the one
+message the receiver can write without an encoder" is the success answer's.
+`a856ec2`'s body, "a stock exporter could not decode the JSON reply", is a
+commit message and cannot be amended.
+
+`make check` green (ruff, `ruff format --check`, mypy --strict on 9 source
+files, 912 passed, gates and pins 71), `make conformance` 97 passed, `make
+showcase` 12 passed. `make install-check` was not run and is not needed: no
+packaging, no dependency and no pin moved.
+
 ### Every sentence about a record with no trace id says who announces it (2026-10-20)
 
 Derived parent `84cbdf2`. The sixth commit after the series' close, answering
@@ -509,7 +616,8 @@ Mutations shown caught (by the new file alone):
 Derived parent `fef26e0`. The zoo series' fourth batch (`WORKPLAN.md` V1a), the
 thread V1 left for the close and the maintainer's 2026-10-19 decision. It
 finishes the zoo's `PROBES.md` L1 for the answer: V1 read what a stock exporter
-sends, and answered it in JSON, which that exporter cannot decode.
+sends, and answered it in JSON, where OTLP asks for the request's own
+`Content-Type`.
 
 Changed
 

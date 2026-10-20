@@ -110,13 +110,14 @@ UNREADABLE_BODY: Final = "unreadable_body"
 #: code is the fact that the answer never arrived (`SPEC.md` §1.5, §7.2).
 CLIENT_ABORTED: Final = "client_aborted"
 
-#: What an accepted body answers, in the media type the request declared. `{}`
-#: for JSON and not OTLP's `partialSuccess` envelope: see `SPEC.md` §7.2 for why
-#: an empty one would be a claim this receiver cannot make and a filled one
-#: would be a dialect read. For protobuf, the empty `ExportTraceServiceResponse`
-#: -- the same claim, `{}`'s and no more -- which encodes as **zero bytes**, so
-#: answering in the request's encoding needs no encoder and no protobuf import
-#: here (V1a). A refusal is JSON for either: `_coded` below.
+#: What an accepted body answers, in the media type the request declared, as
+#: OTLP asks. `{}` for JSON: the empty `ExportTraceServiceResponse`, with
+#: `partial_success` unset, which is OTLP's full-success answer and the one
+#: answer this receiver can give without counting spans; a filled
+#: `partialSuccess` would be a dialect read (`SPEC.md` §7.2). For protobuf, the
+#: same message -- the same claim, `{}`'s and no more -- which encodes as **zero
+#: bytes**, so answering in the request's encoding needs no encoder and no
+#: protobuf import here (V1a). A refusal is JSON for either: `_coded` below.
 _ACCEPTED: Final = {JSON_MEDIA_TYPE: b"{}", PROTOBUF_MEDIA_TYPE: b""}
 
 #: Read nothing, and said so. A request that was refused still yields one of
@@ -461,9 +462,11 @@ class Endpoint:
     def _coded(code: str) -> bytes:
         """A refusal's body: the receiver's own code, and nothing else.
 
-        JSON whichever media type the request declared. OTLP asks a server to
-        refuse a protobuf request with an encoded `google.rpc.Status`, which
-        would need an encoder this package does not have (`SPEC.md` §7.2).
+        JSON whichever media type the request declared, and OTLP's
+        `google.rpc.Status` in neither encoding: a `Status`'s `code` is an
+        integer, so the receiver's code could ride only in its `message`, and
+        for a protobuf request only encoded. Keeping the code over OTLP's type
+        is a choice, and `SPEC.md` §7.2 says it is one.
 
         `sort_keys=True` and a separator with no spaces, because a response is
         output and output here is byte-identical for identical input

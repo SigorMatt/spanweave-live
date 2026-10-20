@@ -1841,10 +1841,14 @@ and version.
 
 Everything above this section is given bytes or records by somebody. This is the
 somebody. An ingest answers one question — **how do the bytes reach the
-framer?** — and knows nothing else: it does not look inside a chunk, does not
-know what a record is, and never routes one. `Framer` (§3) decides where a record
-ends, `Router` (§4) decides where it goes, and an ingest hands over chunks and
-hands back what the framer said about them.
+reader?** — and knows nothing else: it does not look inside a chunk, does not
+know what a record is, and never routes one. `Router` (§4) decides where a
+record goes. A file and a pipe (§7.1) hand the framer chunks, `Framer` (§3)
+decides where a record ends, and the ingest hands back what the framer said
+about them. A POST body (§7.2) is handed over whole: a JSON body to
+`Framer.document`, and a protobuf body to `spanweave.read_protobuf`, so a
+protobuf body never reaches the framer, and the endpoint hands back what that
+reader said.
 
 §7.1 is the two sources that are files, and is R5's. §7.2 is the OTLP/HTTP
 endpoint and is R6's; §8 is the CLI (R7), which is where the real
@@ -2288,30 +2292,49 @@ dialect read (§1.1). A body that holds records the reader could read and some i
 could not is likewise a `200` — it was read, and the diagnostics say what was
 skipped.
 
-An accepted body is answered **in the media type its request declared**, and
-with one message for both: the empty `ExportTraceServiceResponse`, and **not**
-OTLP's `partialSuccess` envelope. A JSON request answers `{}` as
-`application/json`, which is that message in OTLP/JSON. A protobuf request
-answers `200` with `Content-Type: application/x-protobuf` and an **empty
-body**, which is the same message in protobuf: the empty response encodes as
-zero bytes, so answering in the request's encoding needs no encoder, and
-nothing under `spanweave_live/` imports a protobuf runtime to do it (above;
-V1a). Before V1a a protobuf request was answered `{}` as `application/json`, on
-the premise that a protobuf answer needs an encoder; the empty one does not,
-and a stock exporter cannot decode a JSON answer to a protobuf request. The
-answer's type is the request's media type as matched above, lowercased and
-without parameters — never a type the bytes suggest, which is the sniffing this
-section refuses.
-That is deliberate and is the §1.1 line again: a truthful `rejectedSpans` would
-require counting spans, which only a dialect read can do, and an always-empty
-`partialSuccess` would be a claim of full success this receiver cannot make
-about a body whose records it has not yet routed. The zero bytes claim no more
-than `{}` does, because they are the same message. A refusal answers
-`{"code": "<the receiver's code>"}`, serialized with `sort_keys=True`, so the
-poster is told what the event says — as `application/json` for **either**
-media type, which deviates from OTLP: OTLP asks for a protobuf request's
-refusal to be an encoded `google.rpc.Status`, which is not empty and so would
-need the encoder this package does not import.
+An accepted body is answered **in the media type its request declared**,
+because OTLP/HTTP says the server "MUST use the same `Content-Type` in the
+response as it received in the request", and that reason suffices (V1a). A
+JSON request answers `{}` as `application/json`. A protobuf request answers
+`200` with `Content-Type: application/x-protobuf` and an **empty body**. The
+two are one message, the empty `ExportTraceServiceResponse`: `{}` is that
+message in OTLP/JSON, and in protobuf it encodes as zero bytes, so answering in
+the request's encoding needs no encoder, and nothing under `spanweave_live/`
+imports a protobuf runtime to do it (above). Before V1a a protobuf request was
+answered `{}` as `application/json`, on the premise that a protobuf answer
+needs an encoder; the empty one does not. The answer's type is the request's
+media type as matched above, lowercased and without parameters — never a type
+the bytes suggest, which is the sniffing this section refuses.
+
+That message leaves `partial_success` unset, which is OTLP's full-success
+answer — its *Full Success* says "The server MUST leave the `partial_success`
+field unset in case of a successful response" — so **the answer claims full
+success**, `{}` and the zero bytes alike, because they are the same message.
+Sending OTLP's `partialSuccess` envelope empty would claim the same: "A
+`partial_success` message with an empty value … is equivalent to it not being
+set/present. Senders SHOULD interpret it the same way as in the full success
+case" (`trace_service_pb2.pyi` in the `opentelemetry-proto` the `otlp` extra
+installs). That is deliberate and is the §1.1 line again: full success is the
+one answer the receiver can give without counting spans, and a truthful
+`rejectedSpans` would require counting them, which only a dialect read can do.
+A body the reader read in part gets the same answer, and the exchange's
+diagnostics say what was skipped (above).
+
+A refusal answers `{"code": "<the receiver's code>"}`, serialized with
+`sort_keys=True`, as `application/json` for **either** media type, so the
+poster is told what the event says. That is OTLP's `google.rpc.Status` in
+neither encoding. OTLP asks for a refusal's body to be a `Status` in the
+request's encoding — for protobuf, it "MUST be a Protobuf-encoded" `Status` —
+and `Status.code` is an integer (`int32 code = 1`), so
+`{"code":"unreadable_body"}` does not parse as an OTLP/JSON `Status` either.
+The receiver keeps its own code in the body, which a `Status` could carry only
+in `message`, and for a protobuf request only encoded. A `Status` with nothing
+in it would need no encoder: OTLP says the server "MAY omit `Status.code`",
+`Status.message` "SHOULD contain a developer-facing error message", and an
+all-default `Status` encodes as zero bytes, so a zero-byte refusal would meet
+OTLP's MUSTs and carry nothing. Keeping the code over the type is therefore
+**a choice and not a necessity**, and it is this section's: the poster is told
+the receiver's code, in a body that is not OTLP's.
 
 Nothing in `Endpoint.handle` raises for anything a request can carry — not a
 body that is not JSON, not one declared protobuf that does not parse, not one

@@ -406,7 +406,8 @@ def test_every_zoo_raw_body_posted_is_200_and_routes_what_its_json_body_does(
 
     The answer is in the request's own encoding (V1a): `application/x-protobuf`
     and zero bytes, the empty `ExportTraceServiceResponse` -- before V1a it
-    was `{}` as `application/json`, which a stock exporter cannot decode.
+    was `{}` as `application/json`, where OTLP asks for the request's own
+    `Content-Type`.
     """
     capture, k = pair
     request = raw_requests(capture)[k]
@@ -548,8 +549,9 @@ def test_a_truncated_protobuf_body_is_400_by_the_existing_second_case(
 
     assert status == 400
     assert reply == b'{"code":"unreadable_body"}'
-    # A refusal stays JSON for a protobuf request: OTLP asks for an encoded
-    # `google.rpc.Status` here, which would need an encoder (V1a, §7.2).
+    # A refusal stays JSON for a protobuf request, and is OTLP's
+    # `google.rpc.Status` in neither encoding: the receiver keeps its own code
+    # over OTLP's type, which §7.2 says is a choice (V1a).
     assert posting.reply_type == JSON_MEDIA_TYPE
     assert records.records == ()
     assert records.skipped_records == 1
@@ -587,8 +589,8 @@ def test_the_protobuf_answer_is_the_empty_export_response_encoded() -> None:
     to no bytes at all. Re-derived
     with the protobuf runtime the `otlp` extra ships, which a **test** may
     import and the package may not; and the bytes read back as that message
-    with no `partial_success` set, so the answer is the empty one and not a
-    claim of full success.
+    with no `partial_success` set, which is OTLP's full-success answer: the
+    one answer this receiver can give without counting spans (§7.2).
     """
     from google.protobuf.json_format import MessageToJson
     from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import (
@@ -670,8 +672,9 @@ def test_the_answer_is_in_the_requests_declared_encoding_and_a_refusal_is_json(
     """V1a at the pure layer: the reply's type follows the request's type.
 
     An accepted request is answered in the media type it declared, matched as
-    §7.2 matches it; a refusal is JSON for either, because a protobuf refusal
-    would be an encoded `google.rpc.Status` and that needs an encoder.
+    §7.2 matches it; a refusal is JSON for either, and OTLP's
+    `google.rpc.Status` in neither: the receiver's code over OTLP's type, a
+    choice §7.2 states.
     """
     (z1,) = raw_requests("z1/2026-10-13-recorded")
     (z5,) = raw_requests("z5/2026-10-13-recorded")
