@@ -148,7 +148,11 @@ the same bytes.
 
 If a record's trace id cannot be had through the adapter surface or the
 envelope, the answer is "no trace id" and a counted event — `no_trace`
-(§4.2) — not a key lookup.
+(§4.2), or `refused` where the library refuses the record: more than one
+adapter claims it, or a `SpanweaveError` is raised while classifying or
+parsing it (§4.2, §4.4) — not a key lookup. One exception is open: under a
+router given an `adapter`, a record two adapters claim is announced by
+nothing (§4.3), a thread registered in `TASKS.md` (V2(a)).
 
 ### 1.2 No rules, no semantics
 
@@ -2687,11 +2691,25 @@ and what makes this section's tests deterministic: the kernel chooses, the CLI
 says which, and no test hard-codes a port (§7.2).
 
 `finished` is the only aggregate and there is one of it: `counts` is the
-router's count per code (§4.6), bounded by the number of codes — `no_trace`
-among them, so how many records of a run reached no trace is one number on its
-last line — and `routed` is how many records were routed. A line per record summarizing the stream is the
-accumulation §4.6 refuses. `no_graph` is among the codes too, so how many of a
-run's completed traces had no graph to write is one number on the same line.
+router's count per code (§4.6), bounded by the number of codes, and `routed` is
+how many records were routed. A line per record summarizing the stream is the
+accumulation §4.6 refuses. A count is what its code counts, and two of them are
+easy to read as more:
+
+- **`no_trace`** is how many records reached the no-trace builder with one of
+  §4.2's three answers, each announced there. It is not how many records of
+  the run reached no trace: a record the library refuses — more than one
+  adapter claims it, or a `SpanweaveError` while classifying or parsing it —
+  reaches no trace too and is counted under `refused` (§4.2), and `refused`
+  also counts the refusals inside identified traces (§4.4). So the records
+  that reached no trace are not one number on this line. The CLI's router is
+  given no `adapter` (§8.1), so §4.3's exception, a record announced by
+  nothing, does not arise here.
+- **`no_graph`** is one per completion that found no graph to write (§5.4). A
+  trace re-opened by a late arrival is completed once per generation (§5.5),
+  and each generation with no graph is counted, so how many of a run's
+  completions had no graph to write is one number on the same line, and how
+  many distinct traces had none is not.
 
 ### 8.4 `--deltas` writes stdout, one delta document per line
 

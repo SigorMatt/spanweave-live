@@ -20,6 +20,84 @@ and the event-code set grew (`no_trace`, V2; `no_graph`, after the close). Under
 this heading are the zoo series' batches V0–V4 and, above them, the commits made
 after its close, newest first.
 
+### Every sentence about a record with no trace id says who announces it (2026-10-20)
+
+Derived parent `84cbdf2`. The sixth commit after the series' close, answering
+R-5 of the first half of its cold review (run 1) and R-1 and R-7 of the second
+(run 2 and the close), both archived under `reviews/` by a later commit of
+these. **Prose only.** No behaviour changed, and no test changed at all, so
+the bar's *confirmed red on the parent* and *named mutation* lines do not apply
+to this entry, as they did not to `0.0.1`'s *The sixth sentence, and three in
+the tests*, and no worktree and no parent run were made. V2 wrote sentences
+saying that a record with no trace id is announced by `no_trace`. §4.2 and §4.3
+hold less: it is announced by `no_trace`, or by `refused` where the library
+refuses it (more than one claimant, or a `SpanweaveError`), and under a router
+given `adapter=` a record two adapters claim is announced by nothing (thread
+V2(a)). V4 checked the sentences of this kind for that exception and missed
+§1.1 (run 2's R-1); §1.1 and README's row also left out `refused` (run 1's
+R-5).
+
+Fixed
+
+- **`SPEC.md` §1.1**'s last sentence names `no_trace` or `refused` as the
+  counted event, says which records are the second (more than one claimant,
+  or a `SpanweaveError`), and names the open exception, citing §4.3 and
+  V2(a). §4.2's quotation of the sentence
+  elides its middle and still reads it word for word.
+- **`README.md`'s `Router` row** says the same in its own clause.
+- **`SPEC.md` §8.3's `finished` paragraph** says what two of its counts count.
+  `no_trace` is the records that reached the no-trace builder with one of
+  §4.2's three answers, and not every record that reached no trace: an
+  ambiguous record is `refused` and not `no_trace` (run 2's R-7, held since the
+  third commit after the close by
+  `test_an_unpacked_record_two_adapters_claim_is_refused_and_its_envelope_not_asked`),
+  and `refused` also counts the refusals inside identified traces, so the
+  records that reached no trace are not one number on that line. The CLI's
+  router names no adapter (§8.1), so the exception does not arise there. The
+  `no_graph` sentence the second commit after the close put beside it said
+  "how many of a run's completed traces had no graph"; `no_graph` is one per
+  completion, and a trace re-opened by a late arrival is completed once per
+  generation, so it now says completions, and says that distinct traces are not
+  one number. Measured with a probe, not a test, in the main checkout at the
+  derived parent before any edit: `unread_export()`'s two spans routed one at a
+  time under `Quiet(0.5)`, the first completed, the second a `late_arrival`
+  completed in its turn, gave `counts` `{'completed': 2, 'no_graph': 2,
+  'released': 2, 'late_arrival': 1}` for one trace id.
+- **Two comments in `spanweave_live/routing.py`.** `NO_TRACE`'s, which said
+  the code means "a record reached the no-trace builder", with the `adapter=`
+  case its one exception, names the library's refusals too. `_Identity`'s
+  docstring, which said the no-trace builder's `feed` raises every refused
+  identity again, names the `adapter=` case where it does not.
+- **`TASKS.md`'s V2 row and L2's disposition**, written at the close, said a
+  record that reaches the no-trace builder "is one counted `no_trace` event";
+  each names `refused` beside it.
+
+Checked and true as they stand: `SPEC.md` §4.2's three answers (`:692`), its
+quotation of §1.1 (`:713`), its paragraph on the library's refusals (`:721`,
+V4's exception in it), its `SpanweaveError` paragraph (`:746`, R2's), §4.3's
+"every record it holds" (`:792`) with the exception after it (`:795`), and
+§8.3's `no_trace` line (`:2655`); `CLAUDE.md` rule 5 (`:79`), which names no
+code and so does not deny `refused`; `trace_id_of`'s `SpanweaveError`
+paragraph (`spanweave_live/routing.py:305`, older than the series); and, each of
+the router it builds, the section comment at `tests/test_routing.py:301`, the
+docstrings at `:547`, `:613` and `:726` (R2's), and `tests/test_cli.py:387`.
+Left as dated history: this file's V2 heading, false under `adapter=`, and its
+bullet "Every record that reaches the no-trace builder is announced", which
+the same bullet's ambiguous record and the entry's "An older gap" bullet
+scope; and `TASKS.md`'s 2026-10-16 decision row (`:78`), the maintainer's,
+whose "every record that reaches it is announced" is false under `adapter=`.
+Left as a name: `TASKS.md`'s V2 heading (`:145`), the batch's title
+as its plan gave it, false under `adapter=`. V2(a)'s "were checked"
+(`TASKS.md:224`) missed §1.1, and is a record line a later commit of these sets
+right. Older than the series and false since V2, and not fixed here:
+`TASKS.md`'s R2-3 (`:936`), "a stream of nothing but unclaimed records yields
+no event and no count".
+
+`make check` green (ruff, `ruff format --check`, mypy --strict on 9 source
+files, 912 passed, gates and pins 71), `make conformance` 97 passed, `make
+showcase` 12 passed. `make install-check` was not run and is not needed: no
+packaging, no dependency and no pin moved.
+
 ### CLAUDE.md carries what the zoo series added to the contract (2026-10-20)
 
 Derived parent `2bb1aed`. The fifth commit after the series' close, answering

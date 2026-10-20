@@ -83,12 +83,15 @@ REFUSED: Final = "refused"
 #: in the open rather than dropped: silence was the alternative.
 REFUSED_AT_CAP: Final = "refused_at_cap"
 
-#: A record reached the no-trace builder (`SPEC.md` §4.2, §4.3). Not a refusal
-#: -- the builder absorbs it, and the library's own account of it is in that
-#: builder's graph -- but a routing decision, and §1.5 says a decision is
-#: never silent. `detail` is exactly one of the three below. One exception,
-#: older than this code and stated in §4.3: under a router given an `adapter`,
-#: a record two adapters claim reaches that builder with no event.
+#: A record reached the no-trace builder with one of the three answers below
+#: (`SPEC.md` §4.2, §4.3). Not a refusal -- the builder absorbs it, and the
+#: library's own account of it is in that builder's graph -- but a routing
+#: decision, and §1.5 says a decision is never silent. `detail` is exactly one
+#: of the three. A record the library refuses -- more than one claimant, or a
+#: `SpanweaveError` while classifying or parsing -- reaches that builder too,
+#: and is `refused` instead (§4.4). One exception, older than this code and
+#: stated in §4.3: under a router given an `adapter`, a record two adapters
+#: claim reaches that builder with no event.
 NO_TRACE: Final = "no_trace"
 
 #: `no_trace`'s detail: no adapter claimed a record the reader did not unpack
@@ -231,8 +234,10 @@ class _Identity:
     detail that says which "no" it was -- or `None` itself where the answer is
     the library's **refusal** (an ambiguous record, or a `SpanweaveError` while
     classifying or parsing), which the no-trace builder's `feed` raises again
-    and `Router.route` reports as `refused` (`SPEC.md` §4.4). `spanweave_code`
-    is the library's code where it refused the envelope.
+    and `Router.route` reports as `refused` (`SPEC.md` §4.4) -- except an
+    ambiguous record under a router given an `adapter`, which that builder
+    absorbs and nothing reports (`SPEC.md` §4.3). `spanweave_code` is the
+    library's code where it refused the envelope.
 
     `claimed` is whether one adapter claimed the record, which is what the cap
     counts a trace from (`SPEC.md` §4.5): a trace id read off the envelope is
