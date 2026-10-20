@@ -20,6 +20,81 @@ and the event-code set grew (`no_trace`, V2; `no_graph`, after the close). Under
 this heading are the zoo series' batches V0–V4 and, above them, the commits made
 after its close, newest first.
 
+### The CHANGELOG's record of the series made true (2026-10-20)
+
+Derived parent `41cc44d`. The eighth commit after the series' close, answering
+R-7 and R-8 of the first half of its cold review (run 1) and R-4 of the second
+(run 2 and the close), both archived under `reviews/` by a later commit of
+these. **Prose only.** No behaviour changed, and no test changed at all: only
+this file moved, and `SPEC.md` is untouched. So the bar's *confirmed red on
+the parent* and *named mutation* lines do not apply to this entry, as they did
+not to `0.0.1`'s *The sixth sentence, and three in the tests*, and no parent
+run of this commit was made. What it corrects are three things the series'
+entries say were seen or measured, and each was seen or measured again
+before it was corrected. They are corrected in place, in each entry's own
+sentence, because `0.0.2` is not released until the merge.
+
+Fixed
+
+- **V1's entry** said `spanweave-live serve --help` names both media types
+  (run 1's R-7). The line that names them is `spanweave-live --help`'s
+  `serve` line, the subcommand's `help=` string V1 changed: "receive
+  OTLP/HTTP, JSON or protobuf, over a socket this process binds".
+  `spanweave-live serve --help` prints the subparser's description, "Serve
+  POST /v1/traces on one socket. PRE-1.0: …", and none of its text names a
+  media type: the only `json` in it is `--out`'s and `--max-completed`'s
+  `<trace_id>.json`, a file name. The entry now names `spanweave-live
+  --help`'s `serve` line. Its `README.md` half was true and stands: the
+  `serve` example (`:59–61`) names `application/json or
+  application/x-protobuf`. R-7's other half, V0's lost heading, was restored
+  by V4, whose entry says so, and `tests/test_record.py` holds it.
+- **V0's entry** said every zoo-gate test was red on the parent (run 1's
+  R-8). The file was red, with 9 failed and 3 skipped, and the entry now says
+  so: "the zoo-gate file, 9 failed and 3 skipped (empty parameter sets)".
+- **V3's entry** said the orphan-as-root mutation is red 17 (run 2's R-4). It
+  is red 21, and the entry now says so.
+
+Seen and measured again for this entry: the help text in the main checkout,
+and each run in a worktree by absolute path under the scratchpad, with its
+venv synced offline.
+
+- **The help text**, at the derived parent with `uv run`:
+  `spanweave-live --help` and `spanweave-live serve --help`, as above. The
+  `help=` and `description=` strings are the same at V1's `9641d75`
+  (`spanweave_live/cli.py:547–548`) as here (`:549–550`).
+- **V0's parent run.** `024fc66`'s `tests/test_zoo_gate.py` overlaid on
+  `0de9f55`'s tree, `corpus/` at that tree's gitlink `fec7da2`: 9 failed, 3
+  skipped, 0 passed. The three skipped are the routed-count test, the
+  end-of-input test and the byte-for-byte test, each "got empty parameter set
+  for (capture)", because no capture is found to parametrize them with. The
+  nine failed are the twelve-capture count (`assert 0 == 12`); the two Z4
+  rows and the four L3 captures, each a `MANIFEST.json` not found; and the
+  §4.8 table test and the README sentence test, whose text neither document
+  had yet. That is run 1's count.
+- **V3's mutation**, at V3's own commit `beb4871`, because the entry records
+  V3's measurement. `tests/test_zoo_policies.py` is 41 passed unmutated. With
+  `and node.id not in orphans` dropped from `root_ended`
+  (`spanweave_live/completion.py:213`) it is 21 failed, 20 passed, and the
+  whole suite 22 failed, 863 passed. The 21 are four in the `Quiet(0.5)`
+  per-body test, four in L3's `RootEnded` test, four in the test of the grace
+  running from the tick that first saw the root, two in Z5's no-root test,
+  six in Z5's `RootEnded` test (three graces on two captures), and §5.5's
+  table. The mutation's other form, the orphan set emptied, is 21 failed, 20
+  passed as well, so neither gives 17. That is run 2's count. The entry's
+  other four counts were not re-run here.
+
+Older than the series and not fixed here: this file's preamble says each
+entry names the batch. No entry made after a series' close names one, neither
+`0.0.1`'s three of 2026-10-07 nor those under `0.0.2`, this one among them,
+and each version's own sentence says what its section holds. Left as a commit
+message, which cannot be amended: `9641d75`'s body, "README's serve line and
+serve --help name both".
+
+`make check` green (ruff, `ruff format --check`, mypy --strict on 9 source
+files, 912 passed, gates and pins 71), `make conformance` 97 passed, `make
+showcase` 12 passed. `make install-check` was not run and is not needed: no
+packaging, no dependency and no pin moved.
+
 ### §7 says what V1 and V1a made true, and what OTLP says (2026-10-20)
 
 Derived parent `54dba83`. The seventh commit after the series' close, answering
@@ -607,7 +682,7 @@ Added
 Mutations shown caught (by the new file alone):
 - `Quiet`'s `>=` as `>`: red (15);
 - `Cap`'s `>=` as `>`: red (6);
-- an orphan read as a root in `root_ended`: red (17);
+- an orphan read as a root in `root_ended`: red (21);
 - a late arrival that does not number its generation: red (4);
 - `RootEnded`'s grace measured from the last record: red (4).
 
@@ -748,8 +823,8 @@ Changed
   record. An empty protobuf body is an empty request and a `200`. Every answer
   is still `{}` or `{"code": ...}` as `application/json`, whatever the
   request's media type.
-- `spanweave-live serve --help` and `README.md`'s `serve` line name both media
-  types. `SPEC.md` §7.2, §8.1 and §4.8 amended.
+- `spanweave-live --help`'s `serve` line and `README.md`'s `serve` line name
+  both media types. `SPEC.md` §7.2, §8.1 and §4.8 amended.
 
 Added
 
@@ -830,8 +905,9 @@ Added
 - `make install-check` reads one zoo raw body (Z4 recorded, five records) with
   the *installed* `spanweave`, which proves that the `otlp` extra ships.
 
-Tests red on the parent (`0de9f55`, worktree under the scratchpad): every
-zoo-gate test, because the zoo is absent from the old pin (0 captures of 12).
+Tests red on the parent (`0de9f55`, worktree under the scratchpad): the
+zoo-gate file, 9 failed and 3 skipped (empty parameter sets), because the zoo
+is absent from the old pin (0 captures of 12).
 Also red there: the three new pin tests and the corpus-size and README
 sentence tests of gate A. Mutations shown caught:
 - a router that reads `record["trace_id"]` for a record no adapter claims
