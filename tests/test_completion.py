@@ -765,6 +765,75 @@ def test_an_unread_trace_does_not_starve_the_zoo_at_the_cap():
     assert router.trace_ids == (EXPORT_TRACE,), "held, and still off the cap"
 
 
+def test_a_claimed_record_refused_at_the_cap_for_a_held_trace_is_activity():
+    """Refused, and still the exporter talking about the trace (`SPEC.md` §5.3).
+
+    The health check's trace is held off a full cap; its claimed records keep
+    arriving, each `refused_at_cap`. `Quiet(0.5)` is "no record for this trace
+    for this long", and a record the router routed to a trace it holds is
+    activity, absorbed or refused, so the trace does not complete while they
+    arrive and completes at the first tick at or after the last one + 0.5
+    (Qodo, PR #2, finding 1). `t1` holds the one slot throughout: it absorbs a
+    record of its own at every arrival, so it is never quiet for 0.5 before the
+    end and the cap stays full while the held trace's records are refused.
+    """
+    from spanweave_live import Framer
+    from tests.test_routing import EXPORT_TRACE, otlp_export, otlp_span
+
+    clock = Clock(at=0.0)
+    router = router_with(Quiet(0.5), clock=clock, max_traces=1)
+    assert router.route(openinference("s0", trace="t1")).events == ()
+    for record in unread_records():
+        assert router.route(record).events == ()
+    held = router.builder(EXPORT_TRACE)
+    assert held is not None and held.version == 2
+
+    arrivals = (0.4, 0.8, 1.2, 1.6)
+    for n, now in enumerate(arrivals):
+        clock.reading = now
+        assert router.route(openinference(f"s{n + 1}", trace="t1")).events == ()
+        span = f"{n + 1:x}" * 16
+        (claimed,) = Framer().document(otlp_export(otlp_span(span))).records
+        refused = router.route(claimed)
+        assert [event.code for event in refused.events] == [REFUSED_AT_CAP]
+        assert refused.events[0].trace_id == EXPORT_TRACE
+        assert router.tick() == (), f"completed at {now} while its records arrive"
+    assert router.builder(EXPORT_TRACE) is held and held.version == 2
+    assert router.counts == {REFUSED_AT_CAP: len(arrivals)}
+
+    clock.reading = arrivals[-1] + 0.4
+    assert router.tick() == (), "completed before the silence lasted 0.5"
+    clock.reading = arrivals[-1] + 0.5
+    done = {completed.trace_id: completed for completed in router.tick()}
+    assert sorted(done) == sorted(["t1", EXPORT_TRACE])
+    assert done[EXPORT_TRACE].policy == Quiet(0.5)
+    assert codes(done[EXPORT_TRACE].events) == [COMPLETED, NO_GRAPH, RELEASED]
+
+
+def test_a_claimed_record_refused_at_the_cap_for_a_new_trace_leaves_no_state():
+    """The guard: no builder, no book, no activity for a trace not held (§4.5).
+
+    Under a policy, so the router reads its clock for the record: what it read
+    is written into no book, because there is no trace the router holds for
+    the record to be activity of.
+    """
+    clock = Clock()
+    router = router_with(Quiet(0.5), clock=clock, max_traces=1)
+    router.route(openinference("s0", trace="t1"))
+    trace_ids = router.trace_ids
+    books = {key: dataclasses.astuple(book) for key, book in router._books.items()}
+    clock.tick(0.25)
+
+    refused = router.route(openinference("s0", trace="t2"))
+    assert [event.code for event in refused.events] == [REFUSED_AT_CAP]
+    assert refused.builder is None
+    assert router.trace_ids == trace_ids == ("t1",)
+    assert router.builder("t2") is None
+    assert {
+        key: dataclasses.astuple(book) for key, book in router._books.items()
+    } == books, "the refusal wrote a book"
+
+
 def test_a_graph_refusal_with_any_other_code_is_still_not_written(
     tmp_path, monkeypatch
 ):

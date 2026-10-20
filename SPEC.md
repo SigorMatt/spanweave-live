@@ -848,7 +848,10 @@ the builder such a trace holds is not counted, and a record no adapter claims is
 never refused at the cap, whichever trace it names. At the cap, the claimed
 record that would make such a trace count is `refused_at_cap`, as a new trace's
 first record is: it is not absorbed, `Routed.builder` is `None`, and the trace
-keeps the builder and the records it had. The cost, said rather than hidden:
+keeps the builder and the records it had. Its arrival is still that trace's
+activity (§5.3): a held trace whose claimed records keep arriving at a full cap
+is not quiet. A claimed record refused for a **new** trace makes no state at
+all — no builder, no book, no activity. The cost, said rather than hidden:
 `max_traces` does not bound the builders of traces no adapter claims. What
 releases them is completion — `Quiet`, `Cap` and end of input, and never
 `RootEnded` alone (§5.3) — which reports each as `no_graph` (§5.4).
@@ -1137,6 +1140,8 @@ the first tick at which its condition holds, not the one after.
   the router routed to that trace is activity, **absorbed or refused**: a
   re-sent span is the exporter still talking about this trace, and treating a
   refusal as silence would complete a trace that is plainly still arriving.
+  That includes a claimed record refused at the cap for a trace the router
+  holds (§4.5), which is refused before any builder sees it.
   `Quiet(0)` completes a trace on the first tick after any record, which is
   legal and is what "no cap on the caller's policy" means (§1.2).
 - **`Cap(records)`** is "this trace has absorbed this many records". The count

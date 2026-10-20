@@ -20,6 +20,66 @@ and the event-code set grew (`no_trace`, V2; `no_graph`, after the close). Under
 this heading are the zoo series' batches V0–V4 and, above them, the commits made
 after its close, newest first.
 
+### A claimed record refused at the cap for a held trace is activity (2026-10-20)
+
+Derived parent `c76f74e`. The first of the five commits that disposition the
+bounded fix review of PR #2 and Qodo's review of it, answering Qodo's finding
+1: a bug the commit two after the series' close (`d52669c`, the held trace off
+the cap) introduced. `SPEC.md` §5.3 already said what is right: `Quiet` is "no
+record for this trace for this long", and any record the router routed to
+that trace is activity, **absorbed or refused**. The held trace's refusal at
+the cap returned before the activity was recorded, so a trace holding only
+records no adapter claims, whose claimed records kept arriving at a full cap,
+completed under `Quiet` while they arrived.
+
+Fixed
+
+- **The refusal is activity.** When a claimed record refused at the cap names a
+  trace the router holds, its arrival refreshes that trace's activity before
+  the refusal is returned. A claimed record refused for a **new** trace still
+  makes no state: no builder, no book, no activity. `SPEC.md` §4.5 says both,
+  and §5.3 names the cap's refusal among the refusals that are activity.
+  `routing.py`'s `_activity` and `_at_cap` docstrings say the same; the first
+  said a record "reached this trace's builder", which a record refused at the
+  cap does not. No sentence `d52669c` wrote said a refused record is not
+  activity, so none is withdrawn.
+
+Added
+
+- **Two tests** in `tests/test_completion.py`, beside the unread trace's
+  others. `test_a_claimed_record_refused_at_the_cap_for_a_held_trace_is_activity`:
+  under `Quiet(0.5)` and `max_traces=1`, the health check's trace held, its
+  claimed records arriving at `now = 0.4, 0.8, 1.2, 1.6`, each
+  `refused_at_cap`, ticked after each, completes nothing while they arrive,
+  nothing at `1.6 + 0.4`, and completes as `no_graph` at the tick at
+  `1.6 + 0.5`. The trace filling the cap, `t1`, absorbs a record of its own at
+  every arrival, so it is never quiet for 0.5 before then and the cap stays
+  full. The guard,
+  `test_a_claimed_record_refused_at_the_cap_for_a_new_trace_leaves_no_state`:
+  a new trace refused at the cap under a policy leaves `trace_ids` and the
+  router's books unchanged.
+
+Red on the parent (`c76f74e`, worktree under the scratchpad), with the test
+file overlaid: the whole suite gives 1 failed, 913 passed. The failure is the
+held trace's test, an `AssertionError` at the tick at `now = 0.8`, where the
+held trace completed under `Quiet(0.5)`; the guard passed there.
+Mutations, each run against the whole suite (914 tests):
+- the activity refresh skipped for the held refusal: 1 failed, 913 passed (the
+  held trace's test);
+- activity recorded for a new trace refused at the cap (the refresh guarded by
+  the clock reading alone): 2 failed, 912 passed (the guard, and
+  `test_the_remembered_completions_are_counted_and_not_recounted`, whose book
+  count the phantom book moves);
+- the refresh guarded by the trace having a book rather than a builder:
+  survives, 0 failed, 914 passed. It differs only for a completed trace,
+  whose remembered book's last-record time it moves, and nothing reads that
+  time before a late arrival opens a new generation and resets it (§5.5);
+- the refresh reading the clock a second time (`self.completion.now()`)
+  rather than the one reading `route` took for the record: survives, 0 failed,
+  914 passed. The suite's fake clock does not move inside a `route`, so the
+  two readings agree; the one-reading rule (§5.2) holds this line by review,
+  not by a test.
+
 ### The series' cold review, both halves, archived byte for byte, and its dispositions (2026-10-20)
 
 Derived parent `05cd4be`. The ninth and last commit after the series' close.

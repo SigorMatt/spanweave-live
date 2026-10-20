@@ -458,7 +458,11 @@ class Router:
                 and len(self._claimed) >= self.max_traces
             ):
                 # The record that would make this trace count, new or held
-                # with only unclaimed records so far (`SPEC.md` §4.5).
+                # with only unclaimed records so far (`SPEC.md` §4.5). One for
+                # a trace the router holds is still activity of that trace,
+                # refused or not (§5.3); one for a new trace makes no state.
+                if existing is not None and now is not None:
+                    self._activity(trace_id, now)
                 return self._at_cap(index, trace_id, held=existing is not None)
             if existing is None:
                 existing = Builder(adapter=self.adapter, temporal=self.temporal)
@@ -1159,11 +1163,13 @@ class Router:
         )
 
     def _activity(self, trace_id: str, now: float) -> None:
-        """A record reached this trace's builder, absorbed or refused (`§5.3`).
+        """A record was routed to a trace the router holds, absorbed or refused
+        -- by its builder, or at the cap (`§5.3`, `§4.5`).
 
-        Either way it is activity: a re-sent span is the exporter still talking
-        about this trace, and counting a refusal as silence would complete a
-        trace that is plainly still arriving.
+        Either way it is activity: a re-sent span, or a claimed span the cap
+        has no room for, is the exporter still talking about this trace, and
+        counting a refusal as silence would complete a trace that is plainly
+        still arriving.
         """
         self._book(trace_id, now).last_record_at = now
 
@@ -1173,7 +1179,9 @@ class Router:
         `held` is a trace the router holds a builder for with no claimed record
         in it yet: the record would make it count, so it is refused as a new
         trace's first record is, and the builder keeps what it had (`SPEC.md`
-        §4.5).
+        §4.5). Its arrival is still that trace's activity, which `route`
+        records before calling this (§5.3); a new trace's refused record makes
+        no builder, no book and no activity.
         """
         where = (
             f"the record, which would be the first an adapter claims in the "
