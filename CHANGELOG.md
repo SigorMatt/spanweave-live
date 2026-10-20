@@ -20,6 +20,74 @@ and the event-code set grew (`no_trace`, V2; `no_graph`, after the close). Under
 this heading are the zoo series' batches V0–V4 and, above them, the commits made
 after its close, newest first.
 
+### CLAUDE.md carries what the zoo series added to the contract (2026-10-20)
+
+Derived parent `2bb1aed`. The fifth commit after the series' close, answering
+R-4 of the first half of its cold review (run 1) and R-2 of the second (run 2
+and the close), both archived under `reviews/` by a later commit of these. No
+behaviour changed: only `CLAUDE.md`, `tests/test_record.py` and this file
+moved, and `SPEC.md` is untouched, because §1.5, §4.2, §4.3 and §4.8 already
+say what `CLAUDE.md` now carries. The series' plan wrote three things into its
+§0.6 (`git show 3077bec:WORKPLAN.md`), and V4 deleted it with one of them in
+`CLAUDE.md`, rule 1's envelope clause. The other two are there now, in §0.6's
+words where it has them.
+
+Changed
+
+- **Standing rule 5** gains §0.6's V2 clause: a refusal, a cap, a late
+  arrival, a consumer error "— and from V2, a record that reaches no trace —"
+  is an event with a code. It cites §4.2 beside §1.5, because §4.2 is where
+  that record's event is specified. The rule also names the one exception,
+  open since V2 as thread V2(a): under a router given `adapter=`, a record two
+  adapters claim reaches the no-trace builder and is announced by nothing
+  (§4.3). V2(a)'s disposition is that a sentence of this kind names that
+  exception. §0.6's clause did not, and copied without it, the rule would be
+  one more sentence that does not. The sentence above the rules, which says
+  which series wrote what, names rule 5's V2 clause beside rule 1's envelope
+  clause.
+- **The corpus.** The paragraph that said `corpus/` is "used only to build
+  `fixtures/conformance/`" now says it is read in place for
+  `corpus/fixtures/conformance/` and, from V0, `corpus/fixtures/zoo/`.
+  Architecture gains §0.6's corpus paragraph beside gate A's: the **zoo gate**
+  (`tests/test_zoo_gate.py`, V0) holds for every capture that the graph the
+  receiver writes at end of input equals `spanweave.build` of the same records
+  byte for byte, and every batch keeps it green or moves it with the reason.
+  §0.6's "twelve" is not copied, because no test would read it in
+  `CLAUDE.md`. The paragraph cites §4.8's table for the captures instead,
+  which `tests/test_zoo_gate.py` holds.
+- **`make conformance`'s comment** names gate A and the zoo gate, as README's
+  does, and the two files the target runs. "real from R2" and "~25s" go: the
+  first is history, and the second was written while the target ran gate A
+  alone, and nothing re-derives it.
+
+Added
+
+- **One test**,
+  `test_claude_md_s_make_conformance_line_names_the_files_the_target_runs`, in
+  `tests/test_record.py` beside rule 1's. It reads the Makefile's
+  `conformance` recipe up to its blank line, and the test files that recipe
+  runs must be the ones `CLAUDE.md`'s `make conformance` line names, as sets.
+  The module docstring says so. Rule 5's clause and the corpus paragraph are
+  prose that no test reads, because a test that they say what they say would
+  hold only their wording.
+
+Red on the parent (`2bb1aed`, worktree under the scratchpad), with the test
+file overlaid: the whole suite gives 1 failed, 911 passed. The failure is the
+new test, because the parent's line names `tests/test_conformance.py` alone
+and the target also runs `tests/test_zoo_gate.py`. With this commit's
+`CLAUDE.md` overlaid as well, 912 passed. Mutations, each run against the
+whole suite (912 tests):
+- the zoo gate's file dropped from `CLAUDE.md`'s line: 1 failed, 911 passed
+  (the new test);
+- the Makefile's target running a third file, `tests/test_zoo_policies.py`,
+  that the line does not name: 1 failed, 911 passed (the new test);
+- the line naming that third file while the target does not run it: 1 failed,
+  911 passed (the new test);
+- the test reading the Makefile from the target to the end of the file, not
+  to its recipe's blank line: 1 failed, 911 passed (the new test: the
+  showcase recipe's `tests/test_showcase.py` joins, so the bound is what holds
+  the test to the one target).
+
 ### A protobuf body's diagnostics reach the exchange (2026-10-20)
 
 Derived parent `26ca329`. The fourth commit after the series' close, answering

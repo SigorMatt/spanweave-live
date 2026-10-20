@@ -29,8 +29,9 @@ It is not an analyzer, not a rule engine, not a gate, not a service with a
 policy. **The receiver owns plumbing and policy and nothing else.**
 
 `spanweave` is a dependency pinned to one commit, and `corpus/` is a submodule of
-that same repository at the same commit, read-only, used only to build
-`fixtures/conformance/`. Nothing in this repo changes `spanweave`; if a batch
+that same repository at the same commit, read-only, and read in place for
+`corpus/fixtures/conformance/` and, from V0, `corpus/fixtures/zoo/`
+(Architecture, below). Nothing in this repo changes `spanweave`; if a batch
 seems to need a change there, that is a halt point (below).
 
 The showcase (`SPEC.md` §9) has the same shape one directory over: `agentgolden`
@@ -44,9 +45,10 @@ either, and that too is a halt point.
 ## Standing rules — non-negotiable
 
 These were first written as a series' `WORKPLAN.md` §0.6 — the receiver
-series', and rule 1's envelope clause the zoo series' — and are repeated here
-because they are the contract and a session must not have to read a plan to
-find them. A change that violates one is wrong even if it passes tests.
+series', and rule 1's envelope clause and rule 5's V2 clause the zoo series' —
+and are repeated here because they are the contract and a session must not
+have to read a plan to find them. A change that violates one is wrong even if
+it passes tests.
 
 1. **It never reads a dialect.** A record's trace id, span id or kind comes from
    `spanweave`'s adapters (`spanweave.adapters.classify` and the claiming
@@ -74,9 +76,12 @@ find them. A change that violates one is wrong even if it passes tests.
    modules — because `real.py` is where a process binds the real world and
    nothing else does. The gate fails the build. (`SPEC.md` §1.4, §8.2.)
 
-5. **Nothing is dropped silently.** A refusal, a cap, a late arrival or a
-   consumer error is an **event with a code**, counted and reported.
-   (`SPEC.md` §1.5.)
+5. **Nothing is dropped silently.** A refusal, a cap, a late arrival, a
+   consumer error — and from V2, a record that reaches no trace — is an
+   **event with a code**, counted and reported. (`SPEC.md` §1.5, §4.2.) One
+   exception is open: under a router given `adapter=`, a record two adapters
+   claim reaches the no-trace builder and is announced by nothing (`SPEC.md`
+   §4.3; `TASKS.md`, V2(a)).
 
 6. **The two pins are one pin.** `spanweave` is pinned to one commit in
    `pyproject.toml`, the `corpus/` submodule is at the same commit, and
@@ -120,6 +125,13 @@ bytes ──► Framer ──► spanweave.read_records ──► Router ──�
   `tests/test_conformance.py`, R2) is this project's central claim: records of
   two traces, shuffled together and framed in arbitrary chunks, produce each
   trace's graph **byte for byte** as `spanweave.build` of that trace alone.
+- From V0 the corpus read in place also includes `corpus/fixtures/zoo/`: the
+  captures of `SigorMatt/spanweave-zoo` (JSON and raw bodies, manifests) at
+  the zoo's pin, tabulated in `SPEC.md` §4.8. The receiver's own gate over
+  them, the **zoo gate** (`tests/test_zoo_gate.py`, V0), holds for every
+  capture that the graph the receiver writes at end of input equals
+  `spanweave.build` of the same records byte for byte; every batch keeps it
+  green or moves it with the reason.
 
 ## Commands
 
@@ -128,7 +140,7 @@ Tooling is `uv`. The `Makefile` is the source of truth for the gates.
 ```bash
 make check            # THE gate: ruff, ruff format --check, mypy --strict, pytest, gates
 make gates            # the invariant gate and the pin test alone
-make conformance      # gate A (real from R2: tests/test_conformance.py, ~25s)
+make conformance      # gate A and the zoo gate alone: tests/test_conformance.py, tests/test_zoo_gate.py
 make showcase         # the showcase: prints the first-failure table, then asserts it
 make install-check    # wheel into a throwaway venv, run from OUTSIDE the repo (needs network once)
 uv run pytest tests/test_gates.py::test_the_package_reaches_for_no_ambient_runtime

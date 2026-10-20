@@ -8,8 +8,8 @@ the version is one number wherever it is written, the registry names the
 batches in the order they ran and each with the commit that closed it, the
 decisions log is the length it says, the reader's half of L1 is the commit
 spanweave's own registry says it is, and `CLAUDE.md` says whether a series is
-open as the tree does and names every source of a trace id `SPEC.md` §1.1
-names.
+open as the tree does, names every source of a trace id `SPEC.md` §1.1 names,
+and names on its `make conformance` line the files that target runs.
 
 The registry's commits are read from history, so this file needs a clone with
 history: CI's `check` job checks out with `fetch-depth: 0` for it, and a
@@ -270,6 +270,24 @@ def test_standing_rule_one_names_every_source_spec_1_1_names():
         assert in_spec in spec, in_spec
     assert "unpacked from an OTLP export" in rule
     assert "(`SPEC.md` §1.1.)" in rule
+
+
+def test_claude_md_s_make_conformance_line_names_the_files_the_target_runs():
+    """`CLAUDE.md`'s `make conformance` line names what the Makefile runs.
+
+    V0 added the zoo gate to the target, and README's line with it; this line
+    named gate A's file alone until the series' cold review found it (run 1's
+    R-4, run 2's R-2).
+    """
+    makefile = (REPO / "Makefile").read_text(encoding="utf-8")
+    target = makefile[makefile.index("\nconformance:\n") + 1 :]
+    runs = set(re.findall(r"tests/\w+\.py", target[: target.index("\n\n")]))
+    line = re.search(
+        r"^make conformance +#.*$", CLAUDE.read_text(encoding="utf-8"), re.M
+    )
+    assert line is not None
+    assert runs
+    assert set(re.findall(r"tests/\w+\.py", line.group(0))) == runs
 
 
 def test_ci_s_check_job_has_the_history_this_file_reads():
