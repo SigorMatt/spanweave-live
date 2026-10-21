@@ -397,6 +397,15 @@ rather than side effects of it:
   it, which is what lets the reader apply its head-of-stream tolerance (§2.1) to
   a stream the receiver is reading in pieces.
 
+Both are held by one sweep (B6): the multi-byte stream of
+`tests/test_framing.py` opens with a BOM, and it is pushed at every two-way
+split and one byte at a time, so the sweep cuts the BOM at both of its inner
+boundaries as it cuts every multi-byte character. The reader's tolerance is
+per call, so the BOM's halves handed to it in two calls are
+`undecodable_bytes` — asserted beside the sweep, as its control. A pin, and it
+says so: what it catches is a framer that took the head of the stream out of
+the reader's hands and accepted a BOM only whole at offset 0 of a push.
+
 The reader's **container detection and deduplication are per call** (§2.1,
 §2.2), and a push is one call. So a chunk's complete lines are read as one
 input: two identical lines in one chunk are one record and one
@@ -978,6 +987,20 @@ surface says "no trace id" and the key says `t1`, so a dialect read puts an
 `unknown` node in a trace's graph that belongs in the no-trace builder. §1.1's
 warning is still right about why the read is wrong; the corpus is simply not
 where it shows.
+
+**Once as one stream, chunked across its lines** (B6). The passes above push
+each line in chunks of its own, so their interleaving is line-atomic: the
+framer's remainder is empty whenever the other trace's line begins, and a
+framer that lost what followed a push's last `\n` would pass every one of
+them. So one pass concatenates the interleaved arrivals into one byte stream,
+as one tail or one pipe would carry them, and cuts that stream in seeded
+chunks of one byte to twice its longest line, over every cross-scenario pair
+of two line-delimited renderings (a document is never pushed, §3.3), at the
+first seed. A push arriving while the remainder holds one trace's partial
+line and carrying the other trace's bytes is **counted**, and the count must
+be above zero, or the pass would be the line-atomic pass again. It is a pin,
+and says so; the framer that drops what follows a push's last `\n` is red
+here and green on every line-atomic pass.
 
 **One side an export whose root nobody claims** (V2). No conformance scenario
 holds a span of an export that no adapter claims (a test asserts it), so gate

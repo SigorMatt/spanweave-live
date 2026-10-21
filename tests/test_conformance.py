@@ -316,6 +316,116 @@ def test_interleaved_traces_produce_each_traces_own_batch_graph(seed: int) -> No
 
 
 # --------------------------------------------------------------------------
+# One stream, chunked across its lines (B6): the framer's remainder holds one
+# trace's partial line while the other trace's bytes arrive.
+# --------------------------------------------------------------------------
+
+#: The cross-scenario pairs whose renderings are both line-delimited at the
+#: pinned sha: every pair of `pairs()` with neither OTLP document in it. A
+#: document is never pushed (`SPEC.md` §3.3), so it has no place in a byte
+#: stream, and a pair holding one is left to the line-atomic pass above.
+LINE_PAIRS_EXPECTED = 1354
+
+
+def line_pairs() -> list[tuple[Path, Path]]:
+    return [
+        (first, second)
+        for first, second in pairs()
+        if first.suffix == ".jsonl" and second.suffix == ".jsonl"
+    ]
+
+
+def test_the_line_pairs_are_the_number_the_stream_pass_claims():
+    assert len(line_pairs()) == LINE_PAIRS_EXPECTED
+
+
+def across_lines(stream: bytes, longest: int, rng: random.Random) -> list[bytes]:
+    """`stream` cut into seeded chunks of one byte to twice its longest line.
+
+    Bounded by the longest line rather than by the stream, so that a chunk
+    both ends inside a line and spans a line boundary often: `chunked`, given
+    a whole stream, cuts it into a handful of pieces and crosses few lines.
+    """
+    pieces: list[bytes] = []
+    offset = 0
+    while offset < len(stream):
+        size = rng.randint(1, 2 * longest)
+        pieces.append(stream[offset : offset + size])
+        offset += size
+    return pieces
+
+
+def test_one_stream_of_two_traces_chunked_across_lines_produces_each_batch_graph():
+    """Gate A, once, with the chunk boundaries cut across the lines (B6).
+
+    The passes above push each line in chunks of its own, so the framer's
+    remainder is empty whenever a line of the other trace begins: their
+    interleaving is **line-atomic**, and a framer that lost what followed a
+    push's last newline would pass them (the receiver series' R2-2). Here the
+    interleaved arrivals are concatenated into one byte stream, as one tail
+    or one pipe would carry them, and that stream is cut in seeded chunks
+    that cross line boundaries -- so a push can arrive while the remainder
+    holds one trace's partial line, and carry the other trace's bytes.
+
+    Those arrivals are **counted**, not assumed: a push counts when the
+    remainder is not empty before it and the chunk holds a byte of the other
+    trace's line than the one the remainder holds. The count must be above
+    zero, or this pass would be the line-atomic pass again under a new name.
+
+    A pin, and it says so: green on the parent. One seed, the first: this
+    pass is about where the chunks fall, and the ten seeds above are about
+    the interleaving.
+    """
+    seed = SEEDS[0]
+    checked = 0
+    arrivals_across = 0
+    for first, second in line_pairs():
+        a = loaded(first, second=False)
+        b = loaded(second, second=True)
+        rng = random.Random(seed)
+        items = interleave(a.arrivals, b.arrivals, rng)
+        stream = b"".join(body for _, body in items)
+        where = f"{rendering_id(first)} + {rendering_id(second)}, one stream"
+        # Which trace each byte of the stream belongs to: 0 for `a`, 1 for `b`.
+        # A line is told by its bytes, which is only sound while no line of
+        # one rendering is also a line of the other -- asserted, not assumed.
+        assert not set(a.arrivals) & set(b.arrivals), where
+        owner = b"".join(
+            bytes([0 if (kind, body) in a.arrivals else 1]) * len(body)
+            for kind, body in items
+        )
+        assert all(kind == "line" for kind, _ in items)
+        longest = max(len(body) for _, body in items)
+
+        framer, router = Framer(), Router()
+        offset = 0
+        for chunk in across_lines(stream, longest, rng):
+            if framer.pending_bytes:
+                held = owner[offset - 1]
+                if (1 - held) in owner[offset : offset + len(chunk)]:
+                    arrivals_across += 1
+            for record in framer.push(chunk).records:
+                router.route(record)
+            offset += len(chunk)
+        for record in framer.flush().records:
+            router.route(record)
+        assert framer.pending_bytes == 0
+
+        assert router.counts == {}, f"{where}: unexpected events {router.counts}"
+        assert sorted(router.trace_ids) == sorted({a.trace_id, b.trace_id}), where
+        for rendering in (a, b):
+            builder = router.builder(rendering.trace_id)
+            assert builder is not None, f"{where}: no builder for {rendering.trace_id}"
+            assert spanweave.dumps(undigested(builder.graph())) == rendering.graph, (
+                f"{where}: trace {rendering.trace_id} does not match "
+                f"spanweave.build of {rendering_id(rendering.path)}"
+            )
+            checked += 1
+    assert checked == 2 * LINE_PAIRS_EXPECTED
+    assert arrivals_across > 0
+
+
+# --------------------------------------------------------------------------
 # An export with an unclaimed span among claimed ones, interleaved (V2).
 # --------------------------------------------------------------------------
 

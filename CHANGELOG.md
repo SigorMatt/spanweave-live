@@ -13,6 +13,33 @@ that series' close; each such citation is dated history, resolvable at
 
 ## Unreleased
 
+### B6: the framer's remainder, tested where it crosses (2026-10-22)
+
+Parent `f0987b5`. The receiver series' run-1 review, R1-6 and R2-2. **No
+behaviour changed**: both tests below are pins, green on the parent, and say
+so.
+
+Changed
+
+- **`SPEC.md` §3.2** says its BOM consequence is tested, by which sweep, and
+  against which control; **§4.7** states gate A's one-stream pass and the
+  count it asserts.
+
+Added
+
+- **`tests/test_framing.py`**: the multi-byte stream opens with a BOM, so the
+  two-way split sweep cuts the BOM at both of its inner boundaries (R1-6);
+  beside it, the control that the BOM's halves read in two calls are
+  `undecodable_bytes`. A framer that did not hold a partial BOM at the head
+  of the stream is red here and green on the parent's sweep.
+- **`tests/test_conformance.py`**: gate A gains one pass that concatenates the
+  interleaved line arrivals of every pair of two line-delimited renderings
+  into one stream and chunks it across its lines, counting the pushes that
+  arrive while the remainder holds one trace's partial line and carry the
+  other trace's bytes, and asserting that count is above zero (R2-2). A framer
+  that drops what follows a push's last newline is red here and green on
+  every line-atomic pass of gate A.
+
 ### B5: completion's edges, stated and pinned (2026-10-22)
 
 Parent `7319ac2`. The receiver series' run-2 review, T1; the zoo series' cold
