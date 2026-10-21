@@ -6,21 +6,27 @@ A series closes by deleting its `WORKPLAN.md` and folding what outlives it into
 below is one of theirs that a test can check without running the library:
 the version is one number wherever it is written, the registry names the
 batches in the order they ran and each with the commit that closed it, the
-decisions log is the length it says, the reader's half of L1 is the commit
-spanweave's own registry says it is, and `CLAUDE.md` says whether a series is
-open as the tree does, names every source of a trace id `SPEC.md` §1.1 names,
-and names on its `make conformance` line the files that target runs; and
-`SPEC.md` §8.7's count of the CLI's process tests is `tests/test_cli.py`'s
-collection, measured.
+decisions log is the plan's §3 at the plan state it cites, as it says, the
+reader's half of L1 is the commit spanweave's own registry says it is wherever
+it is cited, the entries made after the close run newest first by their
+commits, and `CLAUDE.md` says whether a series is open as the tree does, cites
+each closed series' last plan state, names every source of a trace id
+`SPEC.md` §1.1 names, and names on its `make conformance` line the files that
+target runs; and `SPEC.md` §8.7's count of the CLI's process tests is
+`tests/test_cli.py`'s collection, measured.
 
-The registry's commits are read from history, so this file needs a clone with
-history: CI's `check` job checks out with `fetch-depth: 0` for it, and a
-shallow clone fails here with the command that fixes it rather than passing
-without having looked.
+The registry's commits and the plan files are read from history, so the tests
+that take the `history` fixture need a git binary and a clone with history:
+CI's `check` job checks out with `fetch-depth: 0` for them. Without one they
+fail by name rather than passing without having looked: no git binary, a tree
+with no `.git` (an sdist, which ships `tests/`, or a `git archive` export),
+and a shallow clone are three different messages, and only the last is
+fixed by `git fetch --unshallow`.
 """
 
 import ast
 import re
+import shutil
 import subprocess
 import sys
 import tomllib
@@ -66,12 +72,75 @@ def _git(*args: str) -> subprocess.CompletedProcess[str]:
 
 @pytest.fixture(scope="module")
 def history() -> None:
+    """A git binary, a `.git` of this tree's own, and all of its history.
+
+    The `.git` is looked for in the tree itself, a directory in a clone and a
+    file in a worktree: an sdist unpacked inside some other clone would
+    otherwise have git answer for that clone.
+    """
+    assert shutil.which("git") is not None, (
+        "this test reads the registry's commits from history, and there is no "
+        "git binary on the PATH"
+    )
+    assert (REPO / ".git").exists(), (
+        "this test reads the registry's commits from history, and this tree "
+        "has no .git (an sdist or a `git archive` export has none): run it in "
+        "a clone with history"
+    )
     shallow = _git("rev-parse", "--is-shallow-repository").stdout.strip()
     assert shallow == "false", (
         "this test reads the registry's commits from history, and this clone "
         "is shallow: run `git fetch --unshallow` (CI's check job checks out "
         "with fetch-depth: 0 for this)"
     )
+
+
+def plan_states() -> dict[str, tuple[str, str]]:
+    """Each closed series, by name: its closing commit and its plan's last state.
+
+    Read from history alone: a series closes with the one commit that deletes
+    `WORKPLAN.md`, whose subject says "the <name> series closes", and the
+    plan's last state is the last commit before that one to change the file.
+    """
+    deleted = _git(
+        "log",
+        "--full-history",
+        "--no-merges",
+        "--diff-filter=D",
+        "--format=%H %s",
+        "--",
+        "WORKPLAN.md",
+    ).stdout
+    states = {}
+    for line in deleted.splitlines():
+        close, _, subject = line.partition(" ")
+        named = re.search(r"\bthe (\w+) series closes\b", subject)
+        assert named is not None, f"{close} deletes the plan: {subject!r}"
+        last = _git("log", "-1", "--format=%H", f"{close}^", "--", "WORKPLAN.md")
+        assert last.stdout.strip(), close
+        assert named.group(1) not in states, named.group(1)
+        states[named.group(1)] = (close, last.stdout.strip())
+    assert states, "no commit deletes WORKPLAN.md"
+    return states
+
+
+def cited_states(text: str, pattern: str) -> dict[str, str]:
+    """`pattern`'s `series` and `sha` groups in `text`, whitespace folded.
+
+    One sha a series: a series cited at two states is red here.
+    """
+    found: dict[str, set[str]] = {}
+    for match in re.finditer(pattern, " ".join(text.split())):
+        found.setdefault(match["series"], set()).add(match["sha"])
+    assert all(len(shas) == 1 for shas in found.values()), found
+    return {series: shas.pop() for series, shas in found.items()}
+
+
+def table_rows(text: str) -> list[str]:
+    """The dated rows of a decisions-log table, in file order."""
+    return [
+        line for line in text.splitlines() if re.match(r"\| \d{4}-\d\d-\d\d \|", line)
+    ]
 
 
 def section(text: str, heading: str) -> str:
@@ -145,6 +214,8 @@ def test_the_version_s_changelog_entries_are_the_registry_s_batches():
     the receiver series' (`The record made true — …` above `R9`). Such an
     entry's heading names no batch and ends in its date, and the dates run
     newest first down to the close's, V4's. Below the batches it is red.
+    Every post-close entry of the zoo series is dated 2026-10-20, so the dates
+    do not order them among themselves; their commits do, in the next test.
     """
     _, entries = released()
     headings = re.findall(r"^### (.*)$", entries, re.M)
@@ -163,6 +234,55 @@ def test_the_version_s_changelog_entries_are_the_registry_s_batches():
         assert dated is not None, f"an entry is undated: {heading}"
         dates.append(dated.group(1))
     assert dates == sorted(dates, reverse=True), f"not newest first: {later}"
+
+
+def test_the_post_close_entries_run_newest_first_by_their_commits(history):
+    """Each entry above the batches is its commit's, and they run newest first.
+
+    The mapping from an entry to its commit is the entry's own: each one opens
+    with "Derived parent `<sha>`.", and its commit is that parent's one child
+    in the tip's history, which changes `CHANGELOG.md` and whose parent's
+    `CHANGELOG.md` has no such heading. `git blame` on the heading gives the
+    same commits today, but it names the last commit to touch a line, and a
+    heading corrected later would move it; the cited parent does not move.
+    The commits must then run newest first, each a strict descendant of the
+    next, and the oldest one a strict descendant of the commit that closed
+    the series. Swapping the newest and the oldest entry, which every date
+    survives (the bounded fix review's R-7), is red here.
+    """
+    _, entries = released()
+    later = []
+    for block in re.split(r"^### ", entries, flags=re.M)[1:]:
+        heading, _, body = block.partition("\n")
+        if re.match(r"\S+ — ", heading):
+            break
+        later.append((heading, body))
+    assert later
+    children: dict[str, list[str]] = {}
+    for line in _git("rev-list", "--parents", "HEAD").stdout.splitlines():
+        commit, *parents = line.split()
+        for parent in parents:
+            children.setdefault(parent, []).append(commit)
+    commits = []
+    for heading, body in later:
+        cited = re.match(r"\s*Derived parent `([0-9a-f]{7,40})`\.", body)
+        assert cited is not None, f"an entry names no derived parent: {heading}"
+        parent = _git("rev-parse", "--verify", f"{cited.group(1)}^{{commit}}")
+        assert parent.returncode == 0, cited.group(1)
+        sha = parent.stdout.strip()
+        assert len(children.get(sha, [])) == 1, (heading, children.get(sha))
+        (commit,) = children[sha]
+        changed = _git("diff", "--quiet", sha, commit, "--", "CHANGELOG.md")
+        assert changed.returncode == 1, f"{commit} leaves CHANGELOG.md: {heading}"
+        before = _git("show", f"{sha}:CHANGELOG.md").stdout
+        assert f"\n### {heading}\n" not in before, f"already at {sha}: {heading}"
+        commits.append(commit)
+    close, _ = plan_states()["zoo"]
+    for newer, older in zip(commits, [*commits[1:], close], strict=True):
+        assert newer != older, newer
+        assert _git("merge-base", "--is-ancestor", older, newer).returncode == 0, (
+            f"not newest first by commit: {older} is not before {newer}"
+        )
 
 
 # --------------------------------------------------------------------------
@@ -220,23 +340,66 @@ def test_every_plan_citation_resolves(history):
         assert _git("cat-file", "-e", f"{sha}:WORKPLAN.md").returncode == 0, sha
 
 
-def test_the_decisions_log_is_as_long_as_it_says():
+def test_the_decisions_log_is_the_plan_s_at_the_plan_state_it_cites(history):
+    """The folded log is the plan's §3 at the sha it cites, but for what it says.
+
+    The sha the section cites must be the zoo series' last plan state, read
+    from history (`plan_states`). The log says how many rows it has, how many
+    of them moved from the plan, that one sentence of one row moved, and how
+    many were taken after the close; each count is held, the moved rows are
+    the plan's rows in the plan's order, and the one row that differs is the
+    plan's with the sentence the paragraph below the table quotes replaced by
+    the sentence it says the row now carries. A row dropped and the count
+    lowered (the review's X8), and thread V2(c) undone in the row (X6), are
+    red here; the log's length alone held neither.
+    """
     log = section(zoo(), "## Decisions taken  *(`WORKPLAN.md` §3, folded)*")
-    stated = re.search(r"^(\w+) rows", log, re.M)
+    cited = set(re.findall(r"git show ([0-9a-f]{7,40}):WORKPLAN\.md", log))
+    _, last = plan_states()["zoo"]
+    assert len(cited) == 1 and last.startswith(cited.pop()), (cited, last)
+    plan = _git("show", f"{last}:WORKPLAN.md")
+    assert plan.returncode == 0, last
+    planned = table_rows(section(plan.stdout, "## 3. Decisions log"))
+    rows = table_rows(log)
+
+    prose = " ".join(log.split())
+    stated = re.search(
+        r"\b(\w+) rows: (\w+) moved here as they stood but for (\w+) sentence of"
+        r" (\w+) row, and the last (\w+) taken after the close",
+        prose,
+    )
     assert stated is not None
-    rows = [
-        line for line in log.splitlines() if re.match(r"\| \d{4}-\d\d-\d\d \|", line)
-    ]
-    assert WORDS[stated.group(1).lower()] == len(rows)
+    total, moved, sentences, changed, after = (
+        WORDS[word.lower()] for word in stated.groups()
+    )
+    assert (total, moved) == (len(rows), len(planned))
+    assert after == total - moved and sentences == changed == 1
+
+    differ = [at for at, row in enumerate(rows[:moved]) if row != planned[at]]
+    assert len(differ) == changed, differ
+    was = re.search(r'the row said the receiver "([^"]+)"', prose)
+    now = re.search(r"The row now says what is true: (.+?\.) ", prose)
+    assert was is not None and now is not None
+    sentence = now.group(1)
+    (at,) = differ
+    assert rows[at] == planned[at].replace(
+        f", and {was.group(1)}.", f". {sentence[0].upper()}{sentence[1:]}"
+    )
+    assert all(row.split(" | ")[1] == "review" for row in rows[moved:]), rows[moved:]
 
 
 def test_the_reader_s_half_of_l1_is_the_commit_spanweave_registers_for_w1():
-    """L1's disposition names W1's sha; spanweave's own registry, at the pin, agrees."""
-    stated = re.findall(r"spanweave's W1 \(`([0-9a-f]{7})`\)", zoo())
+    """L1's W1 sha, in the registry and the changelog; spanweave's registry agrees.
+
+    The changelog's V4 entry gives the sha too (`spanweave's W1 \\`4ecf414\\``),
+    and a changed one there (the review's X13) was held by nothing.
+    """
     upstream = (REPO / "corpus" / "TASKS.md").read_text(encoding="utf-8")
     row = re.search(r"^\| W1 \|.* done `([0-9a-f]{7})` \|$", upstream, re.M)
     assert row is not None
-    assert stated and set(stated) == {row.group(1)}
+    for text in (zoo(), CHANGELOG.read_text(encoding="utf-8")):
+        stated = re.findall(r"spanweave's W1 \(?`([0-9a-f]{7,40})`", text)
+        assert stated and set(stated) == {row.group(1)}, stated
 
 
 # --------------------------------------------------------------------------
@@ -255,6 +418,37 @@ def test_claude_md_says_whether_a_series_is_open_as_the_tree_does():
     says_none = "No series is open at this tip" in claude
     assert says_open != says_none
     assert says_open == PLAN.exists()
+
+
+def test_claude_md_and_the_changelog_cite_each_closed_series_last_plan_state(
+    history,
+):
+    """Each closed series' plan is cited at its last state, read from history.
+
+    `CLAUDE.md` says where each closed series' plan last stood, and the
+    changelog's preamble where its entries' plan citations resolve. Each must
+    name every series `plan_states` finds, and that series' last state: a sha
+    that resolves to some other `WORKPLAN.md` (the zoo's `5369cac`, the
+    review's X9, or the receiver's `b500342`, X10) passed the resolvability
+    test alone.
+    """
+    states = {series: last for series, (_, last) in plan_states().items()}
+    for text, pattern in (
+        (
+            CLAUDE.read_text(encoding="utf-8"),
+            r"the (?P<series>\w+) series' (?:last state is )?at "
+            r"`git show (?P<sha>[0-9a-f]{7,40}):WORKPLAN\.md`",
+        ),
+        (
+            CHANGELOG.read_text(encoding="utf-8").split("\n## ", 1)[0],
+            r"at `git show (?P<sha>[0-9a-f]{7,40}):WORKPLAN\.md` "
+            r"for the (?P<series>\w+) series'",
+        ),
+    ):
+        cited = cited_states(text, pattern)
+        assert set(cited) == set(states), (cited, states)
+        for series, sha in cited.items():
+            assert states[series].startswith(sha), (series, sha, states[series])
 
 
 def test_standing_rule_one_names_every_source_spec_1_1_names():

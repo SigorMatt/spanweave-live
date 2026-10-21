@@ -13,6 +13,51 @@ that series' close; each such citation is dated history, resolvable at
 
 ## Unreleased
 
+### B8: the record test reads what it holds (2026-10-22)
+
+Parent `3937f12`. The zoo series' cold review, run 2, R-16 and R-18; its
+bounded fix review, R-7. **No library behaviour changed**, and no document's
+text did: every sentence the new assertions read was already true, and they
+are green on the tree.
+
+Changed
+
+- **`tests/test_record.py`'s decisions-log test** compares the zoo series'
+  log with the plan's §3 at the sha the log cites, `git show
+  3077bec:WORKPLAN.md`, which must be the series' last plan state as history
+  gives it (the last commit to change `WORKPLAN.md` before the commit that
+  deleted it). The moved rows must be the plan's, in its order; the one row
+  that differs must be the plan's with the sentence the paragraph below the
+  table quotes replaced by the sentence it says the row now carries; and each
+  count the log's first line states is held. It replaces the length check.
+- **The W1 test** reads the CHANGELOG's V4 entry as well as `TASKS.md`.
+- **The `history` fixture** names a missing git binary, a tree with no
+  `.git` (an sdist, a `git archive` export) and a shallow clone as three
+  failures; the second was called "shallow" before (R-18). It still fails
+  rather than skips, as the module's docstring says, and CI's `check` job,
+  with `fetch-depth: 0`, takes none of the three.
+
+Added
+
+- **`tests/test_record.py`**: `CLAUDE.md` and the CHANGELOG's preamble cite
+  each closed series' last plan state, by the series' name, as history gives
+  it; and the post-close entries of `## 0.0.2` run newest first by their
+  commits (R-7). The mapping from an entry to its commit is the entry's own
+  "Derived parent `<sha>`.", which every one of them opens with: its commit is
+  that parent's one child, which changes the CHANGELOG, at whose parent the
+  heading is absent. `git blame` gives the same commits today but would move
+  with a later edit to a heading, so the test does not use it.
+- **Shown red with the new assertions and green on the parent's
+  `tests/test_record.py`**, each planted in a worktree at the parent: X6
+  (thread V2(c) undone in the row), X8 (a moved row dropped and the counts
+  lowered), X9 and X10 (`CLAUDE.md` citing the zoo plan at `5369cac`, or at
+  `b500342`), X13 (the V4 entry's W1 sha changed to `898e9f5`), and R-7's
+  swap of the newest and the oldest post-close entries. Two mutations of the
+  new code, each green against a defect the real test catches: the moved row
+  accepted with any change (a second sentence of it changed is then green),
+  and the cited series' names not compared with history's (the receiver's
+  citation dropped from `CLAUDE.md` is then green).
+
 ### B7: the trace-content gate (2026-10-22)
 
 Parent `3159579`. The receiver series' run-1 review, R0-4, its open half:
