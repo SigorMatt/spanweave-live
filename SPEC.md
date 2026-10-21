@@ -2419,8 +2419,8 @@ one answer the receiver can give without counting spans, and a truthful
 A body the reader read in part gets the same answer, and the exchange's
 diagnostics say what was skipped (above).
 
-That answer is **the other departure from OTLP**, beside the refusal body's
-below, because for a body read in part OTLP asks for more than full success.
+That answer is **this section's one departure from OTLP**, because for a body
+read in part OTLP asks for more than full success.
 The same `.pyi`'s `partial_success` property, after its summary line, says:
 "If the request is only partially accepted (i.e. when the server accepts only
 parts of the data and rejects the rest) the server MUST initialize the
@@ -2429,24 +2429,40 @@ of items it rejected." The receiver does neither, because the reader's
 `skipped_records` counts records, not spans, and counting the spans a request
 carried is a dialect read (§1.1). The behaviour is unchanged and older than
 the sentence naming it: R6 (`8ae7a5d`) answered a JSON body read in part so.
-A conformant `partial_success` for a body read in part is a thread for the
-next receiver series.
+A conformant `partial_success` for a body read in part was **declined** by the
+maintainer on 2026-10-21 (the backlog series): an OTLP/HTTP body is one export,
+read whole or refused, and the count OTLP asks for is of spans, which only a
+dialect read can count (§1.1). The departure stands.
 
-A refusal answers `{"code": "<the receiver's code>"}`, serialized with
-`sort_keys=True`, as `application/json` for **either** media type, so the
-poster is told what the event says. That is OTLP's `google.rpc.Status` in
-neither encoding. OTLP asks for a refusal's body to be a `Status` in the
-request's encoding — for protobuf, it "MUST be a Protobuf-encoded" `Status` —
-and `Status.code` is an integer (`int32 code = 1`), so
-`{"code":"unreadable_body"}` does not parse as an OTLP/JSON `Status` either.
-The receiver keeps its own code in the body, which a `Status` could carry only
-in `message`, and for a protobuf request only encoded. A `Status` with nothing
-in it would need no encoder: OTLP says the server "MAY omit `Status.code`",
-`Status.message` "SHOULD contain a developer-facing error message", and an
-all-default `Status` encodes as zero bytes, so a zero-byte refusal would meet
-OTLP's MUSTs and carry nothing. Keeping the code over the type is therefore
-**a choice and not a necessity**, and it is this section's: the poster is told
-the receiver's code, in a body that is not OTLP's.
+A refusal answers **OTLP's `google.rpc.Status`, in the request's encoding**
+(B3), so the poster is told what the event says in the message OTLP names
+for it. OTLP asks for a refusal's body to be a `Status` in the request's
+encoding — for protobuf, it "MUST be a Protobuf-encoded" `Status`. The
+receiver's code rides in `Status.message`, which "SHOULD contain a
+developer-facing error message" and is the one field of a `Status` that holds
+a string; `Status.code` is an integer (`int32 code = 1`) and is **omitted**,
+because OTLP says the server "MAY omit `Status.code`" and the receiver has no
+integer of its own to put there. So:
+
+- a request declaring `application/json` is refused with
+  `{"message":"<the receiver's code>"}`, serialized with `sort_keys=True` and
+  no spaces, as `application/json`;
+- a request declaring `application/x-protobuf` is refused with the `Status`
+  holding field 2 alone, as `application/x-protobuf`: the byte `0x12` (field 2,
+  wire type 2), the length as a varint, and the code's ASCII bytes;
+- a request declaring **neither** type — no `Content-Type`, an empty one, or a
+  type this endpoint does not read, the `415` of the media-type check — gets
+  the JSON form, because no protobuf was asked for.
+
+The declared type is matched as an accepted request's is, by HTTP's rule
+(case, parameters), so `Application/X-Protobuf; charset=binary` is refused in
+protobuf. **Writing one field of the receiver's own reply is not reading a
+dialect**, so no protobuf runtime is imported under `spanweave_live/` to do it
+and V1's decision holds (the maintainer's decision for B3, 2026-10-21). Before
+B3 a refusal answered `{"code": "<the receiver's code>"}` as `application/json`
+for either media type, which was a `Status` in neither encoding:
+`json_format` refuses a string `code`, and a JSON body is not a protobuf
+`Status`.
 
 Nothing in `Endpoint.handle` raises for anything a request can carry — not a
 body that is not JSON, not one declared protobuf that does not parse, not one
@@ -2602,13 +2618,28 @@ the `{}` a JSON request gets. At the pure layer, a table of requests holds the
 answer's type to the declared one under HTTP's matching (case, parameters,
 `gzip`, an empty body), a protobuf body declared JSON to `{}` as JSON, and
 every refusal of a protobuf request — `400` on a truncated body and on a body
-that will not inflate, `415` on a coding or a spelling it does not read — to
-`{"code": …}` as `application/json`. V1a's named mutations, all shown caught:
+that will not inflate, `415` on a coding — to the `Status` in protobuf, and a
+spelling of protobuf it does not read to the `Status` in JSON (B3). V1a's named
+mutations, all shown caught:
 **the answer's type taken from anything but the request's declared media
 type** — always `application/json`, as before V1a; the header verbatim, with
 its case and parameters; or a type guessed from the body's first byte — and
-**a non-empty protobuf success body** (`{}` under the protobuf type). A refusal
-answered in the request's type is red too.
+**a non-empty protobuf success body** (`{}` under the protobuf type).
+
+**The refusal's `Status` is held on every refusal this file makes** (B3): each
+of the four checks the declared type does not decide (method, target, content
+coding, transfer coding) and both `400` cases, under `application/json` and
+`application/x-protobuf` and a spelling of each with case and parameters,
+decodes as a `Status` whose `message` is the event's code, whose `code` is
+`0` and which carries no `details`, with the declared type as the answer's.
+The test reads the body with the protobuf runtime the `otlp` extra ships, and
+OTLP/JSON with `json_format.Parse`; the extra does not ship `google.rpc`, so the
+test declares `Status` from its `.proto`'s three fields in a descriptor pool of
+its own. A request declaring neither type is held to the JSON form, a protobuf
+refusal to its bytes as spelled above, and a `message` longer than one varint
+byte to reading back whole. B3's named mutations, all shown caught: **a
+protobuf refusal with the JSON body**; **`code` sent as the receiver's
+string**, which `json_format` refuses; and **the length byte off by one**.
 
 V1's two named mutations, both shown caught: **the protobuf body handed to the
 JSON reader** (`Framer.document` instead of `read_protobuf`), which reads each

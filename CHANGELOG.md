@@ -13,6 +13,51 @@ that series' close; each such citation is dated history, resolvable at
 
 ## Unreleased
 
+### B3: a refusal is OTLP's `Status`, in the request's encoding (2026-10-21)
+
+Derived parent `29b2996`. The zoo series' cold review, run 2, R-9 and R-13: a
+refusal answered `{"code": "<the receiver's code>"}` as `application/json`
+whatever the request declared, which is OTLP's `google.rpc.Status` in neither
+encoding — `Status.code` is an integer, so `json_format` refuses the body, and
+a protobuf request was answered in JSON.
+
+Changed
+
+- **A refusal's body.** A `415` or a `400` is answered with OTLP's `Status`:
+  the receiver's code in `message`, `code` omitted (OTLP: a server "MAY omit
+  `Status.code`"). A request declaring `application/json` gets
+  `{"message":"<code>"}` as `application/json`; one declaring
+  `application/x-protobuf` gets the `Status` with field 2 alone — `0x12`, the
+  varint length, the code's ASCII — as `application/x-protobuf`; one declaring
+  neither gets the JSON form. A poster that matched on the old `{"code": …}`
+  body reads `message` now; the event, its code and its count are unchanged.
+- **No protobuf runtime under `spanweave_live/`.** Writing one field of the
+  receiver's own reply is not reading a dialect (the maintainer's decision for
+  B3), so `endpoint.py` writes the tag and the varint itself, and V1's
+  decision holds.
+- **`SPEC.md`** §7.2: the refusal paragraph states the rule, the refusal
+  departure from OTLP is gone, and the `partial_success` departure stays,
+  now named as declined (the backlog series' decision) rather than a thread;
+  what the section is tested against says how the refusal is held.
+  **`README.md`**'s `serve` example says the refusal body changed.
+
+Added
+
+- **Tests red on the parent** in `tests/test_endpoint.py`: every refusal this
+  file makes — the four checks the declared type does not decide and both
+  `400` cases — under each declared type and a spelling of each, decodes as a
+  `Status` (protobuf through the `otlp` extra's runtime, JSON through
+  `json_format.Parse`, `Status` declared from its `.proto` since the extra
+  ships no `google.rpc`) whose `message` is the event's code, with the
+  declared type; a request declaring neither type is answered in JSON; a
+  protobuf refusal is its bytes as spelled; a `message` past one varint byte
+  reads back whole; and a protobuf refusal over the socket carries its type.
+  The existing refusal assertions move to the new body.
+- **Mutations shown caught**: a protobuf refusal with the JSON body; `code`
+  sent as the receiver's string; the length byte off by one; the declared type
+  matched verbatim, without HTTP's rule; a varint missing its continuation
+  bit; a protobuf refusal typed `application/json`.
+
 ### B2: a named adapter routes as it builds (2026-10-21)
 
 Derived parent `c4ec4a4`. The zoo series' thread V2(a) and its cold review's

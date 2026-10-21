@@ -60,6 +60,9 @@ cat trace.jsonl | spanweave-live tail - --out graphs/
 # (what a stock exporter sends), gzip accepted. Unbounded as written: without
 # --max-traces and --max-unclaimed-traces, any client that can POST chooses how
 # many traces it holds a builder for until a completion releases them (SPEC.md §4.5).
+# A refused request (415, 400) is answered with OTLP's Status in the request's own
+# encoding, the receiver's code as its message; before B3 it was {"code": ...} as
+# JSON whatever the request declared (SPEC.md §7.2).
 spanweave-live serve --port 4318 --out graphs/ --root-grace 5
 ```
 
