@@ -589,3 +589,50 @@ def test_section_4_2_cites_the_agreement_this_file_measures():
         measured.differing,
         measured.one_side_none,
     )
+
+
+# --------------------------------------------------------------------------
+# The zoo gate under a named adapter (B2): live under `adapter=X` is
+# `spanweave.build(…, adapter=X)`, on the JSON path and the raw path alike.
+# --------------------------------------------------------------------------
+
+#: The two adapters the pinned library ships, by name (`tests/test_routing.py`
+#: spells the same pair).
+NAMED = ("openinference", "otel_genai")
+
+
+@pytest.mark.parametrize("adapter", NAMED)
+@pytest.mark.parametrize("capture", captures())
+def test_under_a_named_adapter_each_capture_is_its_named_batch_graph(capture, adapter):
+    """Every capture, under each name, whichever dialect it was written in.
+
+    A name means every record is read as that adapter's, so a capture of the
+    other dialect is in scope: `build` under the name reads it, and routing
+    under the name must put its records where `build` does. Each capture is
+    one trace, so the trace's graph is compared with `spanweave.build` of the
+    whole capture under the name, digest dropped. A pin, and it says so: no
+    capture holds a record two adapters claim, so routing that classified
+    across adapters under a name passed here too (B2's measurement);
+    `tests/test_routing.py` holds what a name changes.
+    """
+    bodies = json_bodies(capture)
+    expected = spanweave.build(b"\n".join(bodies) + b"\n", adapter=adapter)
+    expected_bytes = spanweave.dumps(undigested(expected))
+
+    framer, router = Framer(), Router(adapter=adapter)
+    for body in bodies:
+        for record in framer.document(body).records:
+            router.route(record)
+
+    endpoint, raw_router = Endpoint(), Router(adapter=adapter)
+    for request in raw_requests(capture):
+        for record in endpoint.handle(request).records.records:
+            raw_router.route(record)
+
+    for routed in (router, raw_router):
+        assert routed.counts == {}, capture
+        assert routed._no_trace is None, capture
+        assert routed.trace_ids == (expected.trace_id,), capture
+        builder = routed.builder(expected.trace_id)
+        assert builder is not None
+        assert spanweave.dumps(undigested(builder.graph())) == expected_bytes, capture

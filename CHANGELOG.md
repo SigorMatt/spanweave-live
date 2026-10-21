@@ -13,6 +13,58 @@ that series' close; each such citation is dated history, resolvable at
 
 ## Unreleased
 
+### B2: a named adapter routes as it builds (2026-10-21)
+
+Derived parent `c4ec4a4`. The zoo series' thread V2(a) and its cold review's
+run 1, R-9, both shapes: under `Router(adapter=X)` routing classified across
+every adapter, so a record two adapters claim reached the no-trace builder
+announced by nothing, and a flat record no adapter claims reached it announced
+`unclaimed` and read as X's, where `spanweave.build(…, adapter=X)` put each in
+its trace.
+
+Changed
+
+- **Under a named adapter, routing asks that adapter alone.** A
+  `Router(adapter=X)` takes a record's trace id from X's `parse` of it, with no
+  `classify` across adapters and no envelope, because `build` under the name
+  reads every record as X's. A record X states no single trace id for is
+  `no_trace` (`no_id`); every other record is a claimed one, so under a name
+  every trace counts against `max_traces` and `max_unclaimed_traces` bounds
+  nothing. Unnamed routing is unchanged.
+- **`trace_id_of(record, *, adapter=None)`**: the public function takes the
+  name too, and answers as the router does.
+- **Measured before any code**, over the corpus' conformance renderings and
+  captured files and each zoo capture's JSON and raw bodies, under each named
+  adapter, with a scratch script: every trace's live graph under B2's routing
+  equals the batch build under the same name of that trace's records, and no
+  trace differs. The same inputs gave the same answer under the parent's
+  routing, so the corpus and the zoo do not reach the defect; the hand-made
+  records of `tests/test_routing.py` do.
+- **`SPEC.md`** §1.1, §4.1, §4.2, §4.3, §4.5, §4.7, §4.8 and §8.3: the rule,
+  and §4.3's exception gone with the sentences that named it (§1.1, §4.2,
+  §8.3). **`README.md`**'s `Router` row and **`CLAUDE.md`**'s standing rule 5
+  likewise.
+
+Added
+
+- **Tests red on the parent** in `tests/test_routing.py`, each under both
+  named adapters: R-9's table — a record both adapters claim, and a flat one
+  neither claims, reach `t1`, two nodes live as in the batch build under the
+  name; an export's ambiguous span reaches its trace; an unclaimed span whose
+  envelope the library refuses reaches its trace (the envelope is not asked);
+  a record the name states no id for is `no_id`; an unread export is a
+  claimed trace that `max_unclaimed_traces=0` does not refuse; and
+  `trace_id_of(…, adapter=X)`. The pin
+  `test_under_a_named_adapter_an_ambiguous_record_reaches_no_trace_unannounced`
+  is gone.
+- **Pins, green on the parent and saying so**: gate A once under each named
+  adapter over its dialect's renderings (`tests/test_conformance.py`), and the
+  zoo gate under each named adapter on the JSON and raw paths
+  (`tests/test_zoo_gate.py`).
+- **Mutations shown caught**: `classify` across adapters under a name; the
+  envelope asked under a name for an unclaimed unpacked record; a named
+  trace not counted as claimed; `trace_id_of` ignoring its `adapter`.
+
 ### B1: the traces no adapter can read are bounded too (2026-10-21)
 
 Derived parent `11a1452`. The zoo series' Qodo finding 2: `max_traces` counts

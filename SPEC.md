@@ -122,7 +122,8 @@ somebody.
 
 The receiver never reads a telemetry dialect. A record's trace id, its span id
 and its kind come from `spanweave`'s adapters — `spanweave.adapters.classify`
-and the claiming adapter's `parse` — and never from a key the receiver looks up
+and the claiming adapter's `parse`, or, under a router given an `adapter`, that
+adapter's `parse` alone (§4.2) — and never from a key the receiver looks up
 itself. There is no `record["trace_id"]`, no `resourceSpans` walk, no
 `"gen_ai."` prefix test, anywhere under `spanweave_live/`.
 
@@ -150,9 +151,12 @@ If a record's trace id cannot be had through the adapter surface or the
 envelope, the answer is "no trace id" and a counted event — `no_trace`
 (§4.2), or `refused` where the library refuses the record: more than one
 adapter claims it, or a `SpanweaveError` is raised while classifying or
-parsing it (§4.2, §4.4) — not a key lookup. One exception is open: under a
-router given an `adapter`, a record two adapters claim is announced by
-nothing (§4.3), a thread registered in `TASKS.md` (V2(a)).
+parsing it (§4.2, §4.4) — not a key lookup. Under a router given an
+`adapter`, nothing is ambiguous and nothing unclaimed: the named adapter is
+the claimant of every record, and one it states no single trace id for is
+`no_trace` (`no_id`) (§4.2). Until B2 one record there was announced by
+nothing — one two adapters claim, which routing classified across adapters
+and the no-trace builder, given the name, absorbed — and B2 removed the case.
 
 ### 1.2 No rules, no semantics
 
@@ -590,7 +594,7 @@ class Routed:
     version: int | None          # the version the absorption produced
     events: tuple[Event, ...] = ()
 
-def trace_id_of(record: Record) -> str | None: ...
+def trace_id_of(record: Record, *, adapter: str | None = None) -> str | None: ...
 
 class Router:
     def __init__(
@@ -677,13 +681,31 @@ narrower definition here would be a shape the library never promised.
 
 `adapter` and `temporal` are passed through to every `Builder` the router
 makes, so a caller that names a dialect or turns temporal edges off gets the
-same thing live as `spanweave.build` gives it in batch. The router reads
-neither.
+same thing live as `spanweave.build` gives it in batch. That sentence is the
+rule for routing too (B2): `spanweave.build(…, adapter=X)` reads every record
+as X's, so a router given `adapter=X` asks X alone which trace a record
+belongs to (`trace_id_of(record, adapter=X)`, §4.2), and puts each record in
+the trace the batch build under the same name puts it in. Until B2 routing
+classified across every adapter whatever the name, and two records broke the
+rule — one two adapters claim, and a flat one no adapter claims — each reaching
+the no-trace builder where `build` under the name put it in its trace (the
+zoo series' V2(a) and its cold review's run 1, R-9). The router reads
+`temporal` never, and `adapter` only to pass the name to the library.
 
 ### 4.2 The trace id comes from the adapter surface, never from a key
 
-`trace_id_of(record)` asks `spanweave.adapters.classify(record)` which adapters
-claim the record, takes the single claimant, calls that adapter's
+**Under a named adapter**, `trace_id_of(record, adapter=X)` — which is what a
+`Router(adapter=X)` asks — calls X's `parse([record])` and reads `trace_id` off
+the spans it yields, and that is the whole of it: no `classify` across
+adapters, because `spanweave.build(…, adapter=X)` asks none, and no envelope,
+because X's `parse` is the claimant's answer and an unpacked record's
+`trace_id` is already the transport's, renamed by the reader. One answer is no
+trace id there, `no_id`, below; a `SpanweaveError` from X's `parse` is the
+library's refusal, below. The rest of this section is the router given no
+`adapter`.
+
+Without a name, `trace_id_of(record)` asks `spanweave.adapters.classify(record)`
+which adapters claim the record, takes the single claimant, calls that adapter's
 `parse([record])`, and reads `trace_id` off the spans it yields. Where **no**
 adapter claims a record the reader unpacked from an OTLP export, it asks
 `spanweave.envelope(record)` instead and takes the envelope's `trace_id`
@@ -712,7 +734,9 @@ the name of the answer:
   away — and never reads past the refusal to a key it could use.
 - **`no_id`: the claimant reported no single trace id** — no `trace_id` on the
   spans it parsed, or more than one distinct id across them. Choosing among
-  several would be a policy, and inventing one is a halt point.
+  several would be a policy, and inventing one is a halt point. Under a named
+  adapter the name is the claimant, and this is the only one of the three
+  that arises: nothing is unclaimed there, and no envelope is asked.
 
 §1.1 fixes the shape of all three: "If a record's trace id cannot be had
 through the adapter surface or the envelope, the answer is 'no trace id' and a
@@ -727,8 +751,8 @@ stay `refused` and nothing else. **More than one adapter claimed the record**:
 the library refuses an ambiguous record rather than guessing (`spanweave`
 `SPEC.md` §6.1), so there is nobody to ask for a trace id. The record goes to
 the no-trace builder, which raises the library's own refusal, and that becomes
-a `refused` event (§4.4) — except under a router given an `adapter`, the one
-exception §4.3 states, where it is absorbed and announced by nothing. And a
+a `refused` event (§4.4). Under a router given an `adapter` there is no such
+record: nothing is classified, and the name claims it. And a
 `SpanweaveError` while classifying or parsing, below.
 
 **The claimant's id and the envelope's, measured equal.** Where an adapter
@@ -799,15 +823,14 @@ event that says why (§4.2). It is bounded by **neither** `max_traces` nor
 what a stream of records with no trace id costs is that builder's growth, and
 no bound here pretends otherwise.
 
-One exception, older than V2 and found by it, is stated here rather than
-fixed in passing: `trace_id_of` classifies across every adapter even when the
-router was given an `adapter` (§4.1), so under a named adapter a record two
-adapters claim is "ambiguous" to routing, reaches the no-trace builder — which,
-given the name, absorbs it without refusing — and is announced by nothing,
-where `spanweave.build` under the same name reads it as that adapter's. Making
-routing honour the name is a change to what §4.1's `adapter` means for routing,
-and it is registered in `TASKS.md` for the next receiver series (the zoo
-series' close, V4), not decided here.
+Under a router given an `adapter` the no-trace builder holds only `no_id`
+records (§4.2), and it reads them as the named adapter's, as `spanweave.build`
+under the name does: there is no `unclaimed_record` there, because nothing is
+unclaimed. Until B2 a record two adapters claim reached it under a name and
+was announced by nothing, and a flat record no adapter claims reached it
+announced `unclaimed` and was read as the name's, where the batch build under
+the name put each in its trace (§4.1); B2 made routing ask the name, and both
+reach their trace.
 
 One consequence inherited rather than chosen: a no-trace builder holding
 **only** unclaimed records refuses `graph()`, because `spanweave` refuses an
@@ -888,6 +911,12 @@ router holds a builder for that hold **no** claimed record, and nothing else:
   id by neither bound (§4.3).
 - Completion releases a trace from whichever count holds it.
 
+Under a router given an `adapter`, every record with a trace id is claimed —
+the name is its claimant (§4.2) — so every trace counts against `max_traces`
+from its first record, and `max_unclaimed_traces` bounds nothing there: a
+health check is the named adapter's trace, as `spanweave.build` under the name
+reads it.
+
 `max_unclaimed_traces=None` is no bound, as `max_traces=None` is no cap, and
 both are the defaults. The cost of the defaults, said rather than hidden: an
 unbounded `serve` — one given neither flag (§8.1) — holds a builder for every
@@ -958,6 +987,15 @@ batch graphs byte for byte with nothing in the no-trace builder — which is
 only true if the root is routed by its envelope (§4.2). Its trace id is its
 own, so nothing is relabelled.
 
+**Once under each named adapter** (B2). The router is given `adapter=X` and
+the batch side is `spanweave.build(rendering, adapter=X)`, over the pairs of
+renderings written in X's dialect alone, at the first seed: §4.1's rule for a
+named adapter, held over the corpus. It is a pin, and says so: each of those
+renderings is claimed by its own adapter alone, so a router that classified
+across adapters under a name passes it as well. What a name changes —
+a record two adapters claim, or one no adapter claims — is held by
+`tests/test_routing.py`.
+
 ### 4.8 The zoo gate — a stranger's captures, live and batch
 
 Gate A runs over fixtures the library wrote for itself. The **zoo gate**
@@ -1011,6 +1049,14 @@ the graph written is the JSON replay's **byte for byte**, on every row of the
 table. The comparison is with what the JSON replay wrote, so the protobuf path
 is held to the JSON path and nothing else; V2 moved Z4's two rows on both
 sides together.
+
+**And every capture again under each named adapter** (B2), on the JSON path
+and the raw path: a router given `adapter=X`, with no completion, holds one
+trace whose graph is `spanweave.build` of the joined bodies under the same
+name, byte for byte, with nothing in the no-trace builder and no event —
+whichever dialect the capture was written in, because a name reads every
+record as its own (§4.1). A pin, as gate A's named pass is: no capture holds
+a record two adapters claim, so this held before B2 too.
 
 **Two rows say `(L2)`, because V2 moved them.** Z4's root span is claimed by
 no adapter (the zoo's `PROBES.md` S1). Until V2, §4.2 gave it no trace id and
@@ -2794,9 +2840,7 @@ easy to read as more:
   adapter claims it, or a `SpanweaveError` while classifying or parsing it —
   reaches no trace too and is counted under `refused` (§4.2), and `refused`
   also counts the refusals inside identified traces (§4.4). So the records
-  that reached no trace are not one number on this line. The CLI's router is
-  given no `adapter` (§8.1), so §4.3's exception, a record announced by
-  nothing, does not arise here.
+  that reached no trace are not one number on this line.
 - **`no_graph`** is one per completion that found no graph to write (§5.4). A
   trace re-opened by a late arrival is completed once per generation (§5.5),
   and each generation with no graph is counted, so how many of a run's

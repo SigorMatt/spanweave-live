@@ -379,3 +379,82 @@ def test_an_export_with_an_unclaimed_span_interleaves_with_every_rendering(
             assert spanweave.dumps(undigested(builder.graph())) == expected, where
             checked += 1
     assert checked == 2 * RENDERINGS_EXPECTED
+
+
+# --------------------------------------------------------------------------
+# Gate A under a named adapter (B2): a router given `adapter=X` produces each
+# trace's batch graph under the same name.
+# --------------------------------------------------------------------------
+
+#: The renderings of each shipped dialect, and their cross-scenario pairs, at
+#: the pinned sha. A rendering is X's where its file is named for X alone
+#: (`openinference.jsonl`, `otel_genai.json`, ...); the one mixed rendering
+#: is neither's.
+NAMED_RENDERINGS_EXPECTED = {"openinference": 29, "otel_genai": 25}
+NAMED_PAIRS_EXPECTED = {"openinference": 406, "otel_genai": 300}
+
+
+def named_pairs(adapter: str) -> list[tuple[Path, Path]]:
+    return [
+        (first, second)
+        for first, second in pairs()
+        if first.stem == adapter and second.stem == adapter
+    ]
+
+
+def test_each_dialect_s_renderings_are_the_number_the_named_sweep_claims():
+    for adapter, expected in NAMED_RENDERINGS_EXPECTED.items():
+        assert len([p for p in renderings() if p.stem == adapter]) == expected
+        assert len(named_pairs(adapter)) == NAMED_PAIRS_EXPECTED[adapter]
+
+
+@pytest.mark.parametrize("adapter", sorted(NAMED_PAIRS_EXPECTED))
+def test_under_a_named_adapter_interleaved_traces_produce_the_named_batch_graph(
+    adapter: str,
+) -> None:
+    """Gate A, once, under each name, over that dialect's renderings.
+
+    The router is given `adapter=X` and the batch side is
+    `spanweave.build(rendering, adapter=X)`: `SPEC.md` §4.1's "a caller that
+    names a dialect … gets the same thing live as `spanweave.build` gives it
+    in batch", held over the corpus. One seed, the first: this pass is about
+    the name, and the ten seeds above are about the interleaving.
+
+    A pin, and it says so: these renderings are each claimed by their own
+    adapter alone, so a router that classified across adapters under a name
+    routes them identically and passes here too. What a name changes is held
+    by `tests/test_routing.py`'s R-9 table.
+    """
+    seed = SEEDS[0]
+    checked = 0
+    for first, second in named_pairs(adapter):
+        sides = []
+        for path, relabel in ((first, False), (second, True)):
+            data = path.read_bytes()
+            data = relabelled(data) if relabel else data
+            graph = spanweave.dumps(undigested(spanweave.build(data, adapter=adapter)))
+            sides.append((arrivals(path, data), graph, "zz1" if relabel else "t1"))
+        rng = random.Random(seed)
+        items = interleave(sides[0][0], sides[1][0], rng)
+        framer, router = Framer(), Router(adapter=adapter)
+        for kind, body in items:
+            pieces = [body] if kind == "document" else chunked(body, rng)
+            for piece in pieces:
+                read = (
+                    framer.document(piece) if kind == "document" else framer.push(piece)
+                )
+                for record in read.records:
+                    router.route(record)
+        for record in framer.flush().records:
+            router.route(record)
+
+        where = f"{rendering_id(first)} + {rendering_id(second)} under {adapter}"
+        assert router.counts == {}, f"{where}: unexpected events {router.counts}"
+        assert router._no_trace is None, f"{where}: a record reached no trace"
+        assert sorted(router.trace_ids) == ["t1", "zz1"], where
+        for _, expected, trace_id in sides:
+            builder = router.builder(trace_id)
+            assert builder is not None, where
+            assert spanweave.dumps(undigested(builder.graph())) == expected, where
+            checked += 1
+    assert checked == 2 * NAMED_PAIRS_EXPECTED[adapter]

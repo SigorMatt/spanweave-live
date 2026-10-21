@@ -302,8 +302,7 @@ def test_the_no_trace_builder_says_what_a_batch_build_of_the_same_records_says()
 
 # --------------------------------------------------------------------------
 # An unpacked record no adapter claims is routed by its envelope, and every
-# record that reaches the no-trace builder is announced (V2, the zoo's L2) --
-# but one, under a named adapter (`SPEC.md` §4.3), pinned below as it is.
+# record that reaches the no-trace builder is announced (V2, the zoo's L2).
 # --------------------------------------------------------------------------
 
 #: The code and the three details of V2, spelled here rather than imported so
@@ -595,23 +594,6 @@ def test_an_unpacked_record_two_adapters_claim_is_refused_and_its_envelope_not_a
     assert refusal.value.code == "adapter_ambiguous"
 
 
-def test_under_a_named_adapter_an_ambiguous_record_reaches_no_trace_unannounced():
-    """A pin of an older gap, stated in `SPEC.md` §4.3 and not fixed by V2.
-
-    Routing classifies across every adapter whatever `adapter` the router was
-    given, so the record is ambiguous to routing; the no-trace builder, given
-    the name, absorbs it without refusing; and no event says so. Pinned so
-    that the sentence in §4.3 is a measurement, and so that whichever batch
-    decides what a named adapter means for routing moves this test with it.
-    """
-    router = Router(adapter="openinference")
-    routed = router.route(ambiguous("sA"))
-    assert routed.trace_id is None and routed.builder is router.no_trace
-    assert routed.events == ()
-    assert router.no_trace.version == 1
-    assert router.counts == {}
-
-
 def test_a_no_trace_record_the_builder_refuses_is_announced_and_then_refused():
     """Announced where it was sent; refused if the builder would not take it."""
     nameless = openinference("s0")
@@ -637,6 +619,168 @@ def test_a_no_trace_builder_holding_only_unclaimed_records_refuses_its_graph():
     with pytest.raises(spanweave.AdapterSelectionError) as refusal:
         router.no_trace.graph()
     assert refusal.value.code == "adapter_unconfident"
+
+
+# --------------------------------------------------------------------------
+# A named adapter routes as it builds (B2; the zoo's V2(a) and run 1's R-9).
+# Under `Router(adapter=X)` the trace id is X's `parse` of the record and
+# nothing else: no `classify` across adapters, no envelope, because
+# `spanweave.build(..., adapter=X)` reads every record as X's (`SPEC.md` §4.2).
+# --------------------------------------------------------------------------
+
+#: The two adapters the pinned library ships, by name. Spelled, not read from
+#: the registry, so a third one is a decision about this table and not a
+#: silent widening of it.
+NAMED = ("openinference", "otel_genai")
+
+
+def named_batch(adapter: str, *records: dict) -> bytes:
+    """`spanweave.build` of these records as a line-delimited input, under a name."""
+    body = b"".join(json.dumps(record).encode("utf-8") + b"\n" for record in records)
+    return spanweave.dumps(undigested(spanweave.build(body, adapter=adapter)))
+
+
+@pytest.mark.parametrize("adapter", NAMED)
+@pytest.mark.parametrize(
+    "second",
+    [ambiguous("sA"), unclaimable("s9")],
+    ids=["claimed by both adapters", "claimed by neither"],
+)
+def test_under_a_named_adapter_every_record_reaches_the_trace_its_parse_names(
+    adapter, second
+):
+    """Run 1's R-9 table, both shapes, under each name: live is the batch.
+
+    One claimed OpenInference record and one more of `t1`: a record both
+    shipped adapters claim, or a flat one neither does. `spanweave.build`
+    under the name reads both as that adapter's and builds one graph of two
+    nodes. Until B2 routing classified across every adapter, so the second
+    record went to the no-trace builder -- unannounced when both claimed it,
+    `no_trace`/`unclaimed` when neither did -- and `t1` held one node.
+    """
+    first = openinference("s0")
+    router = Router(adapter=adapter)
+    routed = [router.route(record) for record in (first, second)]
+
+    assert [r.trace_id for r in routed] == ["t1", "t1"]
+    assert router.trace_ids == ("t1",)
+    assert router._no_trace is None, "nothing reached the no-trace builder"
+    assert router.counts == {}
+    traced = router.builder("t1")
+    assert traced is not None and traced.version == 2
+    assert len(traced.graph().nodes()) == 2
+    assert live(traced) == named_batch(adapter, first, second)
+
+
+@pytest.mark.parametrize("adapter", NAMED)
+def test_under_a_named_adapter_trace_id_of_asks_that_adapter_alone(adapter):
+    """The public function takes the name too, and answers as the router does."""
+    assert trace_id_of(ambiguous("sA"), adapter=adapter) == "t1"
+    assert trace_id_of(unclaimable("s9"), adapter=adapter) == "t1"
+    assert trace_id_of(openinference("s0", trace="other"), adapter=adapter) == "other"
+    # Unnamed, the library is asked who claims each, as before (§4.2).
+    assert trace_id_of(ambiguous("sA")) is None
+    assert trace_id_of(unclaimable("s9")) is None
+
+
+@pytest.mark.parametrize("adapter", NAMED)
+def test_under_a_named_adapter_an_export_s_ambiguous_span_reaches_its_trace(adapter):
+    """The OTLP shape of the same thing: unnamed it is `refused`, named it is X's.
+
+    The span carries both dialects' attributes, so unnamed both adapters claim
+    it and the library refuses it (above). Under a name, `build` reads it as
+    that adapter's, and so does routing.
+    """
+    span = otlp_span("aaaaaaaaaaaaaaaa")
+    span["attributes"] += [
+        {"key": "gen_ai.operation.name", "value": {"stringValue": "chat"}},
+        {"key": "gen_ai.system", "value": {"stringValue": "demo"}},
+    ]
+    export = otlp_export(span)
+    router = Router(adapter=adapter)
+    (routed,) = [router.route(r) for r in Framer().document(export).records]
+
+    assert routed.trace_id == EXPORT_TRACE and routed.events == ()
+    assert router._no_trace is None and router.counts == {}
+    traced = router.builder(EXPORT_TRACE)
+    assert traced is not None
+    assert live(traced) == spanweave.dumps(
+        undigested(spanweave.build(export, adapter=adapter))
+    )
+
+
+@pytest.mark.parametrize("adapter", NAMED)
+def test_under_a_named_adapter_the_envelope_is_not_asked(adapter):
+    """An unclaimed span whose envelope the library refuses is still X's.
+
+    The span states the export's trace and an all-zero span id: unnamed, no
+    adapter claims it and its envelope is refused, so it is `no_trace`
+    (`no_envelope`), as `test_a_refused_envelope_is_never_read_past_to_the_trace_id_key`
+    pins. Under a name nothing is asked but the adapter's `parse`, which
+    states the trace -- and `build` under the name puts the span in that
+    trace's graph beside its sibling. A router that still asked the envelope
+    of an unclaimed unpacked record would send it to the no-trace builder.
+    """
+    export = otlp_export(otlp_span("", claimed=False), otlp_span("bbbbbbbbbbbbbbbb"))
+    records = Framer().document(export).records
+    with pytest.raises(spanweave.EnvelopeError):
+        spanweave.envelope(records[0])
+    router = Router(adapter=adapter)
+    routed = [router.route(record) for record in records]
+
+    assert [r.trace_id for r in routed] == [EXPORT_TRACE, EXPORT_TRACE]
+    assert router._no_trace is None and router.counts == {}
+    traced = router.builder(EXPORT_TRACE)
+    assert traced is not None and traced.version == 2
+    assert live(traced) == spanweave.dumps(
+        undigested(spanweave.build(export, adapter=adapter))
+    )
+
+
+@pytest.mark.parametrize("adapter", NAMED)
+def test_under_a_named_adapter_a_record_it_states_no_trace_for_is_no_id(adapter):
+    """`no_id` is the one `no_trace` answer a name leaves (`SPEC.md` §4.2).
+
+    A record with no trace id, and one that is not an object at all: the
+    adapter's `parse` reports no id for either, so each reaches the no-trace
+    builder announced `no_id` -- never `unclaimed`, because under a name
+    nothing is unclaimed, and never `no_envelope`, because no envelope is
+    asked. The no-trace builder is the batch build of the two under the name.
+    """
+    nameless = unclaimable("s9")
+    del nameless["trace_id"]
+    router = Router(adapter=adapter)
+    routed = [router.route(record) for record in (nameless, "not a record")]
+
+    assert [r.builder is router.no_trace for r in routed] == [True, True]
+    assert [[(e.code, e.detail) for e in r.events] for r in routed] == [
+        [(NO_TRACE, NO_ID)],
+        [(NO_TRACE, NO_ID)],
+    ]
+    assert router.counts == {NO_TRACE: 2}
+    assert router.trace_ids == ()
+
+
+@pytest.mark.parametrize("adapter", NAMED)
+def test_under_a_named_adapter_an_unread_export_is_a_claimed_trace(adapter):
+    """Under a name every record is claimed, so `max_unclaimed_traces` is idle.
+
+    The health check no adapter claims is, under a name, that adapter's (as
+    `build` under the name reads it), so it counts against `max_traces` and
+    the unclaimed bound -- here zero -- never refuses it (`SPEC.md` §4.5).
+    """
+    router = Router(adapter=adapter, max_traces=1, max_unclaimed_traces=0)
+    for record in Framer().document(unread_export()).records:
+        assert router.route(record).events == ()
+    assert router.trace_ids == (EXPORT_TRACE,)
+    assert router.counts == {}
+    traced = router.builder(EXPORT_TRACE)
+    assert traced is not None
+    assert live(traced) == spanweave.dumps(
+        undigested(spanweave.build(unread_export(), adapter=adapter))
+    )
+    (refused,) = router.route(openinference("s0", trace="another")).events
+    assert refused.code == REFUSED_AT_CAP
 
 
 # --------------------------------------------------------------------------

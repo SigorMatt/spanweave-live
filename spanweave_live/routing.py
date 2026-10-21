@@ -7,7 +7,8 @@ record, score it, hold it, or read what the graph came to say: it partitions,
 and the graphs are the caller's (`SPEC.md` §1.2, §1.3).
 
 **It never reads a dialect.** A record's trace id comes from
-`spanweave.adapters.classify` and the claiming adapter's `parse` -- or, for a
+`spanweave.adapters.classify` and the claiming adapter's `parse` -- or, under
+a router given an `adapter`, that adapter's `parse` alone -- or, for a
 record the reader unpacked from an OTLP export that no adapter claims, from
 `spanweave.envelope`, the transport's statement read through the library's
 public function -- and from nowhere else: no key table, no
@@ -89,9 +90,9 @@ REFUSED_AT_CAP: Final = "refused_at_cap"
 #: decision, and §1.5 says a decision is never silent. `detail` is exactly one
 #: of the three. A record the library refuses -- more than one claimant, or a
 #: `SpanweaveError` while classifying or parsing -- reaches that builder too,
-#: and is `refused` instead (§4.4). One exception, older than this code and
-#: stated in §4.3: under a router given an `adapter`, a record two adapters
-#: claim reaches that builder with no event.
+#: and is `refused` instead (§4.4). Under a router given an `adapter`, that
+#: adapter is the claimant of every record (B2), so `no_id` is the one detail
+#: that arises there.
 NO_TRACE: Final = "no_trace"
 
 #: `no_trace`'s detail: no adapter claimed a record the reader did not unpack
@@ -234,14 +235,13 @@ class _Identity:
     detail that says which "no" it was -- or `None` itself where the answer is
     the library's **refusal** (an ambiguous record, or a `SpanweaveError` while
     classifying or parsing), which the no-trace builder's `feed` raises again
-    and `Router.route` reports as `refused` (`SPEC.md` §4.4) -- except an
-    ambiguous record under a router given an `adapter`, which that builder
-    absorbs and nothing reports (`SPEC.md` §4.3). `spanweave_code` is the
-    library's code where it refused the envelope.
+    and `Router.route` reports as `refused` (`SPEC.md` §4.4).
+    `spanweave_code` is the library's code where it refused the envelope.
 
     `claimed` is whether one adapter claimed the record, which is what the cap
     counts a trace from (`SPEC.md` §4.5): a trace id read off the envelope is
-    a trace no adapter has yet claimed a record of.
+    a trace no adapter has yet claimed a record of. Under a named adapter
+    every record with a trace id is claimed: the name is its claimant (B2).
     """
 
     trace_id: str | None
@@ -250,17 +250,23 @@ class _Identity:
     claimed: bool = False
 
 
-def _identify(record: Record) -> _Identity:
+def _identify(record: Record, adapter: str | None = None) -> _Identity:
     """`trace_id_of`, with the reason kept for the event (`SPEC.md` §4.2).
 
-    Two sources and no third. A record one adapter claims is that claimant's
-    `parse`. A record **no** adapter claims is asked of its envelope only if
-    the reader unpacked it from an export -- the mark is the record's type,
-    `spanweave.read.Unpacked`, which only the reader sets (`spanweave`
+    Under a name, one source: that adapter's `parse`, as `spanweave.build(…,
+    adapter=…)` reads every record as the named adapter's -- no `classify`
+    across adapters and no envelope (B2).
+
+    Unnamed, two sources and no third. A record one adapter claims is that
+    claimant's `parse`. A record **no** adapter claims is asked of its envelope
+    only if the reader unpacked it from an export -- the mark is the record's
+    type, `spanweave.read.Unpacked`, which only the reader sets (`spanweave`
     `SPEC.md` §7), and never a key -- and `spanweave.envelope` either states
     the transport's trace id or refuses. A refusal is the answer: nothing is
     read past it.
     """
+    if adapter is not None:
+        return _parsed(adapter, record)
     try:
         claimants = classify(record)
     except SpanweaveError:
@@ -274,9 +280,20 @@ def _identify(record: Record) -> _Identity:
             return _Identity(None, NO_ENVELOPE, refusal.code)
     if len(claimants) > 1:
         return _Identity(None)
+    return _parsed(claimants[0], record)
+
+
+def _parsed(adapter: str, record: Record) -> _Identity:
+    """The trace id `adapter`'s `parse` reports for this one record.
+
+    The claimant's, unnamed; the named adapter's, under a name -- which is
+    the claimant of every record there, so a trace it names is a claimed one
+    (`SPEC.md` §4.5). No single id is `no_id`; a `SpanweaveError` is the
+    library's refusal, raised again by the no-trace builder's `feed`.
+    """
     try:
         reported = {
-            span.trace_id for span in get(claimants[0]).parse([record]) if span.trace_id
+            span.trace_id for span in get(adapter).parse([record]) if span.trace_id
         }
     except SpanweaveError:
         return _Identity(None)
@@ -285,8 +302,12 @@ def _identify(record: Record) -> _Identity:
     return _Identity(next(iter(reported)), claimed=True)
 
 
-def trace_id_of(record: Record) -> str | None:
+def trace_id_of(record: Record, *, adapter: str | None = None) -> str | None:
     """The trace a record belongs to, through the library alone (`SPEC.md` §4.2).
+
+    Given `adapter`, that adapter's `parse` of the record is the whole answer,
+    because `spanweave.build(…, adapter=…)` reads every record as its; a
+    `Router` given one asks this way (B2). Without one:
 
     `classify` says which adapters claim this one record; the single claimant's
     `parse` translates it; the trace id is what the resulting spans report.
@@ -306,7 +327,7 @@ def trace_id_of(record: Record) -> str | None:
     goes to the no-trace builder, whose `feed` reaches the same code and raises
     the same refusal, and `Router.route` reports it with the library's own code.
     """
-    return _identify(record).trace_id
+    return _identify(record, adapter).trace_id
 
 
 @dataclass(slots=True, kw_only=True)
@@ -315,7 +336,9 @@ class Router:
 
     `adapter` and `temporal` are handed to every `Builder` it makes, so a
     caller that names a dialect or turns temporal edges off gets live what
-    `spanweave.build` gives it in batch. The router reads neither.
+    `spanweave.build` gives it in batch. A named `adapter` is also the one
+    routing asks for a record's trace id (`trace_id_of`, B2), since `build`
+    reads every record as its; `temporal` the router never reads.
 
     `completion` is the caller's policy and the caller's clock (`SPEC.md` §5).
     `tick` evaluates it; `route` keeps the two numbers it needs. A router
@@ -438,7 +461,7 @@ class Router:
         """
         self._index += 1
         index = self._index
-        identity = _identify(record)
+        identity = _identify(record, self.adapter)
         trace_id = identity.trace_id
         # One reading, and only where there is a policy to measure against: a
         # router with no completion reads no clock at all, which is why R2's

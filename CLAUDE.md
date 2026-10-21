@@ -78,10 +78,10 @@ it passes tests.
 
 5. **Nothing is dropped silently.** A refusal, a cap, a late arrival, a
    consumer error — and from V2, a record that reaches no trace — is an
-   **event with a code**, counted and reported. (`SPEC.md` §1.5, §4.2.) One
-   exception is open: under a router given `adapter=`, a record two adapters
-   claim reaches the no-trace builder and is announced by nothing (`SPEC.md`
-   §4.3; `TASKS.md`, V2(a)).
+   **event with a code**, counted and reported. (`SPEC.md` §1.5, §4.2.) The
+   one exception, a record two adapters claim under a router given
+   `adapter=`, closed with B2: a named adapter routes as it builds (`SPEC.md`
+   §4.1).
 
 6. **The two pins are one pin.** `spanweave` is pinned to one commit in
    `pyproject.toml`, the `corpus/` submodule is at the same commit, and
