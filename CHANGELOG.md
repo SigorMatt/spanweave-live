@@ -8,12 +8,98 @@ of change is a **batch**: an entry names its batch or, after a series' close,
 what it fixes, and `TASKS.md` is the registry that lists the batches one line
 apiece. A batch entry may cite its series' `WORKPLAN.md`, which was deleted at
 that series' close; each such citation is dated history, resolvable at
+`git show fff8a9e:WORKPLAN.md` for the backlog series' entries (B1–B10), at
 `git show 3077bec:WORKPLAN.md` for the zoo series' entries (V0–V4) and at
 `git show b500342:WORKPLAN.md` for the receiver series' (R0–R9).
 
 ## Unreleased
 
-### B9: the record made true (2026-10-22)
+## 0.0.3 — the backlog series (2026-10-22)
+
+The version moved from `0.0.2` at the series' close (B10): nothing is frozen,
+a `Router` field and a CLI flag were added (B1), `released` gained its version
+(B4) and a refusal its `Status` body (B3). Under this heading are the backlog
+series' batches B1–B10, newest first.
+
+### B10 — the backlog series closes, and its plan is deleted (2026-10-22)
+
+Derived parent `fff8a9e`. The backlog series' last batch (B10). No behaviour
+changed but the version `--version` prints: nothing under `spanweave_live/`
+moved but `__version__`. This is the close. The series' plan is deleted, and
+what outlives it is folded into tracked files.
+
+Added
+
+- **`TASKS.md` registers the backlog series**, above the zoo series: the
+  plan's open-items table with each item's outcome (taken, with its batch's
+  commit; declined; deferred), B1–B10 with the commit that closed each, the
+  plan's decisions log (§3), moved as it stood, and resume note (§4) folded
+  in, the order of what remains before the merge (§2), and the origins (§5).
+  Each item the series closed, declined or deferred is marked so in place, in
+  the zoo series' and the receiver series' tables, dated 2026-10-22.
+- **Two threads, registered open**, each found by a batch and not this
+  series': the `SEAMS` literal cited by its line number, `tests/gates.py:237`,
+  with nothing re-deriving the line (B7); and §8.7's test failing in a
+  `git archive` export, which has no `corpus/` (B8). Each carries its
+  measurement, and the next plan's open-items table decides it.
+- **`tests/test_record.py` holds the backlog series as it holds the zoo's**:
+  its registry's order and commits, its changelog entries under `0.0.3`, its
+  post-close entries (none yet), and its decisions log against the plan's §3
+  at `fff8a9e`, which must be its last plan state as history gives it. The
+  tests that held the zoo series alone are one case a series now, and the
+  version must be the newest series'. `CLAUDE.md` and this file's preamble
+  must cite the backlog's plan state, by the test B8 wrote, which reads the
+  closed series from history.
+
+Changed
+
+- **The version is `0.0.3`** (`pyproject.toml`, `spanweave_live.__version__`,
+  `uv.lock`). Nothing is frozen. This file groups B1–B10 under `0.0.3`, and
+  their headings take the `### <id> — ` form the record test reads, where
+  they had `### <id>: `.
+- **`CLAUDE.md`** says no series is open and where the backlog series' plan
+  is. Standing rule 5 carries the `no_graph` clause the plan's §0.6 added (a
+  trace no adapter can read is an event with a code), and cites §5.4.
+  `SPEC.md` §0 names the backlog series beside the receiver's and the zoo's.
+  `TASKS.md`'s preamble names three series and where each plan resolves.
+
+Removed
+
+- **`WORKPLAN.md`**, as its §0.6 said from the series' first commit. It is
+  at `git show fff8a9e:WORKPLAN.md`. No `plan:` commit follows this one.
+
+Not here: `reviews/` is unchanged. No review of this series had been archived
+when this commit was made. The cold review runs after it, in two halves
+(`TASKS.md`, *What remains before the merge*).
+
+Tests red on the parent (`fff8a9e`, worktree under the scratchpad): 6 of the
+new file's 20 items, every backlog case of the five tests now run once a
+series and the version test; the 14 green there are the zoo's cases and the
+tests this commit did not change. Mutations shown caught, each red on the
+test named, and on the post-close test too for the last:
+- `spanweave_live.__version__` left at `0.0.2`: red (the version);
+- B4 registered as its `plan:` commit `7319ac2`: red (the commits);
+- a moved decisions row edited ("every record" to "most records"): red (the
+  decisions log);
+- run 2 written B5 → B4 → …: red (the order);
+- `CLAUDE.md` citing the backlog's plan at `40f0915`, and the preamble
+  likewise, each: red (the plan states);
+- B10's heading written `### B10: `: red (the entries).
+The test caught one defect of this commit before it was made: the decisions
+log said six rows where the plan has seven. Two mutations of the new test
+code, each green against a defect the real test catches: the decisions-log
+test returning before its row comparison when no sentence moved (the edited
+row is then green), and the series cases reduced to the zoo's (B4 as its plan
+commit is then green). Two more are red on the true tree: the registry's row
+prefix widened to every row, and the post-close test's slice for a series
+with no entries after its close dropped.
+
+`make check` green (1037 passed, ruff, format, mypy --strict clean, the gates'
+run 91), `make conformance` green (126), `make showcase` green (12) with the
+table unchanged, `make install-check` green, the console script saying
+`0.0.3`.
+
+### B9 — the record made true (2026-10-22)
 
 Parent `40f0915`. The zoo series' cold review, run 1, R-14, and run 2, R-10;
 the receiver series' run-2 review, T4, T9 and T12. **No library behaviour
@@ -56,7 +142,7 @@ Added
   a statement of existing behaviour is; shown red with the cursor rolled back
   on a refusal (a retry).
 
-### B8: the record test reads what it holds (2026-10-22)
+### B8 — the record test reads what it holds (2026-10-22)
 
 Parent `3937f12`. The zoo series' cold review, run 2, R-16 and R-18; its
 bounded fix review, R-7. **No library behaviour changed**, and no document's
@@ -101,7 +187,7 @@ Added
   and the cited series' names not compared with history's (the receiver's
   citation dropped from `CLAUDE.md` is then green).
 
-### B7: the trace-content gate (2026-10-22)
+### B7 — the trace-content gate (2026-10-22)
 
 Parent `3159579`. The receiver series' run-1 review, R0-4, its open half:
 standing rule 9 (no `eval`, `exec`, `pickle`, `yaml.load` on trace content)
@@ -134,7 +220,7 @@ Added
   `ALL_RULES`; the rule skipping nested modules; a seam honoured; the rule
   matching source text instead of the AST.
 
-### B6: the framer's remainder, tested where it crosses (2026-10-22)
+### B6 — the framer's remainder, tested where it crosses (2026-10-22)
 
 Parent `f0987b5`. The receiver series' run-1 review, R1-6 and R2-2. **No
 behaviour changed**: both tests below are pins, green on the parent, and say
@@ -161,7 +247,7 @@ Added
   that drops what follows a push's last newline is red here and green on
   every line-atomic pass of gate A.
 
-### B5: completion's edges, stated and pinned (2026-10-22)
+### B5 — completion's edges, stated and pinned (2026-10-22)
 
 Parent `7319ac2`. The receiver series' run-2 review, T1; the zoo series' cold
 review, run 2, R-11, R-14 and R-15. **No behaviour changed**: every test
@@ -196,7 +282,7 @@ Added
   a trace with no book, and a tick-opened book whose first record is at
   `0.0` (the T1 pin, alone).
 
-### B4: `released` carries its version (2026-10-22)
+### B4 — `released` carries its version (2026-10-22)
 
 Derived parent `72d60e8`. The receiver series' run-2 review, T5: a
 `released` event stated the version it released in `detail` alone, though
@@ -221,7 +307,7 @@ Added
   `version=book.generation` (both); `version=len(self._builders)` (both);
   `version=index`, the arrival count (the late-generation test).
 
-### B3: a refusal is OTLP's `Status`, in the request's encoding (2026-10-21)
+### B3 — a refusal is OTLP's `Status`, in the request's encoding (2026-10-21)
 
 Derived parent `29b2996`. The zoo series' cold review, run 2, R-9 and R-13: a
 refusal answered `{"code": "<the receiver's code>"}` as `application/json`
@@ -266,7 +352,7 @@ Added
   matched verbatim, without HTTP's rule; a varint missing its continuation
   bit; a protobuf refusal typed `application/json`.
 
-### B2: a named adapter routes as it builds (2026-10-21)
+### B2 — a named adapter routes as it builds (2026-10-21)
 
 Derived parent `c4ec4a4`. The zoo series' thread V2(a) and its cold review's
 run 1, R-9, both shapes: under `Router(adapter=X)` routing classified across
@@ -318,7 +404,7 @@ Added
   envelope asked under a name for an unclaimed unpacked record; a named
   trace not counted as claimed; `trace_id_of` ignoring its `adapter`.
 
-### B1: the traces no adapter can read are bounded too (2026-10-21)
+### B1 — the traces no adapter can read are bounded too (2026-10-21)
 
 Derived parent `11a1452`. The zoo series' Qodo finding 2: `max_traces` counts
 only traces holding a claimed record, so a client that can POST exports with

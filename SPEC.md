@@ -30,7 +30,8 @@ its batch lands:
 | 9 | The showcase | What does a consumer do with all this, and what does live buy over batch? |
 
 Sections 3 onward are written by the batch that builds them (`TASKS.md`:
-the receiver series' R1–R8, amended since by the zoo series' V0–V3). §9 is
+the receiver series' R1–R8, amended since by the zoo series' V0–V3 and
+the backlog series' B1–B7 and B9). §9 is
 the odd one: it specifies a **test**, not a piece of the receiver, because
 the showcase adds no library behaviour and the reason it adds none is itself a claim worth stating (§9.1). This document begins with the two sections that constrain all of them:
 what the receiver will never do, and the three properties of the library

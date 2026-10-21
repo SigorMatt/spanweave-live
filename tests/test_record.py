@@ -1,4 +1,4 @@
-"""The record a series leaves behind, held to what it says (V4).
+"""The record a series leaves behind, held to what it says (V4; B10).
 
 A series closes by deleting its `WORKPLAN.md` and folding what outlives it into
 `TASKS.md`, and the files a cold session reads first -- `CLAUDE.md`, then
@@ -16,6 +16,11 @@ target runs; `SPEC.md` §8.7's count of the CLI's process tests is
 `tests/test_cli.py`'s collection, measured; and `CONTRIBUTING.md`'s rule
 against a test that opens a real socket names, as its exceptions, exactly the
 test files that import a socket module.
+
+V4 wrote this file for the zoo series, and B10 holds the backlog series the
+same way: each series in `SERIES` has its registry, its changelog heading, its
+post-close entries and its decisions log held by the same tests, one case a
+series; L1's W1 sha is the zoo's alone.
 
 The registry's commits and the plan files are read from history, so the tests
 that take the `history` fixture need a git binary and a clone with history:
@@ -48,6 +53,19 @@ PLAN = REPO / "WORKPLAN.md"
 #: The zoo series' batches in the order they ran (run 1: V0, V1, V2; run 2:
 #: V1a, V3, V4). V1a was inserted after V2 and keeps its id.
 ZOO_BATCHES = ["V0", "V1", "V2", "V1a", "V3", "V4"]
+
+#: The backlog series' batches in the order they ran (run 1: B1, B2, B3; run 2:
+#: B4 to B10).
+BACKLOG_BATCHES = [f"B{n}" for n in range(1, 11)]
+
+#: Each series this file holds, newest first: its batches in the order they
+#: ran, and the version its close shipped as, whose `CHANGELOG.md` heading
+#: carries its entries. The receiver series (R0-R9) is older than this file
+#: and its registry is held by review.
+SERIES = {
+    "backlog": (BACKLOG_BATCHES, "0.0.3"),
+    "zoo": (ZOO_BATCHES, "0.0.2"),
+}
 
 #: A series' last batch cannot name the commit that carries it.
 CLOSING = "**done** (the closing commit of the series)"
@@ -154,17 +172,24 @@ def section(text: str, heading: str) -> str:
     return text[start : found.start() if found else len(text)]
 
 
+def registered(series: str) -> str:
+    """`TASKS.md`'s part for `series`, from its `# The <name> series` heading."""
+    return section(TASKS.read_text(encoding="utf-8"), f"# The {series} series")
+
+
 def zoo() -> str:
-    return section(TASKS.read_text(encoding="utf-8"), "# The zoo series")
+    return registered("zoo")
 
 
-def registry() -> list[tuple[str, str]]:
-    """The zoo series' batch table, as `(id, status)` rows in file order."""
-    table = section(zoo(), "## The batches, with final status")
+def registry(series: str = "zoo") -> list[tuple[str, str]]:
+    """A series' batch table, as `(id, status)` rows in file order."""
+    batches, _ = SERIES[series]
+    prefix = f"| {batches[0][0]}"
+    table = section(registered(series), "## The batches, with final status")
     return [
         (cells[0], cells[-1])
         for line in table.splitlines()
-        if line.startswith("| V")
+        if line.startswith(prefix)
         for cells in [[cell.strip() for cell in line.strip("|").split("|")]]
     ]
 
@@ -177,6 +202,23 @@ def released() -> tuple[str, str]:
     return heading.group(1), section(text, heading.group(0))
 
 
+def shipped(series: str) -> str:
+    """The `CHANGELOG.md` section of the version `series` shipped as.
+
+    Its heading names the version and the series: `## <version> — the <name>
+    series (<date>)`.
+    """
+    _, version = SERIES[series]
+    text = CHANGELOG.read_text(encoding="utf-8")
+    heading = re.search(
+        rf"^## {re.escape(version)} — the {series} series \(\d{{4}}-\d\d-\d\d\)$",
+        text,
+        re.M,
+    )
+    assert heading is not None, f"CHANGELOG.md has no {version} heading for {series}"
+    return section(text, heading.group(0))
+
+
 # --------------------------------------------------------------------------
 # The version.
 # --------------------------------------------------------------------------
@@ -186,8 +228,11 @@ def test_the_version_is_one_number_wherever_it_is_written():
     """`pyproject.toml`, the package, `uv.lock` and the changelog agree.
 
     V4 moved it to `0.0.2`: nothing is frozen, and the event-code set grew
-    (`no_trace`, V2). It stays `0.0.x` until something freezes (`CLAUDE.md`
-    standing rule 7), which is the one thing this test says about its value.
+    (`no_trace`, V2). B10 moved it to `0.0.3`: a `Router` field and a CLI flag
+    were added (B1), `released` gained its version (B4) and a refusal its
+    `Status` body (B3). It stays `0.0.x` until something freezes (`CLAUDE.md`
+    standing rule 7), which is the one thing this test says about its value
+    beyond its being the newest series' (`SERIES`).
     """
     project = tomllib.loads((REPO / "pyproject.toml").read_text(encoding="utf-8"))
     declared = project["project"]["version"]
@@ -201,6 +246,8 @@ def test_the_version_is_one_number_wherever_it_is_written():
     assert locked is not None
     version, _ = released()
     assert declared == spanweave_live.__version__ == locked.group(1) == version
+    _, newest = next(iter(SERIES.values()))
+    assert version == newest, (version, newest)
     assert re.fullmatch(r"0\.0\.\d+", declared), "pre-1.0, by 0.0.x"
 
 
@@ -208,18 +255,20 @@ def test_the_version_is_one_number_wherever_it_is_written():
 DATED = re.compile(r".+ \((\d{4}-\d\d-\d\d)\)")
 
 
-def test_the_version_s_changelog_entries_are_the_registry_s_batches():
-    """One `### <id> — …` entry per zoo batch under the version, newest first.
+@pytest.mark.parametrize("series", list(SERIES))
+def test_the_version_s_changelog_entries_are_the_registry_s_batches(series):
+    """One `### <id> — …` entry per batch under the series' version, newest first.
 
     Above them, and only above them, the version carries the entries of the
     commits made after the series closed, newest first, as `## 0.0.1` carries
     the receiver series' (`The record made true — …` above `R9`). Such an
     entry's heading names no batch and ends in its date, and the dates run
-    newest first down to the close's, V4's. Below the batches it is red.
-    Every post-close entry of the zoo series is dated 2026-10-20, so the dates
-    do not order them among themselves; their commits do, in the next test.
+    newest first down to the close's, V4's or B10's. Below the batches it is
+    red. Every post-close entry of the zoo series is dated 2026-10-20, so the
+    dates do not order them among themselves; their commits do, in the next
+    test. The backlog series has none at its close.
     """
-    _, entries = released()
+    entries = shipped(series)
     headings = re.findall(r"^### (.*)$", entries, re.M)
     first = next(
         (at for at, heading in enumerate(headings) if re.match(r"\S+ — ", heading)),
@@ -227,7 +276,7 @@ def test_the_version_s_changelog_entries_are_the_registry_s_batches():
     )
     later, batches = headings[:first], headings[first:]
     named = [heading.partition(" — ")[0] for heading in batches]
-    assert named == [batch for batch, _ in reversed(registry())], (
+    assert named == [batch for batch, _ in reversed(registry(series))], (
         f"below the batches, an entry names no batch: {batches}"
     )
     dates = []
@@ -238,7 +287,8 @@ def test_the_version_s_changelog_entries_are_the_registry_s_batches():
     assert dates == sorted(dates, reverse=True), f"not newest first: {later}"
 
 
-def test_the_post_close_entries_run_newest_first_by_their_commits(history):
+@pytest.mark.parametrize("series", list(SERIES))
+def test_the_post_close_entries_run_newest_first_by_their_commits(history, series):
     """Each entry above the batches is its commit's, and they run newest first.
 
     The mapping from an entry to its commit is the entry's own: each one opens
@@ -250,16 +300,18 @@ def test_the_post_close_entries_run_newest_first_by_their_commits(history):
     The commits must then run newest first, each a strict descendant of the
     next, and the oldest one a strict descendant of the commit that closed
     the series. Swapping the newest and the oldest entry, which every date
-    survives (the bounded fix review's R-7), is red here.
+    survives (the bounded fix review's R-7), is red here. The zoo series has
+    such entries and must; the backlog series has none at its close, and an
+    entry added above B10 is held as the zoo's are.
     """
-    _, entries = released()
+    entries = shipped(series)
     later = []
     for block in re.split(r"^### ", entries, flags=re.M)[1:]:
         heading, _, body = block.partition("\n")
         if re.match(r"\S+ — ", heading):
             break
         later.append((heading, body))
-    assert later
+    assert later or series != "zoo"
     children: dict[str, list[str]] = {}
     for line in _git("rev-list", "--parents", "HEAD").stdout.splitlines():
         commit, *parents = line.split()
@@ -279,8 +331,10 @@ def test_the_post_close_entries_run_newest_first_by_their_commits(history):
         before = _git("show", f"{sha}:CHANGELOG.md").stdout
         assert f"\n### {heading}\n" not in before, f"already at {sha}: {heading}"
         commits.append(commit)
-    close, _ = plan_states()["zoo"]
-    for newer, older in zip(commits, [*commits[1:], close], strict=True):
+    close, _ = plan_states()[series]
+    for newer, older in zip(
+        commits, [*commits[1:], close][: len(commits)], strict=True
+    ):
         assert newer != older, newer
         assert _git("merge-base", "--is-ancestor", older, newer).returncode == 0, (
             f"not newest first by commit: {older} is not before {newer}"
@@ -292,18 +346,23 @@ def test_the_post_close_entries_run_newest_first_by_their_commits(history):
 # --------------------------------------------------------------------------
 
 
-def test_the_zoo_registry_lists_its_batches_in_the_order_they_ran():
-    rows = registry()
-    assert [batch for batch, _ in rows] == ZOO_BATCHES
-    stated = re.search(r"^(\w+) batches across (\w+) runs", zoo(), re.M)
+@pytest.mark.parametrize("series", list(SERIES))
+def test_the_registry_lists_its_batches_in_the_order_they_ran(series):
+    batches, _ = SERIES[series]
+    letter = batches[0][0]
+    rows = registry(series)
+    assert [batch for batch, _ in rows] == batches
+    text = registered(series)
+    stated = re.search(r"^(\w+) batches across (\w+) runs", text, re.M)
     assert stated is not None
     assert WORDS[stated.group(1).lower()] == len(rows)
-    runs = re.findall(r"run (\d) was (V\w+(?: → V\w+)*)", zoo())
-    assert [batch for _, chain in runs for batch in chain.split(" → ")] == ZOO_BATCHES
+    runs = re.findall(rf"run (\d) was ({letter}\w+(?: → {letter}\w+)*)", text)
+    assert [batch for _, chain in runs for batch in chain.split(" → ")] == batches
     assert WORDS[stated.group(2)] == len(runs)
 
 
-def test_each_registered_commit_is_its_batch(history):
+@pytest.mark.parametrize("series", list(SERIES))
+def test_each_registered_commit_is_its_batch(history, series):
     """Every sha but the last is a batch commit of this branch, for that batch.
 
     Not a `plan:` commit (they interleave, one after each batch), an ancestor
@@ -312,11 +371,12 @@ def test_each_registered_commit_is_its_batch(history):
     (`a856ec2`, "V1's §4 thread"), and V0's `024fc66` names V1, V2 and V3.
     What holds the registry is that match **and** the shas' uniqueness, the
     last assert: V1 registered as `024fc66` passes every check of its row and
-    is red only there.
+    is red only there. The backlog's `B1` does not match `B10`'s body, since
+    the word boundary needs a non-word character after the `1`.
     """
-    rows = registry()
+    rows = registry(series)
     *batches, (last, closing) = rows
-    assert (last, closing) == ("V4", CLOSING)
+    assert (last, closing) == (SERIES[series][0][-1], CLOSING)
     shas = []
     for batch, status in batches:
         done = re.fullmatch(r"\*\*done\*\* \(`([0-9a-f]{7})`\)", status)
@@ -342,22 +402,27 @@ def test_every_plan_citation_resolves(history):
         assert _git("cat-file", "-e", f"{sha}:WORKPLAN.md").returncode == 0, sha
 
 
-def test_the_decisions_log_is_the_plan_s_at_the_plan_state_it_cites(history):
+@pytest.mark.parametrize("series", list(SERIES))
+def test_the_decisions_log_is_the_plan_s_at_the_plan_state_it_cites(history, series):
     """The folded log is the plan's §3 at the sha it cites, but for what it says.
 
-    The sha the section cites must be the zoo series' last plan state, read
-    from history (`plan_states`). The log says how many rows it has, how many
-    of them moved from the plan, that one sentence of one row moved, and how
-    many were taken after the close; each count is held, the moved rows are
-    the plan's rows in the plan's order, and the one row that differs is the
-    plan's with the sentence the paragraph below the table quotes replaced by
-    the sentence it says the row now carries. A row dropped and the count
-    lowered (the review's X8), and thread V2(c) undone in the row (X6), are
-    red here; the log's length alone held neither.
+    The sha the section cites must be the series' last plan state, read from
+    history (`plan_states`). The log says how many rows it has, how many of
+    them moved from the plan, whether a sentence of one row moved, and how
+    many were taken after the close; each count is held, and the moved rows
+    are the plan's rows in the plan's order. The zoo's says one sentence of
+    one row moved, and that row is the plan's with the sentence the paragraph
+    below the table quotes replaced by the sentence it says the row now
+    carries; the backlog's says none did, and every moved row is the plan's as
+    it stood. A row dropped and the count lowered (the review's X8), and
+    thread V2(c) undone in the row (X6), are red here; the log's length alone
+    held neither.
     """
-    log = section(zoo(), "## Decisions taken  *(`WORKPLAN.md` §3, folded)*")
+    log = section(
+        registered(series), "## Decisions taken  *(`WORKPLAN.md` §3, folded)*"
+    )
     cited = set(re.findall(r"git show ([0-9a-f]{7,40}):WORKPLAN\.md", log))
-    _, last = plan_states()["zoo"]
+    _, last = plan_states()[series]
     assert len(cited) == 1 and last.startswith(cited.pop()), (cited, last)
     plan = _git("show", f"{last}:WORKPLAN.md")
     assert plan.returncode == 0, last
@@ -366,19 +431,23 @@ def test_the_decisions_log_is_the_plan_s_at_the_plan_state_it_cites(history):
 
     prose = " ".join(log.split())
     stated = re.search(
-        r"\b(\w+) rows: (\w+) moved here as they stood but for (\w+) sentence of"
-        r" (\w+) row, and the last (\w+) taken after the close",
+        r"\b(\w+) rows: (\w+) moved here as they stood(?: but for (\w+) sentence"
+        r" of (\w+) row)?, and (?:the last )?(\w+) taken after the close",
         prose,
     )
     assert stated is not None
     total, moved, sentences, changed, after = (
-        WORDS[word.lower()] for word in stated.groups()
+        0 if word is None else {**WORDS, "none": 0}[word.lower()]
+        for word in stated.groups()
     )
     assert (total, moved) == (len(rows), len(planned))
-    assert after == total - moved and sentences == changed == 1
+    assert after == total - moved and sentences == changed <= 1
+    assert all(row.split(" | ")[1] == "review" for row in rows[moved:]), rows[moved:]
 
     differ = [at for at, row in enumerate(rows[:moved]) if row != planned[at]]
     assert len(differ) == changed, differ
+    if not changed:
+        return
     was = re.search(r'the row said the receiver "([^"]+)"', prose)
     now = re.search(r"The row now says what is true: (.+?\.) ", prose)
     assert was is not None and now is not None
@@ -387,7 +456,6 @@ def test_the_decisions_log_is_the_plan_s_at_the_plan_state_it_cites(history):
     assert rows[at] == planned[at].replace(
         f", and {was.group(1)}.", f". {sentence[0].upper()}{sentence[1:]}"
     )
-    assert all(row.split(" | ")[1] == "review" for row in rows[moved:]), rows[moved:]
 
 
 def test_the_reader_s_half_of_l1_is_the_commit_spanweave_registers_for_w1():
