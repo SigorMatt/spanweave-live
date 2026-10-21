@@ -524,6 +524,56 @@ def test_each_step_of_completing_is_an_event_with_a_code(tmp_path):
     assert released.seconds is None
 
 
+def test_released_carries_the_version_it_released():
+    """`released`'s version is a field, as `Completed.version` is (`§4.1`, `§5.4`).
+
+    Three records, so the version is not the generation (1), the index of any
+    one record, or the count of builders left (0): a field filled from any of
+    those is a different number here. `completed` itself is about a duration,
+    not a version, and keeps `version=None`.
+    """
+    clock = Clock()
+    router = router_with(Cap(3), clock=clock)
+    for span in ("a", "b", "c"):
+        router.route(openinference(span))
+
+    (done,) = router.tick()
+    completed, released = done.events
+    assert codes(done.events) == [COMPLETED, RELEASED]
+    assert done.version == 3
+    assert released.version == done.version
+    assert completed.version is None
+    # The sentence keeps its text: the field is added, not moved.
+    assert "released at version 3;" in released.detail
+
+
+def test_a_late_generation_s_released_carries_its_own_version():
+    """A generation opened by a late arrival is released at **its** version.
+
+    Generation 1 absorbs three records, generation 2 one, so the second
+    `released` is 1: not the first generation's 3, not the generation number
+    (2), not the router's arrival count (4) (`§5.5`).
+    """
+    clock = Clock()
+    router = router_with(Quiet(1.0), clock=clock)
+    for span in ("a", "b", "c"):
+        router.route(openinference(span))
+    clock.tick(1.0)
+    (first,) = router.tick()
+
+    clock.tick(1.0)
+    late = router.route(openinference("d"))
+    assert codes(late.events) == [LATE_ARRIVAL]
+    clock.tick(1.0)
+    (second,) = router.tick()
+
+    released = [
+        event for event in first.events + second.events if event.code == RELEASED
+    ]
+    assert [event.version for event in released] == [first.version, second.version]
+    assert (first.version, second.version) == (3, 1)
+
+
 def test_the_written_file_is_the_batch_graph_of_the_records_absorbed(tmp_path):
     """`spanweave.dump` of the final graph, which is `build` of the same records.
 

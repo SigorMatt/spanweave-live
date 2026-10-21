@@ -13,6 +13,31 @@ that series' close; each such citation is dated history, resolvable at
 
 ## Unreleased
 
+### B4: `released` carries its version (2026-10-22)
+
+Derived parent `72d60e8`. The receiver series' run-2 review, T5: a
+`released` event stated the version it released in `detail` alone, though
+`Event.version` exists for exactly that, so a caller could only read the
+number out of a sentence (§1.5).
+
+Changed
+
+- **`released`'s `Event.version`** is the builder's version at release, the
+  number `Completed.version` holds, in a generation a late arrival opened as
+  in the first. `detail` keeps its text; `completed`'s `version` stays
+  `None`. The CLI's `router` line for `released` (§8.3) now carries
+  `version`, since a field that is not `None` is written.
+- **`SPEC.md`** §4.1, §5.4 and §6.1 say it is done.
+
+Added
+
+- **Tests red on the parent** in `tests/test_completion.py`: `released.version
+  == Completed.version` for one completion, and for both generations of a
+  trace whose second generation a late arrival opened.
+- **Mutations shown caught**: `version` left `None` (both tests);
+  `version=book.generation` (both); `version=len(self._builders)` (both);
+  `version=index`, the arrival count (the late-generation test).
+
 ### B3: a refusal is OTLP's `Status`, in the request's encoding (2026-10-21)
 
 Derived parent `29b2996`. The zoo series' cold review, run 2, R-9 and R-13: a

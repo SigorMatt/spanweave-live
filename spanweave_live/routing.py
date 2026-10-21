@@ -143,8 +143,9 @@ class Event:
     #: can match on the number (`SPEC.md` §4.1, §5.1).
     seconds: float | None = None
     #: The version this event is about, where it is about one: §6's three codes
-    #: each are. `None` for every code that is not. Here for `seconds`' reason
-    #: and no other (`SPEC.md` §4.1, §6.1).
+    #: each are, and `released` is (the builder's version at release, which is
+    #: `Completed.version`). `None` for every code that is not. Here for
+    #: `seconds`' reason and no other (`SPEC.md` §4.1, §5.4, §6.1).
     version: int | None = None
     #: The byte offset this event is about, where it is about one: §7.1's ingest
     #: codes each are -- where in the content the tail had read to when it was
@@ -877,6 +878,7 @@ class Router:
                         f"{version}; the router holds {len(self._builders)} "
                         f"identified traces"
                     ),
+                    version=version,
                 )
             )
         )

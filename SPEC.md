@@ -647,8 +647,10 @@ R4 added `subscriptions` and, for the same reason `seconds` exists,
 `Event.version`: §6's three codes are each about a **version**, and §1.5 is only
 true where the caller can match on the number instead of reading it out of a
 sentence. It is `None` for every code that is not about one. R3's `released`
-still states its version in `detail` only; moving it is §5's edit to make and
-nothing in R4 needed it.
+stated its version in `detail` only until B4 (the receiver series' run-2
+review, T5); since B4 it is §5's fourth code about a version, and carries it in
+`Event.version` too — the builder's version at release, the number
+`Completed.version` holds (§5.4). `detail` keeps its text.
 
 R5 added `Event.offset` to the code and **not** to the block above, while its
 commit message and its CHANGELOG entry both said §4.1 was amended; R5a adds the
@@ -1335,8 +1337,12 @@ Completing one trace is four steps, in this order, and the events come back on
    it does not exist, with its parents.
 4. **Release.** The builder is dropped — that is the point of the whole section
    (§2.3: a finished trace should stop costing memory) — and `RELEASED` carries
-   the version released. `router.builder(trace_id)` is `None` afterwards and the
-   id leaves `trace_ids` (§4.3).
+   the version released, as `Event.version` (B4) and in its `detail`: the
+   builder's version at release, which is `Completed.version`, and in a
+   generation a late arrival opened (§5.5) that generation's own version.
+   `COMPLETED` is about a duration and its `version` stays `None`.
+   `router.builder(trace_id)` is `None` afterwards and the id leaves
+   `trace_ids` (§4.3).
 
 A router holding subscriptions (§6) has a **fifth** step after those four, and it
 is bookkeeping rather than a decision: each subscriber whose cursor is behind the
@@ -1698,8 +1704,8 @@ That block is the whole public surface, declared **exactly** as the code accepts
 it. `Event` gains one more optional field for it — `version: int | None` — for
 §4.1's reason: the three codes above are all about a **version**, and a number a
 caller can only read out of a sentence is a number it cannot match on. R3's
-`released` keeps its version in `detail`; moving it is §5's edit and nothing
-here needed it.
+`released` kept its version in `detail` alone until B4, which gave it the
+field for the same reason (§4.1, §5.4); its `detail` is unchanged.
 
 `subscriptions` is a mutable registry rather than a frozen value, which is what
 makes it unlike `completion` (§5.1): a policy is a value the caller constructed,
