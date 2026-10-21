@@ -328,10 +328,15 @@ class Router:
     event each. `None` -- the default -- forgets nothing, which is exactly what
     R3 shipped.
 
-    All **six** settings are keyword-only, as `SPEC.md` §4.1 declares them: they
+    `max_unclaimed_traces` is the third bound, for the traces `max_traces`
+    does not count: those holding no record an adapter claims (`SPEC.md`
+    §4.5). `None` -- the default -- bounds nothing, as `max_traces` does not.
+
+    All **seven** settings are keyword-only, as `SPEC.md` §4.1 declares them: they
     are independent knobs with no reading order, and a positional order here
     would be a contract the spec never offered. (The sentence said "four" from
-    R2 through R5a, which was two batches of settings out of date.)
+    R2 through R5a, which was two batches of settings out of date, and "six"
+    until B1.)
 
     It keeps a **count** per event code and no event log: the events of one
     record ride on that record's `Routed`, and an accumulated list grows with
@@ -340,13 +345,20 @@ class Router:
 
     #: How many identified traces holding a claimed record this router will hold
     #: builders for, or `None` for no cap (`SPEC.md` §4.5). A trace no adapter
-    #: has claimed a record of is held and not counted.
+    #: has claimed a record of is held and not counted here, but under
+    #: `max_unclaimed_traces`.
     max_traces: int | None = None
+    #: How many traces holding **no** claimed record this router will hold
+    #: builders for, or `None` for no bound (`SPEC.md` §4.5): the ones
+    #: `max_traces` does not count, such as an exporter's health checks. A
+    #: trace leaves this count when it absorbs its first claimed record.
+    max_unclaimed_traces: int | None = None
     #: How many **completed** trace ids this router will remember, or `None` to
     #: remember every one of them, which is what R3 shipped (`SPEC.md` §5.5).
-    #: Beside `max_traces` because the two are this router's two bounds: that
-    #: one bounds the builders of traces with a claimed record, this one
-    #: bounds the book that outlives them.
+    #: Beside `max_traces` and `max_unclaimed_traces` because the three are
+    #: this router's bounds: those two bound the builders, of traces with a
+    #: claimed record and of traces with none, and this one bounds the book
+    #: that outlives them.
     max_completed: int | None = None
     adapter: str | None = None
     temporal: bool = True
@@ -465,6 +477,16 @@ class Router:
                 if existing is not None and now is not None:
                     self._activity(trace_id, now)
                 return self._at_cap(index, trace_id, held=existing is not None)
+            if (
+                existing is None
+                and not identity.claimed
+                and self.max_unclaimed_traces is not None
+                and self._unclaimed >= self.max_unclaimed_traces
+            ):
+                # An unclaimed record that would start one more trace holding
+                # no claimed record (`SPEC.md` §4.5): no builder, no book, no
+                # activity, and so no cursor either.
+                return self._at_unclaimed_bound(index, trace_id)
             if existing is None:
                 existing = Builder(adapter=self.adapter, temporal=self.temporal)
                 self._builders[trace_id] = existing
@@ -903,8 +925,8 @@ class Router:
           reads `last_record_at` off it -- so evicting one would complete a trace
           early for a reason no caller could see. Those are bounded by the
           builders held: `max_traces` bounds those of traces holding a claimed
-          record, and only completion releases those of traces no adapter
-          claims (`SPEC.md` §4.5).
+          record, and `max_unclaimed_traces` those of traces no adapter claims
+          (`SPEC.md` §4.5).
         - The **oldest completion** goes first, which is the order this router
           completed them in and not a sort on the caller's clock: `_complete`
           moves a book to the end of `_books` as it books the completion, so
@@ -1201,6 +1223,40 @@ class Router:
                 detail=(
                     f"this router already holds {len(self._claimed)} traces with "
                     f"a claimed record, which is max_traces, so {where}"
+                ),
+            )
+        )
+        return Routed(
+            index=index,
+            trace_id=trace_id,
+            builder=None,
+            version=None,
+            events=(event,),
+        )
+
+    @property
+    def _unclaimed(self) -> int:
+        """How many held traces hold no claimed record: `max_unclaimed_traces`'
+        count. `_claimed` is a subset of the held builders' ids, because a trace
+        joins it only on absorbing into a held builder and leaves it with that
+        builder (`_complete`)."""
+        return len(self._builders) - len(self._claimed)
+
+    def _at_unclaimed_bound(self, index: int, trace_id: str) -> Routed:
+        """An unclaimed record for a new trace, with no room to hold one more
+        trace no adapter has claimed a record of. Refused, in the open
+        (`SPEC.md` §4.5)."""
+        event = self._counted(
+            Event(
+                code=REFUSED_AT_CAP,
+                index=index,
+                trace_id=trace_id,
+                spanweave_code=None,
+                detail=(
+                    f"this router already holds {self._unclaimed} traces with "
+                    f"no claimed record, which is max_unclaimed_traces, so no "
+                    f"builder was made for {trace_id!r} and the record was not "
+                    f"absorbed"
                 ),
             )
         )

@@ -417,6 +417,58 @@ def test_a_record_that_reaches_no_trace_is_a_router_line_and_finished_counts_it(
     assert sorted(path.name for path in out.iterdir()) == [f"{rendering.trace_id}.json"]
 
 
+def test_max_unclaimed_traces_sets_the_routers_bound(tmp_path) -> None:
+    """B1: the flag is `Router(max_unclaimed_traces=N)` (`§8.1`, §4.5).
+
+    Three health checks, each one span no adapter reads under its own trace
+    id, at `--max-unclaimed-traces 1`: the first is held and completed at end
+    of input as `no_graph`; the other two are one `refused_at_cap` line each,
+    naming the bound, and the run exits `0` because a refusal is an
+    observation (§8.6).
+    """
+    checks = b"".join(
+        json.dumps(
+            {
+                "resourceSpans": [
+                    {
+                        "scopeSpans": [
+                            {
+                                "spans": [
+                                    {
+                                        "traceId": f"{n:032x}",
+                                        "spanId": "aaaaaaaaaaaaaaaa",
+                                        "name": "health",
+                                        "startTimeUnixNano": "1000000000000",
+                                        "endTimeUnixNano": "1001000000000",
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            }
+        ).encode()
+        + b"\n"
+        for n in range(1, 4)
+    )
+    out = tmp_path / "out"
+    result = run(
+        "tail", "-", "--out", str(out), "--max-unclaimed-traces", "1", stdin=checks
+    )
+    assert result.returncode == 0, result.stderr.decode()
+    refused = [
+        line for line in lines(result.stderr) if line["code"] == "refused_at_cap"
+    ]
+    assert [line["trace_id"] for line in refused] == [f"{2:032x}", f"{3:032x}"]
+    assert all("max_unclaimed_traces" in str(line["detail"]) for line in refused)
+    assert lines(result.stderr)[-1]["counts"] == {
+        "completed": 1,
+        "no_graph": 1,
+        "refused_at_cap": 2,
+        "released": 1,
+    }
+
+
 def test_the_cli_codes_and_layers_are_the_ones_SPEC_names() -> None:
     """§8.3's two lists, held against the module (`SPEC.md` §8.3).
 

@@ -300,8 +300,8 @@ library about the same bytes for reasons no fixture could pin.
 not in framing, so that is where its policies live: completion (§5) releases a
 builder so a finished trace stops costing memory, `max_traces` (§4.5) caps the
 traces holding a claimed record with a counted event rather than unbounded
-growth — and does not bound the traces no adapter claims, whose cost §4.5
-states — and retention (§6) is set
+growth, `max_unclaimed_traces` (§4.5) does the same for the traces no adapter
+claims, and retention (§6) is set
 from the longest window a subscriber actually asked for rather than kept "just
 in case". A delta is handed out per record because that is what a live consumer
 wants; it is not handed out per record *because it is free*.
@@ -597,6 +597,7 @@ class Router:
         self,
         *,
         max_traces: int | None = None,
+        max_unclaimed_traces: int | None = None,  # §4.5
         max_completed: int | None = None,  # §5.5
         adapter: str | None = None,
         temporal: bool = True,
@@ -658,9 +659,10 @@ row amended this block by hand and two of them got it wrong somewhere.
 `offset` is where in a file's content a tail had read to, so it is `None` for
 every code §4, §5 and §6 emit.
 
-R3a added `max_completed` — beside `max_traces`, because the two are the
+R3a added `max_completed` — beside `max_traces`, because the two were the
 router's two bounds and a reader looking for what this router will not grow past
-should find both in one place — and `Event.at`, for the reason `seconds`,
+should find both in one place; B1 put the third, `max_unclaimed_traces`
+(§4.5), between them for the same reason — and `Event.at`, for the reason `seconds`,
 `version` and `offset` each exist. `at` is a **clock reading**, not a duration:
 `forgotten` (§5.5) is about the instant a trace was completed, which is the one
 fact a caller needs to tell a forgotten completion from one that never happened,
@@ -792,7 +794,10 @@ record, exactly as a batch build of the same records reports them (`spanweave`
 `SPEC.md` §6.1, §7). The decision that sent each record there is the
 receiver's, so although that builder is never completed and never written
 (§5.4, §8.5), every record it holds was announced by one counted `no_trace`
-event that says why (§4.2).
+event that says why (§4.2). It is bounded by **neither** `max_traces` nor
+`max_unclaimed_traces` (§4.5): it is not a trace, and nothing releases it, so
+what a stream of records with no trace id costs is that builder's growth, and
+no bound here pretends otherwise.
 
 One exception, older than V2 and found by it, is stated here rather than
 fixed in passing: `trace_id_of` classifies across every adapter even when the
@@ -847,16 +852,47 @@ whose graph the library refuses (`adapter_unconfident`), as `spanweave.build` of
 the same records refuses. It is the case the paragraph above keeps off the cap,
 records the library cannot read, which must not crowd out the traces it can:
 the builder such a trace holds is not counted, and a record no adapter claims is
-never refused at the cap, whichever trace it names. At the cap, the claimed
+never refused at this cap, whichever trace it names — its own bound is
+`max_unclaimed_traces`, below. At the cap, the claimed
 record that would make such a trace count is `refused_at_cap`, as a new trace's
 first record is: it is not absorbed, `Routed.builder` is `None`, and the trace
 keeps the builder and the records it had. Its arrival is still that trace's
 activity (§5.3): a held trace whose claimed records keep arriving at a full cap
 is not quiet. A claimed record refused for a **new** trace makes no state at
-all — no builder, no book, no activity. The cost, said rather than hidden:
-`max_traces` does not bound the builders of traces no adapter claims. What
-releases them is completion — `Quiet`, `Cap` and end of input, and never
-`RootEnded` alone (§5.3) — which reports each as `no_graph` (§5.4).
+all — no builder, no book, no activity. What releases a trace no adapter claims
+is completion — `Quiet`, `Cap` and end of input, and never `RootEnded` alone
+(§5.3) — which reports each as `no_graph` (§5.4).
+
+**The traces no adapter claims have a bound of their own:
+`max_unclaimed_traces`** (B1). `max_traces` does not count them, so before B1
+nothing bounded their builders, and a client that can POST exports with fresh
+trace ids and no span any adapter reads grew them, and their subscription
+cursors, without bound and without an event, as the bounded fix review's
+`cap_bound.py` measured (`reviews/2026-10-20-zoo-fixes.md`, R-1). They get
+their own bound rather than a share of `max_traces`, so that the traces the
+library can read are never crowded out by the ones it cannot — the reason this
+section keeps them off `max_traces` in the first place. It counts the traces the
+router holds a builder for that hold **no** claimed record, and nothing else:
+
+- At the bound, an unclaimed record that would start a **new** such trace is
+  `refused_at_cap`, counted, carrying the record's index and the trace id, with
+  a `detail` naming `max_unclaimed_traces` — where `max_traces`' refusal names
+  `max_traces` — and `Routed.builder` `None`. No builder, no book and no
+  activity are made, and so no subscription cursor (§6.4).
+- A record for such a trace **already held** is never refused by it.
+- A trace that absorbs its first claimed record **leaves** this count and is
+  `max_traces`' from then, which frees a place here. The claimed record that
+  would join it at a full `max_traces` is `refused_at_cap` there, as above, and
+  the trace stays in this count.
+- A claimed record is never refused by this bound, and a record with no trace
+  id by neither bound (§4.3).
+- Completion releases a trace from whichever count holds it.
+
+`max_unclaimed_traces=None` is no bound, as `max_traces=None` is no cap, and
+both are the defaults. The cost of the defaults, said rather than hidden: an
+unbounded `serve` — one given neither flag (§8.1) — holds a builder for every
+trace id a client sends until a completion releases it, and a client that can
+POST chooses how many.
 
 Which traces to evict, and when, is **not** here: eviction is completion's
 business (§5), and a cap that quietly released a live builder would be a
@@ -1297,7 +1333,9 @@ is no late arrival to report, because nothing was re-opened. The cap's event is
 the report, the trace stays completed, and a later record that *is* admitted
 carries the gap from the original completion — which is still the true gap. A
 record no adapter claims is admitted even there, because a trace counts against
-the cap only from its first claimed record (§4.5).
+the cap only from its first claimed record (§4.5) — unless the router is at
+`max_unclaimed_traces`, where it is `refused_at_cap` for the same reason and
+with the same consequences.
 
 The new builder starts at version 0 and is the newest builder the router holds,
 so the id rejoins `trace_ids` at the end (§4.3). Its `Cap` and `Quiet` are its
@@ -1377,8 +1415,8 @@ overhead and not the id. At ten traces a second a receiver reaches 10^6 complete
 traces in **about 28 hours** (`reviews/2026-10-06-run2.md` §0(b), F1). The
 numbers are here rather than in the plan because a reader deciding what to do
 about this needs them, and the plan is deleted at series close. `max_traces`
-(§4.5) bounds none of it — it bounds the builders of traces holding a claimed
-record. The figures were measured before
+(§4.5) bounds none of it, nor does `max_unclaimed_traces` — they bound the
+builders of traces holding a claimed record and of traces holding none. The figures were measured before
 the bound below existed and they are what it is for, so they stay: they are how
 a caller turns a bound into bytes.
 
@@ -1600,6 +1638,7 @@ class Router:
         self,
         *,
         max_traces: int | None = None,
+        max_unclaimed_traces: int | None = None,  # §4.5
         max_completed: int | None = None,  # §5.5
         adapter: str | None = None,
         temporal: bool = True,
@@ -1657,8 +1696,9 @@ each window is exactly `N` wide.
 version does not move (§4.4), so there is nothing that changed to report, and
 reporting `delta(since=version - 1)` anyway would hand the *previous* record's
 difference over a second time. The refusal is already an event. A record refused
-at `max_traces` (§4.5) is not absorbed either: for a new trace there is no
-builder at all, and a held trace's builder keeps the version it had.
+at `max_traces` or `max_unclaimed_traces` (§4.5) is not absorbed either: for a
+new trace there is no builder at all, and a held trace's builder keeps the
+version it had.
 
 **The iteration order is registration order**, 0-based on `Subscription.order`,
 and it is the order consumers are called in, for every record, in every process.
@@ -1747,12 +1787,13 @@ absorbed record, and a trace with a subscriber on it now holds a fixed number
 instead. The cursors are bounded by the builders — one `int` per subscription
 per trace the router **currently holds a builder for**, forgotten when the
 builder is released (§6.5) — so `max_traces` bounds those of the traces holding
-a claimed record, and not those of the traces no adapter claims, which only
-completion releases (§4.5). The unbounded costs this receiver does have are the
-ones §4.5 and §5.5 name and this section does not pretend to fix: the builders
-of traces no adapter claims, and the per-trace-id book that outlives
-completion, awaiting a forgetting policy. Nothing here makes either worse, and
-nothing here depends on how they are settled.
+a claimed record, and `max_unclaimed_traces` those of the traces no adapter
+claims (§4.5); left at their defaults, neither bounds anything. The unbounded
+costs this receiver does have are the ones §4.3, §4.5 and §5.5 name and this
+section does not pretend to fix: the builders of both kinds of trace when their
+bounds are left unset, the no-trace builder, and the per-trace-id book that
+outlives completion when `max_completed` is. Nothing here makes any of them
+worse, and nothing here depends on how they are settled.
 
 ### 6.5 The three codes, and what each refuses to be silent about
 
@@ -2590,13 +2631,15 @@ and what to exit with.
 ```text
 spanweave-live tail <path> --out <dir>
     [--quiet S] [--root-grace S] [--cap N]
-    [--max-traces N] [--max-completed N] [--max-pending-bytes N]
+    [--max-traces N] [--max-unclaimed-traces N]
+    [--max-completed N] [--max-pending-bytes N]
     [--deltas] [--poll-seconds S] [--once]
 
 spanweave-live serve --port P --out <dir>
     [--host H] [--requests N]
     [--quiet S] [--root-grace S] [--cap N]
-    [--max-traces N] [--max-completed N] [--max-pending-bytes N]
+    [--max-traces N] [--max-unclaimed-traces N]
+    [--max-completed N] [--max-pending-bytes N]
     [--deltas]
 ```
 
@@ -2619,6 +2662,7 @@ Everything else is a knob some section above already argued for:
 | `--root-grace S` | `RootEnded(S)` | §5.3 |
 | `--cap N` | `Cap(N)` | §5.3 |
 | `--max-traces N` | `Router(max_traces=N)` | §4.5 |
+| `--max-unclaimed-traces N` | `Router(max_unclaimed_traces=N)` | §4.5 |
 | `--max-completed N` | `Router(max_completed=N)` | §5.5 |
 | `--max-pending-bytes N` | `Framer(max_pending_bytes=N)` | §3.4 |
 | `--deltas` | one `Subscriptions.subscribe(…, trace_id=None, every=1)` | §6.1 |
@@ -2864,7 +2908,7 @@ EOF are the two stops that **are** end of input, and only those two flush
 
 ### 8.7 What this section is tested against
 
-`tests/test_cli.py`, and **77 of its 86 collected items run the CLI as a
+`tests/test_cli.py`, and **78 of its 87 collected items run the CLI as a
 process** — `subprocess`, a pipe, an exit status — because an in-process call
 would test the functions and not the thing a human runs. The other **nine** read
 the package in-process, because that is the only way to ask what they ask: the

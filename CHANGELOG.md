@@ -13,6 +13,48 @@ that series' close; each such citation is dated history, resolvable at
 
 ## Unreleased
 
+### B1: the traces no adapter can read are bounded too (2026-10-21)
+
+Derived parent `11a1452`. The zoo series' Qodo finding 2: `max_traces` counts
+only traces holding a claimed record, so a client that can POST exports with
+fresh trace ids and no span any adapter reads grew builders and subscription
+cursors without bound and without an event (the bounded fix review's
+`cap_bound.py`, `reviews/2026-10-20-zoo-fixes.md` R-1).
+
+Added
+
+- **`Router(max_unclaimed_traces=None)`** and the CLI's
+  `--max-unclaimed-traces N`, on both commands beside `--max-traces`. It
+  bounds the traces the router holds a builder for that hold no claimed
+  record. At the bound, an unclaimed record that would start a new such trace
+  is `refused_at_cap`, counted, its `detail` naming `max_unclaimed_traces`; no
+  builder, no book, no cursor. A record for a held such trace is never refused
+  by it; a trace that absorbs its first claimed record leaves this count for
+  `max_traces`'; completion releases from whichever count holds it; the
+  no-trace builder is bounded by neither. The default is no bound.
+- **Ten tests**, nine in `tests/test_routing.py` and one in
+  `tests/test_cli.py`, nine of them red on the parent; the tenth, that the
+  default bounds nothing, is a guard and passes there. The bounded review's shape —
+  `max_traces=1`, `max_unclaimed_traces=10`, one subscriber, one claimed trace,
+  100 two-span health checks — holds 11 builders and 11 cursors, refuses 90
+  traces and counts 180 `refused_at_cap`, both records of each refused trace
+  (`test_the_cap_bound_shape_holds_eleven_builders_and_eleven_cursors`).
+- **Mutations shown caught**: the bound counted over every held trace
+  (`len(self._builders)`); a further record for a held unclaimed-only trace
+  refused (the `existing is None` condition dropped); a trace that gained a
+  claimed record kept in this count (`_claimed` joined only by a builder's
+  first record); and `>` for `>=` at the bound.
+
+Changed
+
+- **`SPEC.md`** §2.3, §4.1 (and §6.1's copy of the `Router` block), §4.3, §4.5,
+  §5.5, §6.2, §6.4, §8.1 and §8.7: the bound, its rules, and what the defaults
+  leave unbounded (both kinds of trace, the no-trace builder). §8.7's count of
+  the CLI's process tests is 78 of 87, re-derived by `tests/test_record.py`.
+- **`README.md`**: the `serve` example says it is unbounded as written and
+  which two flags bound it; the bounds list and the `Router` row name the new
+  bound.
+
 ## 0.0.2 — the zoo series (2026-10-19)
 
 The version moved from `0.0.1` at the series' close (V4): nothing is frozen,

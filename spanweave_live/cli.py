@@ -197,6 +197,7 @@ class Run:
             subscriptions.subscribe(self._delta, trace_id=None, every=1)
         self.router = Router(
             max_traces=args.max_traces,
+            max_unclaimed_traces=args.max_unclaimed_traces,
             max_completed=args.max_completed,
             completion=Completion(
                 policies=policies(args), now=real.monotonic, out_dir=self.out
@@ -443,7 +444,20 @@ def _common(parser: argparse.ArgumentParser) -> None:
             "hold builders for at most N traces with a claimed record; at the "
             "cap a claimed record that would make one more is refused_at_cap, "
             "counted, never dropped; a trace no adapter claims is held and not "
-            "counted (SPEC.md 4.5)"
+            "counted, and --max-unclaimed-traces bounds those (SPEC.md 4.5)"
+        ),
+    )
+    parser.add_argument(
+        "--max-unclaimed-traces",
+        type=int,
+        metavar="N",
+        help=(
+            "hold builders for at most N traces with no claimed record, such "
+            "as an exporter's health checks, which --max-traces does not "
+            "count; at the bound an unclaimed record that would start one "
+            "more is refused_at_cap, counted, never dropped (SPEC.md 4.5). "
+            "The default is no bound: a client that can POST such exports "
+            "grows memory until a completion releases them"
         ),
     )
     parser.add_argument(

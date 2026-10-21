@@ -32,10 +32,13 @@ import spanweave
 from spanweave_live import (
     REFUSED,
     REFUSED_AT_CAP,
+    Cap,
+    Completion,
     Event,
     Framer,
     Routed,
     Router,
+    Subscriptions,
     trace_id_of,
 )
 
@@ -904,6 +907,178 @@ def test_an_unread_trace_a_claimed_record_joins_is_one_trace_with_a_graph():
     assert held is not None and held.version == 3
     whole = unread_export() + b"\n" + joining + b"\n"
     assert live(held) == spanweave.dumps(undigested(spanweave.build(whole)))
+
+
+# --------------------------------------------------------------------------
+# The traces no adapter can read are bounded too: `max_unclaimed_traces`
+# (§4.5, B1; the zoo series' Qodo finding 2).
+# --------------------------------------------------------------------------
+
+
+def health_check(n: int, *, spans: int = 1) -> tuple:
+    """The records of one health check under its own trace id, `n`.
+
+    No span carries an attribute any adapter reads, as `unread_export`'s do;
+    `spans=2` is that export's root-and-child shape, which the bounded review's
+    `cap_bound.py` fed (`reviews/2026-10-20-zoo-fixes.md` R-1).
+    """
+    trace = f"{n:032x}"
+    shape = [otlp_span(UNREAD_ROOT, trace=trace, claimed=False)]
+    if spans == 2:
+        shape.append(
+            otlp_span(UNREAD_CHILD, trace=trace, parent=UNREAD_ROOT, claimed=False)
+        )
+    return Framer().document(otlp_export(*shape)).records
+
+
+def claimed_in(n: int, span_id: str = "cccccccccccccccc") -> tuple:
+    """One claimed span, in the trace `health_check(n)` names."""
+    return Framer().document(otlp_export(otlp_span(span_id, trace=f"{n:032x}"))).records
+
+
+def test_at_the_unclaimed_bound_a_new_unread_trace_is_refused_in_the_open():
+    """Five health checks, two places: two held, three counted refusals.
+
+    Each refusal names the bound it met, and makes no builder and no book.
+    """
+    router = Router(max_unclaimed_traces=2, completion=Completion(now=lambda: 0.0))
+    routed = [router.route(record) for n in range(5) for record in health_check(n)]
+
+    assert router.trace_ids == (f"{0:032x}", f"{1:032x}")
+    assert [r.events for r in routed[:2]] == [(), ()]
+    for n, refused in enumerate(routed[2:], start=2):
+        (event,) = refused.events
+        assert event.code == REFUSED_AT_CAP
+        assert (event.index, event.trace_id) == (n + 1, f"{n:032x}")
+        assert event.spanweave_code is None
+        assert "max_unclaimed_traces" in event.detail
+        assert refused.builder is None and refused.version is None
+    assert router.counts == {REFUSED_AT_CAP: 3}
+    # No book either: the one piece of state a `route` could have left behind
+    # for a trace it holds no builder for (`SPEC.md` §5.5).
+    assert sorted(router._books) == [f"{0:032x}", f"{1:032x}"]
+
+
+def test_a_further_record_for_a_held_unread_trace_is_never_refused_by_the_bound():
+    router = Router(max_unclaimed_traces=2)
+    for n in range(3):
+        for record in health_check(n):
+            router.route(record)
+    (more,) = (
+        Framer()
+        .document(
+            otlp_export(otlp_span(UNREAD_CHILD, trace=f"{0:032x}", claimed=False))
+        )
+        .records
+    )
+    absorbed = router.route(more)
+    assert absorbed.events == ()
+    assert absorbed.version == 2
+    assert router.counts == {REFUSED_AT_CAP: 1}
+
+
+def test_an_unread_trace_that_absorbs_a_claimed_record_frees_its_place():
+    """It is `max_traces`' from then, and the next health check is admitted."""
+    router = Router(max_unclaimed_traces=2)
+    for n in range(2):
+        for record in health_check(n):
+            router.route(record)
+    (joining,) = claimed_in(0)
+    assert router.route(joining).events == ()
+
+    (admitted,) = [router.route(record) for record in health_check(2)]
+    assert admitted.events == ()
+    assert router.trace_ids == (f"{0:032x}", f"{1:032x}", f"{2:032x}")
+    (refused,) = [router.route(record) for record in health_check(3)]
+    assert [event.code for event in refused.events] == [REFUSED_AT_CAP]
+
+
+def test_a_claimed_record_refused_at_max_traces_leaves_its_trace_in_this_count():
+    """The record that would join a held unread trace at a full `max_traces`
+    is refused there, naming `max_traces`, and the trace keeps its place here."""
+    router = Router(max_traces=1, max_unclaimed_traces=1)
+    router.route(openinference("s0", trace="t1"))
+    for record in health_check(0):
+        assert router.route(record).events == ()
+    (joining,) = claimed_in(0)
+    (at_cap,) = router.route(joining).events
+    assert at_cap.code == REFUSED_AT_CAP
+    assert "max_traces" in at_cap.detail
+    assert "max_unclaimed_traces" not in at_cap.detail
+
+    (refused,) = [router.route(record) for record in health_check(1)]
+    (event,) = refused.events
+    assert "max_unclaimed_traces" in event.detail
+    assert router.counts == {REFUSED_AT_CAP: 2}
+
+
+def test_a_claimed_trace_is_never_refused_by_the_unclaimed_bound():
+    router = Router(max_unclaimed_traces=0)
+    for n in range(4):
+        assert router.route(openinference("s0", trace=f"t{n}")).events == ()
+    (refused,) = [router.route(record) for record in health_check(0)]
+    assert [event.code for event in refused.events] == [REFUSED_AT_CAP]
+    assert router.trace_ids == ("t0", "t1", "t2", "t3")
+
+
+def test_a_record_with_no_trace_id_is_bounded_by_neither():
+    """The no-trace builder is not a trace, under either bound (`§4.3`)."""
+    router = Router(max_traces=0, max_unclaimed_traces=0)
+    routed = router.route(unclaimable("s0"))
+    assert [event.code for event in routed.events] == [NO_TRACE]
+    assert routed.builder is router.no_trace
+
+
+def test_completion_releases_an_unread_trace_from_the_unclaimed_count():
+    router = Router(
+        max_unclaimed_traces=1,
+        completion=Completion(policies=(Cap(1),), now=lambda: 0.0),
+    )
+    for record in health_check(0):
+        router.route(record)
+    (refused,) = [router.route(record) for record in health_check(1)]
+    assert [event.code for event in refused.events] == [REFUSED_AT_CAP]
+    router.tick()
+    assert router.trace_ids == ()
+    (admitted,) = [router.route(record) for record in health_check(1)]
+    assert admitted.events == ()
+
+
+def test_no_unclaimed_bound_is_the_default():
+    router = Router()
+    for n in range(12):
+        for record in health_check(n):
+            router.route(record)
+    assert len(router.trace_ids) == 12
+    assert router.counts == {}
+
+
+def test_the_cap_bound_shape_holds_eleven_builders_and_eleven_cursors():
+    """The bounded review's `cap_bound.py` (its R-1), under both bounds.
+
+    `max_traces=1`, `max_unclaimed_traces=10`, one subscriber on every trace;
+    one claimed trace, then 100 two-span health checks with their own ids. At
+    `c76f74e` that held 101 builders and 101 cursors with no event. Now: the
+    claimed trace and ten health checks are held, and the other 90 are refused
+    -- both records of each, since neither finds a builder: 180 events.
+    """
+    subscriptions = Subscriptions()
+    subscriptions.subscribe(lambda delivery: None, trace_id=None, every=1)
+    router = Router(max_traces=1, max_unclaimed_traces=10, subscriptions=subscriptions)
+    claimed = otlp_span("cccccccccccccccc", trace="11111111111111111111111111111111")
+    refused: set[str | None] = set()
+    for record in Framer().document(otlp_export(claimed)).records:
+        assert router.route(record).events == ()
+    for n in range(1000, 1100):
+        for record in health_check(n, spans=2):
+            for event in router.route(record).events:
+                assert event.code == REFUSED_AT_CAP
+                refused.add(event.trace_id)
+
+    assert len(router.trace_ids) == 11
+    assert len(subscriptions._cursors) == 11
+    assert len(refused) == 90
+    assert router.counts == {REFUSED_AT_CAP: 180}
 
 
 # --------------------------------------------------------------------------

@@ -329,7 +329,8 @@ def test_spec_s_count_of_the_cli_s_process_tests_is_the_measured_one():
     one item; an item runs the CLI as a process when its test function reaches
     `CLI` or `subprocess` (`_reaches_a_process`). The nine §8.7 names must be
     exactly the items that do not. The sentence said 72 of 81 from the receiver
-    series until the bounded fix review of PR #2 measured 77 of 86 (its R-3).
+    series until the bounded fix review of PR #2 measured 77 of 86 (its R-3),
+    and 78 of 87 since B1 added the `--max-unclaimed-traces` process test.
     """
     text = section(
         SPEC.read_text(encoding="utf-8"), "### 8.7 What this section is tested against"
