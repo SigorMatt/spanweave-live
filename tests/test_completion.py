@@ -222,6 +222,34 @@ def test_the_clock_is_read_once_per_record_and_once_per_tick():
     assert clock.reads == 4
 
 
+def test_pin_a_completion_attached_after_routing_measures_from_the_tick():
+    """A pin, green on the parent: B5 changed no behaviour for it (`SPEC.md` §5.2).
+
+    `Router.completion` is a public field, so a caller can attach a policy to a
+    router that already routed records with none. Those records read no clock
+    and opened no book, so the first tick opens the book at its own reading:
+    `Quiet` counts silence from that tick, and the `completed` event's
+    `seconds` runs from it, not from the records. The receiver series' T1,
+    probe B: an hour of silence before the attach is not seen, and the trace
+    completes one `Quiet(1.0)` after the first tick, reporting 1.0.
+    """
+    clock = Clock()
+    router = Router()
+    router.route(openinference("a"))
+    router.route(openinference("b", parent="a"))
+    assert clock.reads == 0, "a router with no policy reads no clock"
+
+    clock.tick(3_600.0)
+    router.completion = Completion(policies=(Quiet(1.0),), now=clock)
+    assert router.tick() == (), "the hour before the attach is not silence seen"
+
+    clock.tick(1.0)
+    (done,) = router.tick()
+    assert (done.trace_id, done.policy, done.version) == ("t1", Quiet(1.0), 2)
+    (decision,) = [event for event in done.events if event.code == COMPLETED]
+    assert decision.seconds == 1.0
+
+
 # --------------------------------------------------------------------------
 # Each policy fires exactly when its definition says. Both sides of every
 # boundary: the tick before must not fire, the tick at it must.

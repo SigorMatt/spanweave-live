@@ -13,6 +13,41 @@ that series' close; each such citation is dated history, resolvable at
 
 ## Unreleased
 
+### B5: completion's edges, stated and pinned (2026-10-22)
+
+Parent `7319ac2`. The receiver series' run-2 review, T1; the zoo series' cold
+review, run 2, R-11, R-14 and R-15. **No behaviour changed**: every test
+below is a pin, green on the parent, and says so.
+
+Changed
+
+- **`SPEC.md` §5.2** says what a completion attached after records were
+  routed measures: `Quiet` from the tick that opens the book, and the
+  `completed` event's `seconds` from it; and why the CLI's end-of-input
+  `Cap(0)` does not meet that case.
+- **`SPEC.md` §5.3 and §5.5, and `README.md`'s third trap**, say `RootEnded`
+  acts per generation: a later generation of a trace whose root arrived in an
+  earlier one is never completed by `RootEnded` alone either, and end of
+  input completes it.
+
+Added
+
+- **Pins** in `tests/test_completion.py`: routed with `completion=None`,
+  `Quiet(1.0)` attached an hour later, completes one second after the first
+  tick and reports `seconds == 1.0` (T1's probe B).
+- **Pins** in `tests/test_zoo_policies.py`: on Z3 and Z1 under
+  `RootEnded(1.0)`, body 0 re-fed after completion opens a second generation
+  that does not complete on the first's root, nor at all up to `now = 10^6`,
+  and end of input writes it as `<trace_id>.2.json`; `ROOTLESS` is the zoo's
+  two Z5 captures; §5.3's `now = k` (both), `last + 0.5` and "*N*-th record"
+  are re-derived, the schedule from a run's ticks and `completed` events.
+- **Mutations shown caught**: `book.root_ended_at = None` deleted from
+  `_began` (the two re-feed pins, both captures); `ROOTLESS = ()`; §5.3's
+  `now = k` edited to `k + 0.25` at each occurrence, `last + 0.5` to
+  `last + 0.75`, and "*N*-th" to "*N - 1*-th" (each red); a tick that skips
+  a trace with no book, and a tick-opened book whose first record is at
+  `0.0` (the T1 pin, alone).
+
 ### B4: `released` carries its version (2026-10-22)
 
 Derived parent `72d60e8`. The receiver series' run-2 review, T5: a

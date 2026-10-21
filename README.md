@@ -93,11 +93,13 @@ you rely on them; the third is the policies' own:
   later one carries `orphan_parent`, as a batch build of those records does.
   That is the policy you chose showing, not a defect; generations are never
   merged, and a `late_arrival` event opens each one after the first. And
-  `--root-grace` alone never completes a trace whose root never arrives, nor
-  a trace no adapter can read — a plain HTTP health check exported beside your
-  agent's spans — which has no graph, so no root the receiver can see: give
-  `--quiet` or `--cap` beside it, or only end of input completes it. Such a
-  trace completes as `no_graph`, with no file (`SPEC.md` §5.3, §5.5).
+  `--root-grace` alone never completes a trace whose root never arrives;
+  nor, because it acts per generation, a later generation of a trace whose
+  root arrived in an earlier one; nor a trace no adapter can read — a plain
+  HTTP health check exported beside your agent's spans — which has no graph,
+  so no root the receiver can see. Give `--quiet` or `--cap` beside it, or
+  only end of input completes them. The last completes as `no_graph`, with
+  no file (`SPEC.md` §5.3, §5.5).
 
 Exit codes (`SPEC.md` §8.6): `0` the input ended and everything was delivered ·
 `1` it could not start · `2` usage · `3` it ran to the end but something it had

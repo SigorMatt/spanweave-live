@@ -1209,6 +1209,19 @@ Three rules make the reading deterministic:
   complete traces early or never. The receiver's claim is about what it saw and
   when **it** saw it, which is the only claim it is in a position to make.
 
+**A completion attached after records were routed** measures from the tick.
+`Router.completion` is a public field, so a caller can set it on a router that
+has already routed records with none. Those records read no clock (the second
+rule above), so the router has no reading of when any of them arrived; the
+first tick after the attach takes its one reading and opens each held trace's
+book at it. `Quiet` then counts silence from **that tick**, not from the
+records, and the `completed` event's `seconds` runs from it too: silence before
+the attach is silence the receiver did not see. That is the clock rule above,
+not a new one, and `tests/test_completion.py` pins it (the receiver series'
+T1). The CLI does not meet it: it constructs its router with a `Completion`
+always, its tuple empty when no flag names a policy, so its end-of-input
+`Cap(0)` (§8.5), attached in place of that one, finds every book already open.
+
 ### 5.3 The three policies, and the instant each fires
 
 Each is a value, each answers one question about `TraceState`, and the boundary
@@ -1273,6 +1286,18 @@ A caller whose stream can lose a root composes `RootEnded` with `Quiet` or
 at the tick at `now = last + S`, for each of the same S; `Cap(4)` at the fourth
 record; and `Cap(5)` never, so only the end-of-input `Cap(0)` (§8.5) completes
 it, with the batch graph.
+
+**And `RootEnded` acts per generation**, so the same holds for a later
+generation of a trace whose root *did* arrive, in an earlier one. A record
+after the trace completed opens a new builder (§5.5), and its book starts
+again: `root_ended_at` is reset with the generation's first record, as
+`Quiet`'s silence and `Cap`'s count are, so the grace a new generation waits
+on runs from a root **it** holds, never from the root an earlier generation
+saw end. A generation that holds no root of its own is therefore never
+completed by `RootEnded` alone either, and end of input completes it, written
+beside the earlier ones. `tests/test_zoo_policies.py` pins it on Z3 and Z1:
+each completed by the `RootEnded` run above, then body 0 fed again, which
+holds no root because their root arrives in the last body.
 
 **Nor does `RootEnded` alone ever complete a trace with no graph.** A trace none
 of whose records any adapter claims (§4.5) has a graph the library refuses, so
@@ -1390,8 +1415,9 @@ the cap only from its first claimed record (§4.5) — unless the router is at
 with the same consequences.
 
 The new builder starts at version 0 and is the newest builder the router holds,
-so the id rejoins `trace_ids` at the end (§4.3). Its `Cap` and `Quiet` are its
-own: this generation's records, this generation's silence.
+so the id rejoins `trace_ids` at the end (§4.3). Its `Cap`, `Quiet` and
+`RootEnded` are its own: this generation's records, this generation's silence,
+this generation's root (§5.3).
 
 **The file already written is not rewritten and not appended to.** If this
 second generation completes too, it is written beside the first, not over it:
