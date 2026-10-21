@@ -102,7 +102,10 @@ it passes tests.
 9. **Read-only toward the observed system.** The receiver reads bytes and writes
    files, stdout and callbacks. It never calls back into the system it watches.
    Trace payloads are untrusted input: never `eval`, `exec`, `pickle` or
-   `yaml.load` anything that came out of a trace.
+   `yaml.load` anything that came out of a trace. Both halves are gated: the
+   `no-network` rule in `tests/gates.py` bans the network libraries, and since
+   B7 its `no-execution-of-content` rule bans those names under
+   `spanweave_live/`, with no seam; the gate fails the build. (`SPEC.md` §1.3.)
 
 ## Architecture
 

@@ -187,6 +187,17 @@ the receiver does not know it exists.
 The practical form of this: the receiver's output is files, stdout and
 callbacks. It has no side effect that reaches the observed system.
 
+Nor does anything the observed system sent reach the receiver as code. Trace
+payloads are untrusted input: nothing that came out of one is executed or
+deserialized into objects — no `eval`, no `exec`, no `pickle`, no `yaml.load`
+(`CLAUDE.md` 9). `tests/gates.py`'s `no-execution-of-content` rule (B7) holds
+that statically: no module under `spanweave_live/` uses one of those names,
+called or referenced, under its own name or an `import … as` alias, and unlike
+the clock there is **no seam**, since no file at the edge has to bind one. Its
+limit is stated as §1.4's is: the rule is syntactic and reads names, not values,
+so `getattr(builtins, "eval")` passes it, and a test holds that it does. The
+network half of this posture is §1.4's `no-network` rule.
+
 ### 1.4 No clock of its own
 
 The receiver has no ambient runtime. The clock, sleeping and listening are

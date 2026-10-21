@@ -98,6 +98,31 @@ PLANTED_CONSUMER_RULES = [
 ]
 
 
+# Trace content executed or deserialized into objects (B7, `CLAUDE.md` standing
+# rule 9, `SPEC.md` §1.3). The four names the rule states, each in the forms a
+# rule matching text would miss: a call, a reference that gives a call a new
+# name, an attribute on an `import ... as` alias, and an import of the member
+# under an alias of its own.
+PLANTED_TRACE_CONTENT = [
+    ("eval(line)", "eval"),
+    ("exec(line)", "exec"),
+    ("run = eval", "eval"),
+    ("handlers = {'x': exec}", "exec"),
+    ("import builtins\nbuiltins.eval(line)", "eval"),
+    ("import builtins as b\nb.exec(line)", "exec"),
+    ("from builtins import eval", "eval"),
+    ("from builtins import exec as run", "exec"),
+    ("import pickle", "pickle"),
+    ("import pickle as p", "pickle"),
+    ("from pickle import loads", "pickle"),
+    ("import yaml\nyaml.load(body)", "yaml.load"),
+    ("import yaml as y\ny.load(body, Loader=y.Loader)", "yaml.load"),
+    ("import yaml\nparse = yaml.load", "yaml.load"),
+    ("from yaml import load", "yaml.load"),
+    ("from yaml import load as parse", "yaml.load"),
+]
+
+
 @pytest.mark.parametrize(("source", "expected"), PLANTED_AMBIENT)
 def test_gate_fails_on_a_planted_violation(source, expected):
     found = gates.check_source("spanweave_live/planted.py", source, gates.ALL_RULES)
@@ -124,6 +149,92 @@ def test_gate_fails_on_a_planted_import_of_the_consumer_s_rule_engine(source, ex
     found = gates.check_source("spanweave_live/planted.py", source, gates.ALL_RULES)
     assert [v.rule for v in found] == ["no-consumer-rules"]
     assert expected in found[0].detail
+
+
+@pytest.mark.parametrize(("source", "expected"), PLANTED_TRACE_CONTENT)
+def test_gate_fails_on_a_planted_execution_of_trace_content(source, expected):
+    found = gates.check_source("spanweave_live/planted.py", source, gates.ALL_RULES)
+    assert [v.rule for v in found] == ["no-execution-of-content"]
+    assert expected in found[0].detail
+
+
+def test_trace_content_execution_has_no_seam_and_cannot_be_given_one():
+    """No file at the edge has to execute or unpickle anything, so no seam.
+
+    An allowlist naming every banned name for the planted file exempts none of
+    them: the rule takes `seams` for `Rule`'s shape and reads nothing from it.
+    """
+    seams = {"planted.py": frozenset({"eval", "exec", "pickle", "yaml", "builtins"})}
+    source = "import pickle\nimport yaml\nyaml.load(b)\neval(b)\nexec(b)"
+    found = gates.no_execution_of_content(
+        "spanweave_live/planted.py", source, ast.parse(source), seams=seams
+    )
+    assert [v.line for v in found] == [1, 3, 4, 5]
+    for allowed in gates.SEAMS.values():
+        assert not allowed & {"eval", "exec", "pickle", "yaml", "builtins"}
+
+
+def test_the_trace_content_gate_does_not_fire_on_what_merely_looks_alike():
+    """The safe loaders and the other `eval`s are not the four names.
+
+    `yaml.safe_load` builds no objects, `ast.literal_eval` evaluates no code,
+    and `.eval()` on something that is not `builtins` is somebody's method.
+    """
+    innocent = "\n".join(
+        [
+            '"""Never eval, exec, pickle or yaml.load a trace."""',
+            "import ast",
+            "import json",
+            "import yaml",
+            "yaml.safe_load(body)",
+            "yaml.dump(body)",
+            "ast.literal_eval(text)",
+            "json.loads(text)",
+            "model.eval()",
+            "query.exec()",
+            "loader.load(body)",
+            "evaluated = executed = None",
+        ]
+    )
+    found = gates.check_source("spanweave_live/innocent.py", innocent, gates.ALL_RULES)
+    assert found == []
+
+
+def test_the_trace_content_gate_states_what_it_does_not_catch():
+    """The rule reads names, not values, and says so (as T11's limit is said).
+
+    `getattr` with a string, or a module rebound by assignment, gets past a
+    syntactic rule. If the rule is ever broadened to chase either, this is the
+    assertion that changes in the same commit.
+    """
+    escapes = "\n".join(
+        [
+            "import builtins",
+            "import yaml",
+            'getattr(builtins, "eval")(line)',
+            "m = yaml",
+            "m.load(body)",
+        ]
+    )
+    found = gates.check_source("spanweave_live/sneaky.py", escapes, gates.ALL_RULES)
+    assert found == []
+    assert "syntactic" in gates.no_execution_of_content.__doc__
+
+
+def test_the_trace_content_gate_reaches_a_nested_module(tmp_path, monkeypatch):
+    """The rule is scanned over the package at any depth, as the others are."""
+    root = tmp_path / gates.PACKAGE_ROOT.name
+    (root / "ingest" / "deep").mkdir(parents=True)
+    (root / "__init__.py").write_text("", encoding="utf-8")
+    (root / "ingest" / "__init__.py").write_text("", encoding="utf-8")
+    (root / "ingest" / "deep" / "loader.py").write_text(
+        "import json\nimport pickle\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(gates, "PACKAGE_ROOT", root)
+    found = gates.check_package(gates.ALL_RULES)
+    assert [(v.rule, v.path, v.line) for v in found] == [
+        ("no-execution-of-content", "spanweave_live/ingest/deep/loader.py", 2)
+    ]
 
 
 def test_the_consumer_rule_engine_has_no_seam_and_cannot_be_given_one():

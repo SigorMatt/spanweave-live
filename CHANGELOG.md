@@ -13,6 +13,39 @@ that series' close; each such citation is dated history, resolvable at
 
 ## Unreleased
 
+### B7: the trace-content gate (2026-10-22)
+
+Parent `3159579`. The receiver series' run-1 review, R0-4, its open half:
+standing rule 9 (no `eval`, `exec`, `pickle`, `yaml.load` on trace content)
+was gated nowhere. **No library behaviour changed**; the package already held
+none of the names, and the new rule is green over it.
+
+Changed
+
+- **`SPEC.md` §1.3** states that trace payloads are never executed or
+  deserialized into objects, the rule that holds it, that it has no seam, and
+  its limit. **`CLAUDE.md`'s standing rule 9** says both of its halves are
+  gated.
+
+Added
+
+- **`tests/gates.py`'s `no-execution-of-content`**, the fifth rule: no module
+  under `spanweave_live/` uses `eval` or `exec` (called or referenced, bare or
+  on `builtins` under any `import … as` alias, or imported from `builtins`),
+  imports `pickle`, or uses `yaml.load` (on `yaml` under any alias, or imported
+  from `yaml` under any name). `yaml.safe_load`, `ast.literal_eval` and a
+  `.eval()` method are not caught. The rule is syntactic: `getattr(builtins,
+  "eval")` passes it, and a test holds that it does.
+- **`tests/test_gates.py`**: the planted violations, red on the parent (no
+  rule there catches them); the no-seam test; the look-alike control; the
+  stated limit; a nested module of a planted package caught by
+  `check_package`.
+- **Mutations shown caught**: `exec`, `pickle` or `yaml.load` dropped from
+  the rule; `import … as` aliases not followed; the `from … import` branch
+  removed; calls caught but not references; the rule left out of
+  `ALL_RULES`; the rule skipping nested modules; a seam honoured; the rule
+  matching source text instead of the AST.
+
 ### B6: the framer's remainder, tested where it crosses (2026-10-22)
 
 Parent `f0987b5`. The receiver series' run-1 review, R1-6 and R2-2. **No
