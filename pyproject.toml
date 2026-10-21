@@ -89,6 +89,7 @@ packages = ["spanweave_live"]
 include = [
     "/spanweave_live",
     "/tests",
+    "/tools",
     "/.github",
     "/*.md",
     "/LICENSE",

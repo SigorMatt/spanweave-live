@@ -95,7 +95,8 @@ def audit_sdist(sdist: Path) -> None:
     which is the right default and the reason it is asserted rather than
     assumed. Three things must hold at once: the documents a reader needs are
     in (`TASKS.md` among them, because it is where the series' decisions and
-    every review's disposition live); the two submodules are out, since each is
+    every review's disposition live, and `tools/bench_routing.py`, because
+    `SPEC.md` §4.2 cites its run); the two submodules are out, since each is
     another repository's working tree and an sdist carrying one would be a copy
     nothing holds at a sha; and `reviews/` is out, because it is a tracked
     archive of this repository's process and not part of what installs.
@@ -103,7 +104,13 @@ def audit_sdist(sdist: Path) -> None:
     with tarfile.open(sdist) as archive:
         members = archive.getnames()
     inside = {name.split("/", 1)[1] for name in members if "/" in name}
-    for required in ("spanweave_live/__init__.py", "README.md", "TASKS.md", "SPEC.md"):
+    for required in (
+        "spanweave_live/__init__.py",
+        "README.md",
+        "TASKS.md",
+        "SPEC.md",
+        "tools/bench_routing.py",
+    ):
         assert required in inside, f"sdist is missing {required}"
     for forbidden in ("corpus/", "showcase/", "reviews/"):
         leaked = sorted(n for n in inside if n.startswith(forbidden))

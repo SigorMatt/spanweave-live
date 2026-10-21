@@ -12,8 +12,10 @@ it is cited, the entries made after the close run newest first by their
 commits, and `CLAUDE.md` says whether a series is open as the tree does, cites
 each closed series' last plan state, names every source of a trace id
 `SPEC.md` §1.1 names, and names on its `make conformance` line the files that
-target runs; and `SPEC.md` §8.7's count of the CLI's process tests is
-`tests/test_cli.py`'s collection, measured.
+target runs; `SPEC.md` §8.7's count of the CLI's process tests is
+`tests/test_cli.py`'s collection, measured; and `CONTRIBUTING.md`'s rule
+against a test that opens a real socket names, as its exceptions, exactly the
+test files that import a socket module.
 
 The registry's commits and the plan files are read from history, so the tests
 that take the `history` fixture need a git binary and a clone with history:
@@ -569,3 +571,51 @@ def test_spec_s_count_of_the_cli_s_process_tests_is_the_measured_one():
     assert len(items) == total
     assert len(functions) - len(in_process) == process
     assert sorted(in_process) == sorted(named)
+
+
+#: The modules a test file opens a real socket with: the stdlib's socket layer
+#: and the two HTTP halves built on it.
+SOCKET_MODULES = frozenset({"socket", "socketserver", "http.client", "http.server"})
+
+
+def _opens_a_socket(path: Path) -> bool:
+    """Whether a test file imports a module it could open a real socket with.
+
+    Read off the file's imports, not its text: `tests/test_gates.py` and
+    `tests/gates.py` hold `import socket` in strings, as planted violations,
+    and open nothing.
+    """
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    imported: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module is not None:
+            imported.add(node.module)
+            imported.update(f"{node.module}.{alias.name}" for alias in node.names)
+    return not imported.isdisjoint(SOCKET_MODULES)
+
+
+def test_contributing_s_socket_rule_names_the_test_files_that_open_one():
+    """`CONTRIBUTING.md`'s "no test that … opens a real socket" names its
+    exceptions, and they are the test files that do (the zoo series' run 2,
+    R-10; B9).
+
+    The exceptions are the ones `SPEC.md` §7.2 and §8.7 argue: the endpoint's
+    tests, bound on `127.0.0.1` port 0, and `tests/test_cli.py`'s spawned
+    `serve`. Every `tests/<file>.py` the rule's bullet names must import a
+    socket module, and every test file that imports one must be named there, so
+    a new test that opens a socket either is argued in the rule or is red here.
+    """
+    text = (REPO / "CONTRIBUTING.md").read_text(encoding="utf-8")
+    start = text.index("**No test that reads the real clock, opens a real socket")
+    end = text.find("\n- [ ]", start)
+    bullet = text[start : end if end != -1 else text.index("\n## ", start)]
+    named = set(re.findall(r"`(tests/\w+\.py)`", bullet))
+    opening = {
+        f"tests/{path.name}"
+        for path in sorted((REPO / "tests").glob("*.py"))
+        if _opens_a_socket(path)
+    }
+    assert opening, "no test file opens a socket: the scan reads nothing"
+    assert named == opening

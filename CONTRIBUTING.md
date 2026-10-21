@@ -70,7 +70,17 @@ A batch is done when all of these hold.
 
 - [ ] **No test that reads the real clock, opens a real socket, or shuffles
       unseeded.** Drive the injected seams. A timeout test against the real clock
-      is a flake, and a flake gets tuned until it asserts nothing.
+      is a flake, and a flake gets tuned until it asserts nothing. The socket
+      half has **two exceptions**, each argued in `SPEC.md` and neither a
+      race: `tests/test_endpoint.py` binds the endpoint's adapter layer on
+      `127.0.0.1` port **0**, writes one request and asks `serve` for one
+      yield, with no thread, no timeout and no retry (§7.2); and
+      `tests/test_cli.py` spawns `spanweave-live serve --port 0` and posts to
+      it after a **read** of its `listening` line, never a sleep (§8.7). The
+      socket is real in both because what they hold is the socket's answer,
+      and the schedule is the test's. A test file that opens one anywhere
+      else is red in the record test (`test_record.py`), which holds this
+      list to the test files that import a socket module.
 
 ## Halt, do not improvise
 

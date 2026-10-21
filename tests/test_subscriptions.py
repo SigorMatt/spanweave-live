@@ -672,6 +672,47 @@ def test_a_consumer_joining_mid_stream_with_a_coarser_window_is_the_other_way():
     assert router.counts[DELTA_UNAVAILABLE] == 1
 
 
+def test_a_joiner_whose_first_window_was_lost_folds_from_the_graph_it_is_handed():
+    """A window lost to `delta_unavailable` is not retried and not re-reported,
+    and the joiner's fold starts from its first update's `builder.graph()`
+    (`SPEC.md` §6.5, the receiver series' T4).
+
+    The cursor advanced before the delta was asked for, so the joiner's next
+    window starts at the version refused at — not at 0, which would be a retry
+    and a second refusal — and its first update is a delta from a version it
+    never saw. Folding every later delta onto the graph that update's builder
+    gives, at the end of the trace, the final graph byte for byte: §6.6's claim
+    with its "first graph" read as §6.5 says.
+    """
+    subscriptions = Subscriptions()
+    fine, coarse = Collector(), Collector()
+    subscriptions.subscribe(fine)
+    router = Router(subscriptions=subscriptions)
+    route_all(router, trace_of(5))
+    subscriptions.subscribe(coarse, every=4)
+
+    route_all(
+        router,
+        [openinference(f"s{index}", parent="s0") for index in range(5, 15)],
+    )
+    assert router.flush("t1") == ()
+
+    assert router.counts[DELTA_UNAVAILABLE] == 1, "the lost window is said once"
+    assert [(update.since, update.version) for update in coarse.updates] == [
+        (6, 10),
+        (10, 14),
+        (14, 15),
+    ], "the window lost at version 6 was not retried"
+    opening = coarse.first_graph
+    assert opening is not None
+    assert len(opening.nodes()) == 10, "the graph at the first update's version"
+
+    folded = opening
+    for update in coarse.updates[1:]:
+        folded = update.delta.fold(folded)
+    assert spanweave.dumps(folded) == spanweave.dumps(final_graph(router))
+
+
 # --------------------------------------------------------------------------
 # A released builder takes its journal with it (§6.5).
 # --------------------------------------------------------------------------

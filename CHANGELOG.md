@@ -13,6 +13,49 @@ that series' close; each such citation is dated history, resolvable at
 
 ## Unreleased
 
+### B9: the record made true (2026-10-22)
+
+Parent `40f0915`. The zoo series' cold review, run 1, R-14, and run 2, R-10;
+the receiver series' run-2 review, T4, T9 and T12. **No library behaviour
+changed**: every sentence added states what the code already does.
+
+Changed
+
+- **`SPEC.md` §7.2 states no count** of the tests the `push` mutation takes
+  down (R-14). The count is the suite's size and moves with it, and nothing
+  re-derived the one it stated; the shape it teaches — both `verbatim` cases
+  green, the `trimmed` and `compact` ones red — stays, held by the framer
+  control test in `tests/test_endpoint.py`.
+- **`SPEC.md` §6.5 says what happens to a window lost to
+  `delta_unavailable`** (T4): it is not retried and not re-reported, because
+  the cursor advanced before the delta was asked for; and a subscriber whose
+  first window was lost starts its fold from its first update's
+  `builder.graph()`.
+- **`CONTRIBUTING.md`'s socket rule names its two exceptions** (R-10), as
+  `SPEC.md` §7.2 and §8.7 argue them: `tests/test_endpoint.py`, bound on
+  `127.0.0.1` port 0, and `tests/test_cli.py`'s spawned `serve`.
+- **`SPEC.md` §4.2's measurement cites its artifact** (T12),
+  `tools/bench_routing.py`, with the date and the machine of the run it
+  quotes, and states the share per repeat rather than from two ranges.
+- **`TASKS.md`'s R2a entry carries the correction of R2a's "69/69"** (T9):
+  68, re-collected; the commit body is immutable.
+- The sdist ships `tools/`, and `make install-check` asserts the benchmark is
+  in it.
+
+Added
+
+- **`tools/bench_routing.py`**, the benchmark §4.2 cites. It reads the real
+  clock, so it is not a test and `make check` does not run it.
+- **`tests/test_record.py`**: the test files that import a socket module are
+  exactly the ones `CONTRIBUTING.md`'s socket rule names. Red on the parent;
+  shown red with `import socket` planted in `tests/test_framing.py` and with
+  `from http import client` in `tests/test_routing.py`.
+- **`tests/test_subscriptions.py`**: a joiner whose first window was lost is
+  not re-sent it, the loss is one event, and its fold from the first update's
+  `builder.graph()` is the final graph byte for byte. Green on the parent, as
+  a statement of existing behaviour is; shown red with the cursor rolled back
+  on a refusal (a retry).
+
 ### B8: the record test reads what it holds (2026-10-22)
 
 Parent `3937f12`. The zoo series' cold review, run 2, R-16 and R-18; its

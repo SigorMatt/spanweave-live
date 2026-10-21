@@ -804,10 +804,20 @@ over the record and `parse` then translates it a second time — the builder's o
 that second parse is, and the answer is **not** "half", which is what this
 section said until R2a and what the thread that opened it assumed.
 
-Measured twice, independently, on 2000 distinct OpenInference `CHAIN` spans
-with `perf_counter` over three repeats: `trace_id_of` costs **20–24 µs** per
-record against `Builder.feed`'s **97–131 µs**, i.e. **15.5–17.1 %** of
-`trace_id_of + feed`, good to roughly ±3 points and no finer. An upstream
+The measurement is `tools/bench_routing.py`, which anyone can re-run (`uv run
+python tools/bench_routing.py`): over 2000 distinct OpenInference `CHAIN` spans
+of one trace it times `trace_id_of` on every record and a fresh `Builder`'s
+`feed` on every record with `perf_counter`, three repeats, and prints each
+repeat's microseconds per record and `trace_id_of`'s share of `trace_id_of +
+feed`. It is not a test and `make check` does not run it: a timing is the
+machine's answer, not the library's. Its run of **2026-10-22**, on this
+repository's development machine (an Intel Core i7-4600U, Linux x86_64,
+Python 3.14.6), gave `trace_id_of` **24.4–25.0 µs** per record against
+`feed`'s **124.3–127.1 µs**, and a share of **16.4–16.5 %** in each repeat —
+the share computed within a repeat, not from the two ranges taken as
+independent bounds, which would give a wider interval than any repeat
+measured. R2a's two earlier runs, of the same shape with no artifact, gave
+15.5–17.1 %. An upstream
 `spanweave.trace_id_of(record)` would remove most of *that*, not half of
 routing: it is an **optimisation, not a necessity**, and it gets no batch until
 a receiver workload makes routing the cost rather than `feed` and
@@ -1933,6 +1943,20 @@ worse, and nothing here depends on how they are settled.
   with; nothing approximate is offered in its place, for the library's own
   reason. (The second way was `the way to reach it` in this section until R5a,
   which is where the sentence over-narrowed: `reviews/2026-10-06-run2.md` F4.)
+
+  **A window lost this way is not retried and not re-reported.** The cursor
+  advanced when the subscriber was found due, before the delta was asked for —
+  the rule §6.2 states for a subscriber that raised, for the same reason — so
+  the next window this subscriber is due for starts at the version refused at,
+  and the lost one is said once, by this event, and never again. Whether that
+  next window can be produced is retention's answer and not this rule's: for
+  the joiner it can, because the widening has landed by then; for a caller who
+  narrowed the journal it may not, and each window lost so is an event of its
+  own. A subscriber whose first window was lost is therefore first handed a
+  delta from a version it never saw, so **its fold starts from that update's
+  `builder.graph()`** — the graph at the update's version — and every later
+  delta folds onto it: that is the "first graph" of §6.6's claim, for a
+  subscriber whose first update is not `since=0`.
 - **`delta_unsent`** — a subscriber's **tail could not be produced**. A trace
   that completes (§5.4) while a subscriber's cursor is behind its final version
   has a window that subscriber never asked for by the rule but is owed by the
@@ -2716,12 +2740,15 @@ two places.
 
 The named mutation for this section is the obvious one and the one the series
 has been warned about since R1: `Endpoint` hands the body to `Framer.push`
-instead of `Framer.document`. It takes **ten** tests here down, and the shape of
-the ten is the whole lesson: both `verbatim` cases of the central test still
-**pass**, and the four `trimmed` and `compact` cases fail — the trimmed body on
-the status, because `push` hands over a document missing its closing brace and
-that is a `400`, and the compacted body on the records, because `push` completes
-no line and reads nothing at all. A suite whose bodies were only the corpus' own
+instead of `Framer.document`. How many tests it takes down is not stated here,
+because that count is the suite's size and moves whenever a test that posts a
+body is added, and a number nothing re-derives is a number that goes stale
+unnoticed (`TASKS.md`, the zoo series' run 1, R-14). The shape is the whole
+lesson: both `verbatim` cases of the central test still **pass**, and the four
+`trimmed` and `compact` cases fail — the trimmed body on the status, because
+`push` hands over a document missing its closing brace and that is a `400`, and
+the compacted body on the records, because `push` completes no line and reads
+nothing at all. A suite whose bodies were only the corpus' own
 bytes would have been green, which is why `spellings()` has three entries and
 why one test in that file asserts, at the framer and with no socket in it, that
 the three really do differ.

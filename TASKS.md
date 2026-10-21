@@ -695,6 +695,13 @@ drift and the spec is the one a reader of the library reaches first.
   `install-check`" line was already corrected by the plan commit `9a2e40f`, and
   the plan is not a batch's file to edit. It reads as **closed by `9a2e40f`**,
   not as skipped.
+- **The commit body's "69/69 green with R2a's tests deselected" is 68**
+  (thread T9, below; recorded 2026-10-22 by B9 of the backlog series). The
+  body is immutable, so the number is corrected here and not there:
+  `tests/test_framing.py` collects 68 items at R2a's parent `9a2e40f` and 172
+  at `7fdbff3`, so deselecting R2a's framing additions leaves 68, re-collected
+  on 2026-10-22. The claim's substance stands — T9's stronger run, the parent
+  tree with its own tests under the same mutation, is 125 passed.
 
 ### R2b — the framer's cap (`d152c3b`, CI green, 6/6)
 
