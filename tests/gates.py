@@ -432,15 +432,43 @@ def no_ambient_os(
 # B7 added the fifth rule, for the standing rule nothing had held statically
 # since R0 (`reviews/2026-10-04-run1.md` R0-4, its open half): **trace payloads
 # are untrusted input**, and nothing that came out of one is executed or
-# deserialized into objects (`CLAUDE.md` 9, `SPEC.md` §1.3). The four names are
-# the ones that rule states: the builtins `eval` and `exec`, the module
-# `pickle`, and the one member `yaml.load` -- not `yaml` itself, whose
-# `safe_load` builds no objects. No file of the package reads anything but
-# bytes into `spanweave.read_records`, so no file at the edge has to bind one of
-# these, and like `no-consumer-rules` this rule has no seam.
-UNSAFE_BUILTINS = ("eval", "exec")
-UNSAFE_MODULES = ("pickle",)
-UNSAFE_MEMBERS = {"builtins": UNSAFE_BUILTINS, "yaml": ("load",)}
+# deserialized into objects (`CLAUDE.md` 9, `SPEC.md` §1.3). B7 listed the four
+# names that rule states: the builtins `eval` and `exec`, the module `pickle`,
+# and the one member `yaml.load` -- not `yaml` itself, whose `safe_load` builds
+# no objects. The backlog series' cold review measured the families those four
+# left passing (its second half's R-3), and on 2026-10-23 the lists were
+# widened to them: `compile` and `__import__` beside `eval` and `exec`;
+# `pickle`'s kin `_pickle`, `cPickle`, `marshal`, `shelve`, `dill` and
+# `jsonpickle`, and `runpy` and `code`, which run source; and `yaml`'s other
+# object-building loaders beside `load`. The rule is a static ban on **exactly
+# these names**, not a proof that nothing is executed or deserialized: a name
+# not listed here passes it, and so does dynamic reach (the rule's docstring).
+# No file of the package reads anything but bytes into `spanweave.read_records`,
+# so no file at the edge has to bind one of these, and like `no-consumer-rules`
+# this rule has no seam.
+UNSAFE_BUILTINS = ("eval", "exec", "compile", "__import__")
+UNSAFE_MODULES = (
+    "pickle",
+    "_pickle",
+    "cPickle",
+    "marshal",
+    "shelve",
+    "dill",
+    "jsonpickle",
+    "runpy",
+    "code",
+)
+UNSAFE_MEMBERS = {
+    "builtins": UNSAFE_BUILTINS,
+    "yaml": (
+        "load",
+        "load_all",
+        "full_load",
+        "full_load_all",
+        "unsafe_load",
+        "unsafe_load_all",
+    ),
+}
 
 
 def _module_aliases(tree: ast.AST) -> dict[str, str]:
@@ -455,7 +483,7 @@ def _module_aliases(tree: ast.AST) -> dict[str, str]:
 
 
 def _unsafe_names_used(tree: ast.AST) -> Iterator[tuple[str, int]]:
-    """Every use of one of the four names, called or not, under any alias."""
+    """Every use of a name the lists above ban, called or not, under any alias."""
     aliases = _module_aliases(tree)
     for node in ast.walk(tree):
         if isinstance(node, ast.Name) and node.id in UNSAFE_BUILTINS:
@@ -484,17 +512,21 @@ def no_execution_of_content(
     *,
     seams: Mapping[str, frozenset[str]] | None = None,
 ) -> list[Violation]:
-    """No `eval`, `exec`, `pickle` or `yaml.load` under the package. No seam.
+    """No name the lists above ban is used under the package. No seam.
 
     A use is a call or a reference -- a reference is how a call gets a new
     name -- and an alias does not hide it: `b.exec` after `import builtins as
-    b`, `y.load` after `import yaml as y`, `from yaml import load as parse`.
+    b`, `y.load` after `import yaml as y`, `from yaml import load as parse`,
+    and `yaml.load` after `import yaml.constructor`, which binds `yaml` too.
+    A banned module is banned by an import of it or of a submodule of it.
 
-    The rule is **syntactic**, and its limit is stated rather than claimed
-    away, as the import rules' is: it reads names, not values, so
-    `getattr(builtins, "eval")` and `m = yaml; m.load(body)` pass it. Either is
-    conspicuous in review. `seams` is accepted so the rule has `Rule`'s shape,
-    and nothing is read from it.
+    The rule is **syntactic**: a static ban on exactly the names listed, not a
+    proof that nothing is executed or deserialized, and its limit is stated
+    rather than claimed away, as the import rules' is. A name the lists do not
+    hold passes it, and so does dynamic reach, since it reads names, not
+    values: `getattr(builtins, "eval")`, `sys.modules["builtins"].eval` and
+    `m = yaml; m.load(body)` pass it. Each is conspicuous in review. `seams` is
+    accepted so the rule has `Rule`'s shape, and nothing is read from it.
     """
     del seams
     return [

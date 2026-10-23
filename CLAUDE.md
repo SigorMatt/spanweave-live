@@ -106,8 +106,13 @@ A change that violates one is wrong even if it passes tests.
    Trace payloads are untrusted input: never `eval`, `exec`, `pickle` or
    `yaml.load` anything that came out of a trace. Both halves are gated: the
    `no-network` rule in `tests/gates.py` bans the network libraries, and since
-   B7 its `no-execution-of-content` rule bans those names under
-   `spanweave_live/`, with no seam; the gate fails the build. (`SPEC.md` §1.3.)
+   B7 its `no-execution-of-content` rule bans those names and their kin
+   (`compile`, `__import__`, `marshal`, `shelve`, `yaml.unsafe_load` and the
+   rest of its lists) under `spanweave_live/`, with no seam; the gate fails the
+   build. That rule is a static ban on exactly the names it lists, not a proof
+   that nothing is executed or deserialized: a name it does not list, and
+   dynamic reach such as `getattr(builtins, "eval")` or `sys.modules`, are
+   outside it, as `SPEC.md` §1.4 says of the clock gate. (`SPEC.md` §1.3.)
 
 ## Architecture
 

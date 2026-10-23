@@ -191,13 +191,22 @@ callbacks. It has no side effect that reaches the observed system.
 Nor does anything the observed system sent reach the receiver as code. Trace
 payloads are untrusted input: nothing that came out of one is executed or
 deserialized into objects — no `eval`, no `exec`, no `pickle`, no `yaml.load`
-(`CLAUDE.md` 9). `tests/gates.py`'s `no-execution-of-content` rule (B7) holds
-that statically: no module under `spanweave_live/` uses one of those names,
-called or referenced, under its own name or an `import … as` alias, and unlike
-the clock there is **no seam**, since no file at the edge has to bind one. Its
-limit is stated as §1.4's is: the rule is syntactic and reads names, not values,
-so `getattr(builtins, "eval")` passes it, and a test holds that it does. The
-network half of this posture is §1.4's `no-network` rule.
+(`CLAUDE.md` 9). `tests/gates.py`'s `no-execution-of-content` rule (B7) is a
+**static ban on exactly the names it lists**, not a proof of that posture: no
+module under `spanweave_live/` uses one of them, called or referenced, under
+its own name or an `import … as` alias, and unlike the clock there is **no
+seam**, since no file at the edge has to bind one. Since 2026-10-23 the lists
+hold the families the backlog series' cold review measured passing B7's
+`eval`, `exec`, `pickle` and `yaml.load`: the builtins `eval`, `exec`,
+`compile` and `__import__`; the modules `pickle`, `_pickle`, `cPickle`,
+`marshal`, `shelve`, `dill`, `jsonpickle`, `runpy` and `code`; and `yaml`'s
+`load`, `load_all`, `full_load`, `full_load_all`, `unsafe_load` and
+`unsafe_load_all`. Its limit is stated as
+§1.4's is: a name the lists do not hold is outside the rule, and so is dynamic
+reach, since the rule is syntactic and reads names, not values —
+`getattr(builtins, "eval")` and `sys.modules["builtins"].exec` pass it, and a
+test holds that they do. The network half of this posture is §1.4's
+`no-network` rule.
 
 ### 1.4 No clock of its own
 

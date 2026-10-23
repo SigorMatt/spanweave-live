@@ -99,7 +99,7 @@ PLANTED_CONSUMER_RULES = [
 
 
 # Trace content executed or deserialized into objects (B7, `CLAUDE.md` standing
-# rule 9, `SPEC.md` §1.3). The four names the rule states, each in the forms a
+# rule 9, `SPEC.md` §1.3). The four names B7 listed, each in the forms a
 # rule matching text would miss: a call, a reference that gives a call a new
 # name, an attribute on an `import ... as` alias, and an import of the member
 # under an alias of its own.
@@ -120,6 +120,30 @@ PLANTED_TRACE_CONTENT = [
     ("import yaml\nparse = yaml.load", "yaml.load"),
     ("from yaml import load", "yaml.load"),
     ("from yaml import load as parse", "yaml.load"),
+    # The families the backlog series' cold review measured passing B7's four
+    # names (its second half's R-3), one plant per name the lists gained on
+    # 2026-10-23, across the forms above. Each passed the rule before then.
+    ("compile(line, '<trace>', 'exec')", "compile"),
+    ("import builtins as b\nb.compile(line, '<trace>', 'eval')", "compile"),
+    ("__import__('pickle')", "__import__"),
+    ("from builtins import __import__ as load", "__import__"),
+    ("import _pickle", "_pickle"),
+    ("import cPickle", "cPickle"),
+    ("import marshal\nmarshal.loads(body)", "marshal"),
+    ("from shelve import open as shelf", "shelve"),
+    ("import dill as d", "dill"),
+    ("from jsonpickle import decode", "jsonpickle"),
+    ("import runpy", "runpy"),
+    ("from code import InteractiveInterpreter", "code"),
+    ("import yaml\nyaml.load_all(body)", "yaml.load_all"),
+    ("import yaml as y\ny.full_load(body)", "yaml.full_load"),
+    ("from yaml import full_load_all", "yaml.full_load_all"),
+    ("from yaml import unsafe_load as parse", "yaml.unsafe_load"),
+    ("import yaml\nparse = yaml.unsafe_load_all", "yaml.unsafe_load_all"),
+    # The same review's N-3: `import yaml.constructor` binds `yaml`, and the
+    # rule holds it through its default self-alias map alone. Caught before
+    # 2026-10-23 too, so this plant is a pin of the map, not a widening.
+    ("import yaml.constructor\nyaml.load(body)", "yaml.load"),
 ]
 
 
@@ -175,18 +199,25 @@ def test_trace_content_execution_has_no_seam_and_cannot_be_given_one():
 
 
 def test_the_trace_content_gate_does_not_fire_on_what_merely_looks_alike():
-    """The safe loaders and the other `eval`s are not the four names.
+    """The safe loaders and the other `eval`s are not names the rule lists.
 
     `yaml.safe_load` builds no objects, `ast.literal_eval` evaluates no code,
     and `.eval()` on something that is not `builtins` is somebody's method.
+    So is `re.compile`, which `spanweave_live/framing.py` calls: the rule bans
+    the builtin `compile`, not an attribute of that name on another module.
+    A variable named `code` is not the module `code`, and `codecs` is not
+    `code` either: a banned module is matched by its dotted name.
     """
     innocent = "\n".join(
         [
             '"""Never eval, exec, pickle or yaml.load a trace."""',
             "import ast",
+            "import codecs",
             "import json",
+            "import re",
             "import yaml",
             "yaml.safe_load(body)",
+            "yaml.safe_load_all(body)",
             "yaml.dump(body)",
             "ast.literal_eval(text)",
             "json.loads(text)",
@@ -194,6 +225,8 @@ def test_the_trace_content_gate_does_not_fire_on_what_merely_looks_alike():
             "query.exec()",
             "loader.load(body)",
             "evaluated = executed = None",
+            "pattern = re.compile(text)",
+            "code = event.code",
         ]
     )
     found = gates.check_source("spanweave_live/innocent.py", innocent, gates.ALL_RULES)
@@ -203,15 +236,18 @@ def test_the_trace_content_gate_does_not_fire_on_what_merely_looks_alike():
 def test_the_trace_content_gate_states_what_it_does_not_catch():
     """The rule reads names, not values, and says so (as T11's limit is said).
 
-    `getattr` with a string, or a module rebound by assignment, gets past a
-    syntactic rule. If the rule is ever broadened to chase either, this is the
-    assertion that changes in the same commit.
+    `getattr` with a string, a module reached through `sys.modules`, or a
+    module rebound by assignment, gets past a syntactic rule (`SPEC.md` §1.3).
+    If the rule is ever broadened to chase one, this is the assertion that
+    changes in the same commit.
     """
     escapes = "\n".join(
         [
             "import builtins",
+            "import sys",
             "import yaml",
             'getattr(builtins, "eval")(line)',
+            'sys.modules["builtins"].exec(line)',
             "m = yaml",
             "m.load(body)",
         ]
@@ -219,6 +255,7 @@ def test_the_trace_content_gate_states_what_it_does_not_catch():
     found = gates.check_source("spanweave_live/sneaky.py", escapes, gates.ALL_RULES)
     assert found == []
     assert "syntactic" in gates.no_execution_of_content.__doc__
+    assert "exactly the names listed" in gates.no_execution_of_content.__doc__
 
 
 def test_the_trace_content_gate_reaches_a_nested_module(tmp_path, monkeypatch):

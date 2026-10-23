@@ -21,6 +21,44 @@ a `Router` field and a CLI flag were added (B1), `released` gained its version
 (B4) and a refusal its `Status` body (B3). Under this heading are the backlog
 series' batches B1–B10, newest first.
 
+### The trace-content rule says what it bans, and bans the families the review found (2026-10-23)
+
+Derived parent `ece0491`. The third of the commits that disposition the
+series' cold review, answering the second half's R-3 and N-3 (H2 R-3, H2
+N-3). B7's `SPEC.md` §1.3 said nothing from a trace "is executed or
+deserialized into objects" and that the `no-execution-of-content` rule
+"holds that statically", while the rule listed four names and the review
+measured whole families passing it. **No behaviour of the library changed**:
+the gate is in `tests/`, and the widened rule finds nothing under
+`spanweave_live/` (`re.compile` in `framing.py` is an attribute of `re`, not
+the builtin `compile`, and is not flagged).
+
+Changed
+
+- **`tests/gates.py`'s `no-execution-of-content`** bans, beside B7's names,
+  the builtins `compile` and `__import__`; the modules `_pickle`, `cPickle`,
+  `marshal`, `shelve`, `dill`, `jsonpickle`, `runpy` and `code`; and
+  `yaml`'s `load_all`, `full_load`, `full_load_all`, `unsafe_load` and
+  `unsafe_load_all`, in every import form it already read.
+- **`SPEC.md` §1.3 and `CLAUDE.md` standing rule 9** say what the rule is: a
+  static ban on exactly the names it lists, not a proof that nothing is
+  executed or deserialized. A name it does not list, and dynamic reach such
+  as `getattr(builtins, "eval")` or `sys.modules`, are outside it, as §1.4
+  says of the clock gate.
+
+Added
+
+- **A planted case per name the lists gained**, in `tests/test_gates.py`,
+  each passing the rule on the parent; and one for `import yaml.constructor`
+  then `yaml.load` (H2 N-3), which the rule's default self-alias map caught
+  already and nothing held: a pin.
+- **The limit test** holds `sys.modules["builtins"].exec` passing, and the
+  look-alike test holds `re.compile`, a variable named `code` and
+  `import codecs` clean.
+- **Mutations shown caught**: each name the lists gained, dropped alone, is
+  red; each family put back to B7's list is red; the self-alias map emptied
+  is red (the N-3 plant alone).
+
 ### The late arrivals pinned, at a full unclaimed bound and in their version (2026-10-23)
 
 Derived parent `e0ab738`. The second of the commits that disposition the
