@@ -1254,18 +1254,23 @@ Three rules make the reading deterministic:
   complete traces early or never. The receiver's claim is about what it saw and
   when **it** saw it, which is the only claim it is in a position to make.
 
-**A completion attached after records were routed** measures from the tick.
-`Router.completion` is a public field, so a caller can set it on a router that
-has already routed records with none. Those records read no clock (the second
-rule above), so the router has no reading of when any of them arrived; the
-first tick after the attach takes its one reading and opens each held trace's
-book at it. `Quiet` then counts silence from **that tick**, not from the
-records, and the `completed` event's `seconds` runs from it too: silence before
-the attach is silence the receiver did not see. That is the clock rule above,
-not a new one, and `tests/test_completion.py` pins it (the receiver series'
-T1). The CLI does not meet it: it constructs its router with a `Completion`
-always, its tuple empty when no flag names a policy, so its end-of-input
-`Cap(0)` (§8.5), attached in place of that one, finds every book already open.
+**A completion attached after records were routed** measures from the first
+reading after the attach. `Router.completion` is a public field, so a caller
+can set it on a router that has already routed records with none. Those
+records read no clock (the second rule above), so the router has no reading of
+when any of them arrived; the first clock reading for a held trace after the
+attach opens its book at that reading. That is the first tick, which takes its
+one reading and opens the book of each held trace not yet opened, or a record
+routed for that trace, which reads the clock because a completion is now set,
+whichever comes first. `Quiet` then counts silence from **that reading**, not
+from the records before it, and the `completed` event's `seconds` runs from it
+too: silence before the attach is silence the receiver did not see. That is
+the clock rule above, not a new one, and `tests/test_completion.py` pins both
+orders: attach then tick (the receiver series' T1), and attach then a record
+then a tick. The CLI does not meet it: it constructs its router with a
+`Completion` always, its tuple empty when no flag names a policy, so its
+end-of-input `Cap(0)` (§8.5), attached in place of that one, finds every book
+already open.
 
 ### 5.3 The three policies, and the instant each fires
 

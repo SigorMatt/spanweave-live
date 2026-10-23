@@ -21,6 +21,34 @@ a `Router` field and a CLI flag were added (B1), `released` gained its version
 (B4) and a refusal its `Status` body (B3). Under this heading are the backlog
 series' batches B1–B10, newest first.
 
+### §5.2 says which reading opens a book attached mid-stream (2026-10-23)
+
+Derived parent `6aa7750`. The first of the commits that disposition the
+series' cold review, answering the second half's R-1 (H2 R-1). B5's §5.2
+paragraph said the first tick after a completion is attached opens each held
+trace's book, and that `Quiet` counts from that tick. That is false when a
+record for a held trace is routed after the attach and before any tick: with
+a completion set, `route` reads the clock, and the book opens at the record.
+**No behaviour changed**: the new test is a pin, green on the parent, and
+says so.
+
+Changed
+
+- **`SPEC.md` §5.2**: after a completion is attached, the first clock reading
+  for a held trace opens its book — the first tick, or a record routed for
+  that trace, whichever comes first — and `Quiet`, and the `completed`
+  event's `seconds`, count from that reading.
+
+Added
+
+- **A pin** in `tests/test_completion.py`: body 0 routed with no completion,
+  `Quiet(1.0)` attached an hour later, body 1 routed half a second after the
+  attach with no tick between; a tick 0.75 s after body 1 completes nothing,
+  and the trace completes at the tick 1.0 s after it, with `seconds == 1.0`.
+  B5's T1 pin, attach then tick, stays.
+- **Mutation shown caught**: `_activity` that updates a book but never opens
+  one, so only a tick opens it (the new pin, alone).
+
 ### B10 — the backlog series closes, and its plan is deleted (2026-10-22)
 
 Derived parent `fff8a9e`. The backlog series' last batch (B10). No behaviour

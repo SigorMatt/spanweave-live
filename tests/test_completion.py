@@ -250,6 +250,40 @@ def test_pin_a_completion_attached_after_routing_measures_from_the_tick():
     assert decision.seconds == 1.0
 
 
+def test_pin_a_record_routed_after_the_attach_opens_the_book_before_any_tick():
+    """A pin, green on its parent: no behaviour changed for it (`SPEC.md` §5.2).
+
+    The other order of the case above. After the attach, the first clock
+    reading for a held trace opens its book, and that reading need not be a
+    tick: a record routed for the trace with a completion set reads the clock
+    (§5.2's second rule), and the book opens at the record. `Quiet` counts
+    from there, and the `completed` event's `seconds` runs from it. Body 0 is
+    routed with no completion, `Quiet(1.0)` is attached an hour later, body 1
+    is routed half a second after that with no tick between, and the trace
+    completes at the first tick at or after one second past body 1 — not one
+    second past the first tick, which a book opened only by a tick would do.
+    """
+    clock = Clock()
+    router = Router()
+    router.route(openinference("a"))
+    assert clock.reads == 0, "a router with no policy reads no clock"
+
+    clock.tick(3_600.0)
+    router.completion = Completion(policies=(Quiet(1.0),), now=clock)
+    clock.tick(0.5)
+    router.route(openinference("b", parent="a"))
+    assert clock.reads == 1, "the record read the clock; no tick has run"
+
+    clock.tick(0.75)
+    assert router.tick() == (), "0.75 s after the record is not 1.0 s of quiet"
+
+    clock.tick(0.25)
+    (done,) = router.tick()
+    assert (done.trace_id, done.policy, done.version) == ("t1", Quiet(1.0), 2)
+    (decision,) = [event for event in done.events if event.code == COMPLETED]
+    assert decision.seconds == 1.0
+
+
 # --------------------------------------------------------------------------
 # Each policy fires exactly when its definition says. Both sides of every
 # boundary: the tick before must not fire, the tick at it must.
