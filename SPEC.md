@@ -424,8 +424,10 @@ split and one byte at a time, so the sweep cuts the BOM at both of its inner
 boundaries as it cuts every multi-byte character. The reader's tolerance is
 per call, so the BOM's halves handed to it in two calls are
 `undecodable_bytes` — asserted beside the sweep, as its control. A pin, and it
-says so: what it catches is a framer that took the head of the stream out of
-the reader's hands and accepted a BOM only whole at offset 0 of a push.
+says so: what it catches is a framer that hands a partial BOM on across two
+reader calls instead of holding it. A framer that strips a whole BOM at offset
+0 of a push is not caught, and stays green: the reader accepts a BOM at the
+start of every call, so what it hands on reads the same.
 
 The reader's **container detection and deduplication are per call** (§2.1,
 §2.2), and a push is one call. So a chunk's complete lines are read as one
@@ -1028,8 +1030,12 @@ as one tail or one pipe would carry them, and cuts that stream in seeded
 chunks of one byte to twice its longest line, over every cross-scenario pair
 of two line-delimited renderings (a document is never pushed, §3.3), at the
 first seed. A push arriving while the remainder holds one trace's partial
-line and carrying the other trace's bytes is **counted**, and the count must
-be above zero, or the pass would be the line-atomic pass again. It is a pin,
+line and carrying the other trace's bytes is **counted**, by one counter that
+every pass of gate A pushes through, and each pass is held to its count: every
+line-atomic pass must count 0, at each seed it runs, and this pass more than 0,
+or it would be the line-atomic pass again. So a count of every push with a
+non-empty remainder, or of a push carrying the remainder's own trace, is red:
+it is above zero on the line-atomic passes too. It is a pin,
 and says so; the framer that drops what follows a push's last `\n` is red
 here and green on every line-atomic pass.
 

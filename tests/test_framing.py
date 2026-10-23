@@ -308,8 +308,10 @@ def test_a_boundary_inside_a_multi_byte_character_is_never_undecodable():
     its inner boundaries: §3.2's "a BOM split across chunks is likewise whole
     by the time the reader sees it". A pin, and it says so: green on the
     parent, where the remainder already held the BOM's halves together. What
-    it is there to catch is a framer that took the BOM out of the reader's
-    hands -- one that recognised a BOM only at offset 0 of each push.
+    it is there to catch is a framer that hands a partial BOM on across two
+    reader calls instead of holding it. A framer that strips a whole BOM at
+    offset 0 of each push is not caught, and stays green: the reader accepts
+    a BOM at the start of every call, so what it hands on reads the same.
     """
     whole = read_records(MULTI_BYTE_STREAM)
     assert whole.diagnostics == (), "the fixture itself must read clean"

@@ -21,6 +21,42 @@ a `Router` field and a CLI flag were added (B1), `released` gained its version
 (B4) and a refusal its `Status` body (B3). Under this heading are the backlog
 series' batches B1–B10, newest first.
 
+### The framing sentences name the mutation that is red, and the crossing count is held to its condition (2026-10-23)
+
+Derived parent `5881daf`. The fifth of the commits that disposition the
+series' cold review, answering the second half's R-2 and N-2 (H2 R-2, H2
+N-2). B6's `SPEC.md` §3.2 and the BOM sweep's docstring named, as what the
+sweep catches, a framer that accepts a BOM only whole at offset 0 of a
+push, which stays green, as the plan's B6 row was corrected to say at
+`3159579`. B6's one-stream pass asserted its crossing count above zero,
+and nothing held the count's condition: a count of every push with a
+non-empty remainder, or of a push carrying the remainder's own trace, was
+above zero too.
+**No behaviour of the library changed**: the tests are pins, green on the
+parent.
+
+Changed
+
+- **`SPEC.md` §3.2 and `tests/test_framing.py`'s sweep docstring** say what
+  the sweep catches: a framer that hands a partial BOM on across two reader
+  calls instead of holding it. A framer that strips a whole BOM at offset 0
+  of a push is not caught, because the reader accepts a BOM at the start of
+  every call.
+- **`SPEC.md` §4.7**: the one-stream pass's count is taken by one counter
+  that every pass of gate A pushes through, and each pass is held to its
+  count — every line-atomic pass 0, at each seed it runs, and the
+  one-stream pass more than 0.
+- **`tests/test_conformance.py`**: the counter is `Crossings`, and
+  `replay` and the named-adapter pass push through it. The main pass, the
+  V2 pass and the named-adapter passes assert it counts 0 for every pair;
+  the one-stream pass still asserts more than 0.
+
+Added
+
+- **Mutations shown caught**: the weak count (every push with a non-empty
+  remainder) and the same-trace count are each red on the line-atomic
+  passes; on the parent's test both passed.
+
 ### The record test holds what its sentences say: the socket list by its imports, and the open-items table's shas (2026-10-23)
 
 Derived parent `8f3dd91`. The fourth of the commits that disposition the

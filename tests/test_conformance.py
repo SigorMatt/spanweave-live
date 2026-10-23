@@ -199,21 +199,79 @@ def chunked(body: bytes, rng: random.Random) -> list[bytes]:
     return pieces
 
 
-def replay(items: list[tuple[str, bytes]], rng: random.Random) -> Router:
-    """One `Framer`, one `Router`, and the arrivals in the order given."""
+class Crossings:
+    """The pushes that arrive across a held line: one count, every pass (B6).
+
+    A push **arrives across** when the framer's remainder is not empty before
+    it -- it holds a partial line, of the trace of the last byte pushed -- and
+    the chunk carries a byte of the **other** trace. Every pass of gate A
+    pushes through one of these, so each is counted by the same condition and
+    held to its own count (`SPEC.md` §4.7): 0 on a line-atomic pass, which
+    pushes each line in chunks of its own, and more than 0 on the one-stream
+    pass. A count that took every push with a non-empty remainder, or one
+    carrying the remainder's own trace, is above zero on the line-atomic
+    passes too, and red there.
+    """
+
+    __slots__ = ("_held", "count", "framer")
+
+    def __init__(self, framer: Framer) -> None:
+        self.framer = framer
+        self.count = 0
+        self._held: int | None = None
+
+    def push(self, chunk: bytes, owners: bytes) -> spanweave.Records:
+        """`framer.push(chunk)`, counted; `owners[i]` is the trace of `chunk[i]`."""
+        assert len(owners) == len(chunk)
+        if self.framer.pending_bytes:
+            assert self._held is not None
+            if (1 - self._held) in owners:
+                self.count += 1
+        if owners:
+            self._held = owners[-1]
+        return self.framer.push(chunk)
+
+
+def disjoint(
+    first: tuple[tuple[str, bytes], ...], second: tuple[tuple[str, bytes], ...]
+) -> None:
+    """The premise of telling an arrival's trace by its bytes, asserted.
+
+    `Crossings` is told which trace each byte is by which side its arrival
+    came from, and an arrival is known only by its bytes. That is sound only
+    while no arrival of one side is also an arrival of the other.
+    """
+    assert not set(first) & set(second), "an arrival of both sides"
+
+
+def replay(
+    first: tuple[tuple[str, bytes], ...],
+    second: tuple[tuple[str, bytes], ...],
+    rng: random.Random,
+) -> tuple[Router, int]:
+    """Two sides interleaved, through one `Framer` and one `Router`.
+
+    Returns the router and how many of its pushes arrived across a held line
+    (`Crossings`): each line is pushed in chunks of its own, so that count is
+    the line-atomic passes' 0, and a pass asserts it.
+    """
+    disjoint(first, second)
+    items = interleave(first, second, rng)
     framer, router = Framer(), Router()
+    crossings = Crossings(framer)
     for kind, body in items:
         if kind == "document":
             for record in framer.document(body).records:
                 router.route(record)
             continue
+        side = 0 if (kind, body) in first else 1
         for chunk in chunked(body, rng):
-            for record in framer.push(chunk).records:
+            for record in crossings.push(chunk, bytes([side]) * len(chunk)).records:
                 router.route(record)
     for record in framer.flush().records:
         router.route(record)
     assert framer.pending_bytes == 0
-    return router
+    return router, crossings.count
 
 
 # --------------------------------------------------------------------------
@@ -296,9 +354,10 @@ def test_interleaved_traces_produce_each_traces_own_batch_graph(seed: int) -> No
         a = loaded(first, second=False)
         b = loaded(second, second=True)
         rng = random.Random(seed)
-        router = replay(interleave(a.arrivals, b.arrivals, rng), rng)
+        router, across = replay(a.arrivals, b.arrivals, rng)
 
         where = f"{rendering_id(first)} + {rendering_id(second)} @ seed {seed}"
+        assert across == 0, f"{where}: a line-atomic pass pushed across a line"
         assert router.counts == {}, f"{where}: unexpected events {router.counts}"
         assert sorted(router.trace_ids) == sorted({a.trace_id, b.trace_id}), (
             f"{where}: routed to {router.trace_ids}"
@@ -367,10 +426,15 @@ def test_one_stream_of_two_traces_chunked_across_lines_produces_each_batch_graph
     that cross line boundaries -- so a push can arrive while the remainder
     holds one trace's partial line, and carry the other trace's bytes.
 
-    Those arrivals are **counted**, not assumed: a push counts when the
-    remainder is not empty before it and the chunk holds a byte of the other
-    trace's line than the one the remainder holds. The count must be above
-    zero, or this pass would be the line-atomic pass again under a new name.
+    Those arrivals are **counted**, not assumed, by `Crossings`, the counter
+    every pass of gate A pushes through: a push counts when the remainder is
+    not empty before it and the chunk holds a byte of the other trace's line
+    than the one the remainder holds. The count must be above zero here, or
+    this pass would be the line-atomic pass again under a new name; and it is
+    held to its condition by the line-atomic passes, which must count 0 by
+    the same counter -- so a count of every push with a non-empty remainder,
+    or of a push carrying the remainder's own trace, is red there rather than
+    above zero everywhere.
 
     A pin, and it says so: green on the parent. One seed, the first: this
     pass is about where the chunks fall, and the ten seeds above are about
@@ -382,14 +446,12 @@ def test_one_stream_of_two_traces_chunked_across_lines_produces_each_batch_graph
     for first, second in line_pairs():
         a = loaded(first, second=False)
         b = loaded(second, second=True)
+        where = f"{rendering_id(first)} + {rendering_id(second)}, one stream"
+        disjoint(a.arrivals, b.arrivals)
         rng = random.Random(seed)
         items = interleave(a.arrivals, b.arrivals, rng)
         stream = b"".join(body for _, body in items)
-        where = f"{rendering_id(first)} + {rendering_id(second)}, one stream"
         # Which trace each byte of the stream belongs to: 0 for `a`, 1 for `b`.
-        # A line is told by its bytes, which is only sound while no line of
-        # one rendering is also a line of the other -- asserted, not assumed.
-        assert not set(a.arrivals) & set(b.arrivals), where
         owner = b"".join(
             bytes([0 if (kind, body) in a.arrivals else 1]) * len(body)
             for kind, body in items
@@ -398,15 +460,14 @@ def test_one_stream_of_two_traces_chunked_across_lines_produces_each_batch_graph
         longest = max(len(body) for _, body in items)
 
         framer, router = Framer(), Router()
+        crossings = Crossings(framer)
         offset = 0
         for chunk in across_lines(stream, longest, rng):
-            if framer.pending_bytes:
-                held = owner[offset - 1]
-                if (1 - held) in owner[offset : offset + len(chunk)]:
-                    arrivals_across += 1
-            for record in framer.push(chunk).records:
+            pushed = crossings.push(chunk, owner[offset : offset + len(chunk)])
+            for record in pushed.records:
                 router.route(record)
             offset += len(chunk)
+        arrivals_across += crossings.count
         for record in framer.flush().records:
             router.route(record)
         assert framer.pending_bytes == 0
@@ -473,10 +534,10 @@ def test_an_export_with_an_unclaimed_span_interleaves_with_every_rendering(
     for path in renderings():
         rendering = loaded(path, second=False)
         rng = random.Random(seed)
-        items = interleave(rendering.arrivals, (("document", body),), rng)
-        router = replay(items, rng)
+        router, across = replay(rendering.arrivals, (("document", body),), rng)
 
         where = f"{rendering_id(path)} + zoo {UNCLAIMED_AMONG_CLAIMED} @ seed {seed}"
+        assert across == 0, f"{where}: a line-atomic pass pushed across a line"
         assert router.counts == {}, f"{where}: unexpected events {router.counts}"
         assert router._no_trace is None, f"{where}: a record reached no trace"
         assert sorted(router.trace_ids) == sorted({rendering.trace_id, z4.trace_id})
@@ -544,14 +605,19 @@ def test_under_a_named_adapter_interleaved_traces_produce_the_named_batch_graph(
             data = relabelled(data) if relabel else data
             graph = spanweave.dumps(undigested(spanweave.build(data, adapter=adapter)))
             sides.append((arrivals(path, data), graph, "zz1" if relabel else "t1"))
+        disjoint(sides[0][0], sides[1][0])
         rng = random.Random(seed)
         items = interleave(sides[0][0], sides[1][0], rng)
         framer, router = Framer(), Router(adapter=adapter)
+        crossings = Crossings(framer)
         for kind, body in items:
+            side = 0 if (kind, body) in sides[0][0] else 1
             pieces = [body] if kind == "document" else chunked(body, rng)
             for piece in pieces:
                 read = (
-                    framer.document(piece) if kind == "document" else framer.push(piece)
+                    framer.document(piece)
+                    if kind == "document"
+                    else crossings.push(piece, bytes([side]) * len(piece))
                 )
                 for record in read.records:
                     router.route(record)
@@ -559,6 +625,7 @@ def test_under_a_named_adapter_interleaved_traces_produce_the_named_batch_graph(
             router.route(record)
 
         where = f"{rendering_id(first)} + {rendering_id(second)} under {adapter}"
+        assert crossings.count == 0, f"{where}: a line-atomic pass pushed across a line"
         assert router.counts == {}, f"{where}: unexpected events {router.counts}"
         assert router._no_trace is None, f"{where}: a record reached no trace"
         assert sorted(router.trace_ids) == ["t1", "zz1"], where
