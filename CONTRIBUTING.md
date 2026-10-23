@@ -78,9 +78,13 @@ A batch is done when all of these hold.
       `tests/test_cli.py` spawns `spanweave-live serve --port 0` and posts to
       it after a **read** of its `listening` line, never a sleep (§8.7). The
       socket is real in both because what they hold is the socket's answer,
-      and the schedule is the test's. A test file that opens one anywhere
-      else is red in the record test (`test_record.py`), which holds this
-      list to the test files that import a socket module.
+      and the schedule is the test's. The record test (`test_record.py`)
+      holds this list to the test files that **import** a socket module, by
+      `import` or by `from … import`: a test file that imports one and is
+      not named here is red there. That check is static, read off each
+      file's imports, and does not see what a test opens: a test that opens
+      a socket through a module it does not import itself, or in a child
+      process, is outside it and is held to this rule by review.
 
 ## Halt, do not improvise
 

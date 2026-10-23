@@ -21,6 +21,46 @@ a `Router` field and a CLI flag were added (B1), `released` gained its version
 (B4) and a refusal its `Status` body (B3). Under this heading are the backlog
 series' batches B1–B10, newest first.
 
+### The record test holds what its sentences say: the socket list by its imports, and the open-items table's shas (2026-10-23)
+
+Derived parent `8f3dd91`. The fourth of the commits that disposition the
+series' cold review, answering the second half's R-4 and N-5 (H2 R-4, H2
+N-5). B9's `CONTRIBUTING.md` bullet said a test file that opens a socket
+anywhere else is red in the record test, while the test reads imports, and
+its `from <module> import <name>` half was held by no committed case. B10's
+open-items table cited a batch commit per taken item, and the rows it closes
+carried a close mark in place, and no test read either. **No behaviour of
+the library changed**, and no tracked record was false: the tests are new,
+and `TASKS.md` reads as it did.
+
+Changed
+
+- **`CONTRIBUTING.md`'s socket bullet** says what the record test holds: a
+  test file that **imports** a socket module, by `import` or by
+  `from … import`, must be one of the named exceptions. The check is static
+  and does not see what a test opens; a socket opened through a module the
+  test does not import itself, or in a child process, is held by review.
+- **`tests/test_record.py`**: the socket-rule test and its scan are named
+  for imports (`…_that_import_one`, `_imports_a_socket_module`), and their
+  docstrings no longer say the check sees a test that opens a socket.
+
+Added
+
+- **The scan's import forms**, one planted file each: `import socket`,
+  `from socket import create_connection` (the review's plant),
+  `from http.server import …`, `from http import client` and a
+  function-level `import http.client` are found; `import socket` in a
+  string, `import json` and `from http import HTTPStatus` are not.
+- **The open-items table against the registry**: each item a batch closed
+  names that batch's registered commit, every outcome is closed, declined
+  or deferred, and each row the item names where it is registered, in the
+  zoo or the receiver series, carries a dated `closed by Bn` mark with the
+  same commit. Declined and deferred marks are held by review.
+- **Mutations shown caught**: the scan's `imported.add(node.module)`
+  dropped is red; the table's B4 row pointed at its `plan:` commit `7319ac2`
+  is red; the "Closed by B5" mark on zoo run 2's R-11 deleted is red. Each
+  of these passed the parent's record test.
+
 ### The trace-content rule says what it bans, and bans the families the review found (2026-10-23)
 
 Derived parent `ece0491`. The third of the commits that disposition the

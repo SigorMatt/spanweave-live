@@ -3,19 +3,21 @@
 A series closes by deleting its `WORKPLAN.md` and folding what outlives it into
 `TASKS.md`, and the files a cold session reads first -- `CLAUDE.md`, then
 `TASKS.md` -- are then the only place the series is described. Each sentence
-below is one of theirs that a test can check without running the library:
-the version is one number wherever it is written, the registry names the
-batches in the order they ran and each with the commit that closed it, the
-decisions log is the plan's §3 at the plan state it cites, as it says, the
-reader's half of L1 is the commit spanweave's own registry says it is wherever
-it is cited, the entries made after the close run newest first by their
-commits, and `CLAUDE.md` says whether a series is open as the tree does, cites
-each closed series' last plan state, names every source of a trace id
-`SPEC.md` §1.1 names, and names on its `make conformance` line the files that
-target runs; `SPEC.md` §8.7's count of the CLI's process tests is
+below is one of theirs that a test can check without running the library: the
+version is one number wherever it is written, the registry names the batches in
+the order they ran and each with the commit that closed it, the backlog series'
+open-items table names those commits and each close it implies is marked where
+the item is registered, the decisions log is the plan's §3 at the plan state it
+cites, as it says, the reader's half of L1 is the commit spanweave's own
+registry says it is wherever it is cited, the entries made after the close run
+newest first by their commits, and `CLAUDE.md` says whether a series is open as
+the tree does, cites each closed series' last plan state, names every source of
+a trace id `SPEC.md` §1.1 names, and names on its `make conformance` line the
+files that target runs; `SPEC.md` §8.7's count of the CLI's process tests is
 `tests/test_cli.py`'s collection, measured; and `CONTRIBUTING.md`'s rule
 against a test that opens a real socket names, as its exceptions, exactly the
-test files that import a socket module.
+test files that import a socket module, by either `import` form, read
+statically.
 
 V4 wrote this file for the zoo series, and B10 holds the backlog series the
 same way: each series in `SERIES` has its registry, its changelog heading, its
@@ -391,6 +393,101 @@ def test_each_registered_commit_is_its_batch(history, series):
     assert len(set(shas)) == len(shas)
 
 
+#: An item the backlog series registered, in its open-items table's first
+#: cell: one review's ids (`run 2's R-9 and R-13`), or no review's (`T5`).
+ITEM_IDS = re.compile(r"Qodo \d+|V\d\([a-z]\)|R\d-\d+|R-\d+|T\d+")
+ITEM_REVIEW = re.compile(r"(run \d|the bounded review)'s ")
+
+
+def registered_rows(series: str, item: str) -> list[str]:
+    """The rows of `series`' part of `TASKS.md` that one id of `item` names.
+
+    `item` is the rest of an open-items cell after its series, such as
+    `V2(a), with run 1's R-9 (both shapes)`: parts joined by ", with ", each
+    one review's ids, the review named as "run *N*'s" or "the bounded
+    review's" and looked for under the headings that start `Run N — ` or
+    `The bounded review — `, or not named and looked for in the whole part.
+    Each id must name exactly one row there.
+    """
+    text = registered(series)
+    parts = re.split(r"^(#{3,4} .*)$", text, flags=re.M)
+    under = list(zip(parts[1::2], parts[2::2], strict=True))
+    rows = []
+    for part in item.split(", with "):
+        ids = ITEM_IDS.findall(part)
+        assert ids, f"{series}, {item}: no id in {part!r}"
+        review = ITEM_REVIEW.match(part)
+        if review is None:
+            scope = text
+        else:
+            label = review.group(1)
+            heading = f" {label[0].upper()}{label[1:]} — "
+            scope = "".join(body for head, body in under if heading in head)
+            assert scope, f"{series}, {item}: no heading names {label}"
+        for found in ids:
+            named = [
+                line for line in scope.splitlines() if line.startswith(f"| {found} |")
+            ]
+            assert len(named) == 1, f"{series}, {item}: {found} names {len(named)}"
+            rows.append(named[0])
+    return rows
+
+
+def test_the_open_items_table_names_each_batch_s_commit_and_its_marks():
+    """Each item the backlog series took names its batch's commit, and is
+    marked closed where it is registered (the second half's N-5).
+
+    The table's outcome cells are `**closed by Bn**` then the batch's sha in
+    parentheses, `**declined**` or `**deferred …`, and nothing else. A taken
+    item's sha must be the registry's for that batch. The table's preamble
+    says each row it closes is marked closed in place, dated 2026-10-22: so
+    each row its first cell names (`registered_rows`), in the zoo series' or
+    the receiver series' part, must carry on its own line a bold mark ending
+    `closed by Bn**` (`**Closed by B5**`, `**Its open half closed by B7**`),
+    then the batch's sha and ", the backlog series" in parentheses, with the
+    date after it on that line. What stands before the mark is not read. The
+    declined and deferred rows' marks are held by review, not here. The B4
+    row pointed at its `plan:` commit `7319ac2`, and the "Closed by B5" mark
+    on zoo run 2's R-11 deleted, each passed this file until this test
+    (N-5's two plants).
+    """
+
+    table = section(
+        registered("backlog"),
+        "## The open items, taken or not  *(`WORKPLAN.md`'s open-items table, folded)*",
+    )
+    commits = {
+        batch: re.fullmatch(r"\*\*done\*\* \(`([0-9a-f]{7})`\)", status)
+        for batch, status in registry("backlog")
+    }
+    taken = 0
+    for line in table.splitlines():
+        if not line.startswith("| ") or line.startswith(("| Item ", "|---")):
+            continue
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        item, outcome = cells[0], cells[-1]
+        if outcome.startswith(("**declined**", "**deferred")):
+            continue
+        closed = re.match(r"\*\*closed by (B\d+)\*\* \(`([0-9a-f]{7,40})`\)", outcome)
+        assert closed is not None, f"{item}: {outcome}"
+        batch, sha = closed.groups()
+        registered_as = commits[batch]
+        assert registered_as is not None, f"{item}: {batch} has no commit"
+        assert sha == registered_as.group(1), f"{item}: {sha}, {batch} is not"
+        series, _, ids = item.partition(", ")
+        assert series in ("zoo", "receiver"), item
+        for row in registered_rows(series, ids):
+            mark = re.search(
+                rf"\*\*(?:[A-Z][\w ]* )?[Cc]losed by {batch}\*\* "
+                rf"\(`{sha}`, the backlog series\)",
+                row,
+            )
+            assert mark is not None, f"{item}: not marked in {row[:40]!r}"
+            assert "2026-10-22" in row[mark.end() :], f"{item}: undated mark"
+        taken += 1
+    assert taken, "the open-items table closes nothing: the scan reads nothing"
+
+
 def test_every_plan_citation_resolves(history):
     """Each `git show <sha>:WORKPLAN.md` a document gives is a file there."""
     cited = set()
@@ -646,12 +743,14 @@ def test_spec_s_count_of_the_cli_s_process_tests_is_the_measured_one():
 SOCKET_MODULES = frozenset({"socket", "socketserver", "http.client", "http.server"})
 
 
-def _opens_a_socket(path: Path) -> bool:
+def _imports_a_socket_module(path: Path) -> bool:
     """Whether a test file imports a module it could open a real socket with.
 
-    Read off the file's imports, not its text: `tests/test_gates.py` and
-    `tests/gates.py` hold `import socket` in strings, as planted violations,
-    and open nothing.
+    Read off the file's imports, by either form, not its text:
+    `tests/test_gates.py` and `tests/gates.py` hold `import socket` in strings,
+    as planted violations, and import nothing. `from socket import X` imports
+    `socket`, and `from http import client` imports `http.client`. Static: it
+    does not see what a test opens (the second half's R-4).
     """
     tree = ast.parse(path.read_text(encoding="utf-8"))
     imported: set[str] = set()
@@ -664,26 +763,53 @@ def _opens_a_socket(path: Path) -> bool:
     return not imported.isdisjoint(SOCKET_MODULES)
 
 
-def test_contributing_s_socket_rule_names_the_test_files_that_open_one():
+@pytest.mark.parametrize(
+    ("source", "imports"),
+    [
+        ("import socket\n", True),
+        ("from socket import create_connection\n", True),
+        ("from http.server import ThreadingHTTPServer\n", True),
+        ("from http import client\n", True),
+        ("def f():\n    import http.client\n", True),
+        ('PLANTED = "import socket"\n', False),
+        ("import json\nfrom http import HTTPStatus\n", False),
+    ],
+)
+def test_the_socket_scan_reads_both_import_forms(tmp_path, source, imports):
+    """Each `import` form of a socket module is found, and nothing else.
+
+    `from socket import create_connection` (the second half's R-4) is found
+    only through the module the `from` names: with that half of the scan
+    dropped, it passed, and no committed test file used the form.
+    """
+    path = tmp_path / "test_planted.py"
+    path.write_text(source, encoding="utf-8")
+    assert _imports_a_socket_module(path) is imports
+
+
+def test_contributing_s_socket_rule_names_the_test_files_that_import_one():
     """`CONTRIBUTING.md`'s "no test that … opens a real socket" names its
-    exceptions, and they are the test files that do (the zoo series' run 2,
-    R-10; B9).
+    exceptions, and they are the test files that import a socket module (the
+    zoo series' run 2, R-10; B9; the backlog series' second half, R-4).
 
     The exceptions are the ones `SPEC.md` §7.2 and §8.7 argue: the endpoint's
     tests, bound on `127.0.0.1` port 0, and `tests/test_cli.py`'s spawned
     `serve`. Every `tests/<file>.py` the rule's bullet names must import a
-    socket module, and every test file that imports one must be named there, so
-    a new test that opens a socket either is argued in the rule or is red here.
+    socket module, and every test file that imports one must be named there,
+    so a new test file that imports one either is argued in the rule or is red
+    here. The check is static, as the bullet says: a test that opens a socket
+    through a module it does not import itself, or in a child process, is not
+    seen here.
     """
     text = (REPO / "CONTRIBUTING.md").read_text(encoding="utf-8")
     start = text.index("**No test that reads the real clock, opens a real socket")
     end = text.find("\n- [ ]", start)
     bullet = text[start : end if end != -1 else text.index("\n## ", start)]
     named = set(re.findall(r"`(tests/\w+\.py)`", bullet))
-    opening = {
+    importing = {
         f"tests/{path.name}"
         for path in sorted((REPO / "tests").glob("*.py"))
-        if _opens_a_socket(path)
+        if _imports_a_socket_module(path)
     }
-    assert opening, "no test file opens a socket: the scan reads nothing"
-    assert named == opening
+    assert importing, "no test file imports a socket module: the scan reads nothing"
+    assert named == importing
