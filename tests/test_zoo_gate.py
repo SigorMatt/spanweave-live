@@ -610,9 +610,14 @@ def test_under_a_named_adapter_each_capture_is_its_named_batch_graph(capture, ad
     other dialect is in scope: `build` under the name reads it, and routing
     under the name must put its records where `build` does. Each capture is
     one trace, so the trace's graph is compared with `spanweave.build` of the
-    whole capture under the name, digest dropped. A pin, and it says so: no
-    capture holds a record two adapters claim, so routing that classified
-    across adapters under a name passed here too (B2's measurement);
+    whole capture under the name, digest dropped. A pin, and it says so, for
+    two reasons, each asserted here: no capture holds a record two adapters
+    claim, and no zoo record is flat -- every one, on the JSON path and the
+    raw path, was unpacked from an export, so before B2 Z4's root, which no
+    adapter claims, was routed by its envelope to the trace id the named
+    adapter's `parse` gives it. Routing that classified across adapters under
+    a name differs from `build` under the name only on those two shapes, so it
+    passed here too (B2's measurement; the series' cold review, run 1's R-5);
     `tests/test_routing.py` holds what a name changes.
     """
     bodies = json_bodies(capture)
@@ -622,11 +627,15 @@ def test_under_a_named_adapter_each_capture_is_its_named_batch_graph(capture, ad
     framer, router = Framer(), Router(adapter=adapter)
     for body in bodies:
         for record in framer.document(body).records:
+            assert isinstance(record, Unpacked), capture
+            assert len(classify(record)) <= 1, capture
             router.route(record)
 
     endpoint, raw_router = Endpoint(), Router(adapter=adapter)
     for request in raw_requests(capture):
         for record in endpoint.handle(request).records.records:
+            assert isinstance(record, Unpacked), capture
+            assert len(classify(record)) <= 1, capture
             raw_router.route(record)
 
     for routed in (router, raw_router):

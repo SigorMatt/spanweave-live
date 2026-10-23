@@ -31,7 +31,7 @@ its batch lands:
 
 Sections 3 onward are written by the batch that builds them (`TASKS.md`:
 the receiver series' R1–R8, amended since by the zoo series' V0–V3 and
-the backlog series' B1–B7 and B9). §9 is
+the backlog series' B1–B6 and B9). §9 is
 the odd one: it specifies a **test**, not a piece of the receiver, because
 the showcase adds no library behaviour and the reason it adds none is itself a claim worth stating (§9.1). This document begins with the two sections that constrain all of them:
 what the receiver will never do, and the three properties of the library
@@ -260,6 +260,9 @@ Not strictly a non-goal — it is the shape every other answer takes. A refusal,
 a cap, a late arrival, a truncation, a malformed body, a consumer that raised:
 each is an **event with a code**, counted and reported. The receiver's honest
 answer to "what did you not handle?" is a number per code, never silence.
+Two refusals are outside this today, and §7.2 names them: the answers
+`http.server` gives itself before a request reaches the endpoint, a `501`
+and an HTML `400`, are not events and are not counted.
 
 This is `spanweave`'s losslessness invariant one layer up. The library's rule is
 that no input record vanishes; the receiver's is that no *decision* vanishes.
@@ -1117,8 +1120,14 @@ and the raw path: a router given `adapter=X`, with no completion, holds one
 trace whose graph is `spanweave.build` of the joined bodies under the same
 name, byte for byte, with nothing in the no-trace builder and no event —
 whichever dialect the capture was written in, because a name reads every
-record as its own (§4.1). A pin, as gate A's named pass is: no capture holds
-a record two adapters claim, so this held before B2 too.
+record as its own (§4.1). A pin, as gate A's named pass is, and for two
+reasons, each of which the test asserts: no capture holds a record two
+adapters claim, and no zoo record is flat — every one, on either path, was
+unpacked from an export, so before B2 the one record no adapter claims, Z4's
+root, was routed by its envelope to the trace id the named adapter's `parse`
+gives it. Routing that classified across adapters under a name, as it did
+before B2, differs from `build` under the name only on a record two adapters
+claim or on a flat record no adapter claims, so this held before B2 too.
 
 **Two rows say `(L2)`, because V2 moved them.** Z4's root span is claimed by
 no adapter (the zoo's `PROBES.md` S1). Until V2, §4.2 gave it no trace id and
@@ -2545,10 +2554,18 @@ maintainer on 2026-10-21 (the backlog series): an OTLP/HTTP body is one export,
 read whole or refused, and the count OTLP asks for is of spans, which only a
 dialect read can count (§1.1). The departure stands.
 
-A refusal answers **OTLP's `google.rpc.Status`, in the request's encoding**
-(B3), so the poster is told what the event says in the message OTLP names
-for it. OTLP asks for a refusal's body to be a `Status` in the request's
-encoding — for protobuf, it "MUST be a Protobuf-encoded" `Status`. The
+A refusal `Endpoint` makes answers **OTLP's `google.rpc.Status`, in the
+request's encoding** (B3), so the poster is told what the event says in the
+message OTLP names for it. That is every refusal that reaches `respond`, and
+only those: two answers `http.server` gives itself, before a request reaches
+`respond`, are **neither a `Status` nor counted** — a `501` for a method
+outside `_METHODS`, the methods `handler_class` routes (below), such as
+`TRACE`, and an HTML `400` for a malformed request line. `Endpoint.counts`
+and `Endpoint.requests` do not move for either, so each is a refusal §1.5
+does not yet cover; the behaviour is older than B3 and unchanged, and the
+sentence is scoped to say so (the series' cold review, run 1's R-6). OTLP
+asks for a refusal's body to be a `Status` in the request's encoding — for
+protobuf, it "MUST be a Protobuf-encoded" `Status`. The
 receiver's code rides in `Status.message`, which "SHOULD contain a
 developer-facing error message" and is the one field of a `Status` that holds
 a string; `Status.code` is an integer (`int32 code = 1`) and is **omitted**,
@@ -2635,8 +2652,10 @@ thing and the thing it serves, in that order, rather than policies. It builds
 the class with `type(...)` instead of a `class` statement, because a `class`
 statement needs its base at import time and that import is the one this module
 does not make. Every method in `GET POST PUT PATCH DELETE HEAD OPTIONS` is
-routed through `respond`, so a request this endpoint does not serve gets the
-endpoint's own counted `415` rather than `http.server`'s uncounted `501`;
+routed through `respond`, so a request in any of those methods that this
+endpoint does not serve gets the endpoint's own counted `415` rather than
+`http.server`'s uncounted `501`, which a method outside them still gets
+(above);
 `log_message` is silenced, because a line per request on stderr is the caller's
 business (§1.2) and `counts` is the receiver's own answer.
 

@@ -6,7 +6,10 @@ began as the receiver series' batch brief written out, with the reason for each
 line, because a bar whose reasons are not written gets negotiated away one batch
 at a time — and between series it is the only copy: each series' execution
 state (`WORKPLAN.md`) is deleted at its close, and `TASKS.md` registers what
-each series did.
+each series did. The commit that deletes it closes the series, and its subject
+must say "the <name> series closes", with the series' name: `tests/test_record.py`
+finds each close by that phrase, and a commit that deletes `WORKPLAN.md`
+without it turns that test red, the earlier series' cases included.
 
 Read first: `CLAUDE.md` (the invariants — the standing rules are not style
 preferences), then the part of `SPEC.md` you are touching.

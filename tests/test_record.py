@@ -17,7 +17,8 @@ files that target runs; `SPEC.md` §8.7's count of the CLI's process tests is
 `tests/test_cli.py`'s collection, measured; and `CONTRIBUTING.md`'s rule
 against a test that opens a real socket names, as its exceptions, exactly the
 test files that import a socket module, by either `import` form, read
-statically.
+statically, and it states the phrase each close's subject carries, the one this
+file finds each close by.
 
 V4 wrote this file for the zoo series, and B10 holds the backlog series the
 same way: each series in `SERIES` has its registry, its changelog heading, its
@@ -71,6 +72,10 @@ SERIES = {
 
 #: A series' last batch cannot name the commit that carries it.
 CLOSING = "**done** (the closing commit of the series)"
+
+#: What a closing commit's subject says, which is how `plan_states` finds
+#: each close; `CONTRIBUTING.md` states it as a rule.
+CLOSES = r"\bthe (\w+) series closes\b"
 
 WORDS = {
     "one": 1,
@@ -136,7 +141,7 @@ def plan_states() -> dict[str, tuple[str, str]]:
     states = {}
     for line in deleted.splitlines():
         close, _, subject = line.partition(" ")
-        named = re.search(r"\bthe (\w+) series closes\b", subject)
+        named = re.search(CLOSES, subject)
         assert named is not None, f"{close} deletes the plan: {subject!r}"
         last = _git("log", "-1", "--format=%H", f"{close}^", "--", "WORKPLAN.md")
         assert last.stdout.strip(), close
@@ -785,6 +790,24 @@ def test_the_socket_scan_reads_both_import_forms(tmp_path, source, imports):
     path = tmp_path / "test_planted.py"
     path.write_text(source, encoding="utf-8")
     assert _imports_a_socket_module(path) is imports
+
+
+def test_contributing_states_the_phrase_each_close_is_found_by(history):
+    """`CONTRIBUTING.md` says a closing commit's subject must say "the <name>
+    series closes", and that is the phrase `plan_states` finds each close by
+    (the backlog series' second half, N-6). The rule's phrase, with each
+    closed series' name for `<name>`, must be what `CLOSES` matches, naming
+    that series; `plan_states` holds each close's subject to `CLOSES`.
+    """
+    text = " ".join((REPO / "CONTRIBUTING.md").read_text(encoding="utf-8").split())
+    stated = re.search(r'its subject must say "(the <name> series closes)"', text)
+    assert stated is not None
+    states = plan_states()
+    assert set(SERIES) <= set(states)
+    for series in states:
+        phrase = stated.group(1).replace("<name>", series)
+        named = re.fullmatch(CLOSES, phrase)
+        assert named is not None and named.group(1) == series, phrase
 
 
 def test_contributing_s_socket_rule_names_the_test_files_that_import_one():

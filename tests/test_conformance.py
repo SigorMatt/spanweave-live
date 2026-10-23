@@ -294,18 +294,32 @@ def test_the_readme_states_the_sweep_this_file_runs():
     Each is held to this file's own constants -- the pairs to the corpus
     count asserted above -- so a pin move that grows the corpus fails here
     until the sentence moves with it (V0 moved it from 1354 to 1460).
+
+    The product is the main pass's alone, which is
+    `test_interleaved_traces_produce_each_traces_own_batch_graph`, so the
+    sentence says so and names the passes beside it, each a test below that
+    the count leaves out (the backlog series' second half, T-4: B2 and B6
+    added two of them, and the sentence went on reading as gate A's total).
     """
-    readme = (REPO / "README.md").read_text(encoding="utf-8")
+    readme = " ".join((REPO / "README.md").read_text(encoding="utf-8").split())
     stated = re.search(
-        r"(\d+) cross-scenario pairs \N{MULTIPLICATION SIGN} (\d+) seeds "
-        r"\N{MULTIPLICATION SIGN} (\d+) graphs per pair =\s+"
-        r"([\d ]+) byte-for-byte comparisons",
+        r"whose main pass runs over every pair of renderings [^\N{EM DASH}]*"
+        r"\N{EM DASH} (\d+) cross-scenario pairs \N{MULTIPLICATION SIGN} (\d+) seeds "
+        r"\N{MULTIPLICATION SIGN} (\d+) graphs per pair = "
+        r"([\d ]+) byte-for-byte comparisons, which are the main pass's alone\. "
+        r"Beside it, and outside that count, gate A runs the passes (.*?)\. Live",
         readme,
     )
     assert stated is not None
-    pairs_, seeds, graphs, total = stated.groups()
+    pairs_, seeds, graphs, total, beside = stated.groups()
     assert (int(pairs_), int(seeds), int(graphs)) == (PAIRS_EXPECTED, len(SEEDS), 2)
     assert int(total.replace(" ", "")) == PAIRS_EXPECTED * len(SEEDS) * 2
+    for named in (
+        "as one stream chunked across its lines",  # B6, the one-stream pass
+        "under each named adapter",  # B2, the named-adapter pass
+        "an export whose root no adapter claims",  # V2, the unclaimed root
+    ):
+        assert named in beside, named
 
 
 def test_every_corpus_rendering_identifies_the_one_trace_the_relabelling_assumes():

@@ -21,6 +21,58 @@ a `Router` field and a CLI flag were added (B1), `released` gained its version
 (B4) and a refusal its `Status` body (B3). Under this heading are the backlog
 series' batches B1–B10, newest first.
 
+### The record of the series' reasons and counts made true (2026-10-23)
+
+Derived parent `50acb4f`. The sixth of the commits that disposition the
+series' cold review, answering the first half's R-5 and R-6's sentence (H1
+R-5, H1 R-6) and the second half's R-7, T-4 and N-6 (H2 R-7, H2 T-4, H2
+N-6). Sentences of the record were short or wrong: B2's reason the named
+zoo pin was green on the parent gave one of its two reasons; B3's "A refusal
+answers OTLP's `google.rpc.Status`" did not say which refusals; B10's `SPEC.md`
+§0 named B7 among the batches that amended a section from 3 onward, and B7
+amended §1.3 alone; README's gate A count read as gate A's total after B2 and
+B6 added passes outside it; and the phrase a closing commit's subject must
+carry was written only in the record test's docstring. **No behaviour
+changed**: the http.server answers R-6 names are unchanged, and are a thread.
+
+Changed
+
+- **`SPEC.md` §4.8 and the named zoo pin's docstring**
+  (`tests/test_zoo_gate.py`) give both reasons the pin was green before B2:
+  no capture holds a record two adapters claim, and no zoo record is flat, so
+  Z4's root, which no adapter claims, was routed by its envelope to the trace
+  id the named adapter's `parse` gives it.
+- **`SPEC.md` §7.2**: a refusal `Endpoint` makes answers OTLP's `Status`.
+  The two answers `http.server` gives itself before a request reaches
+  `respond` — a `501` for a method outside `_METHODS`, and an HTML `400` for
+  a malformed request line — are neither a `Status` nor counted. The
+  `handler_class` paragraph says a method outside the ones it routes still
+  gets the `501`. **§1.5** says the same two are outside "each is an event"
+  today, because §7.2 now names them.
+- **`SPEC.md` §0**: the backlog series' batches that amended a section from 3
+  onward are B1–B6 and B9.
+- **README's gate A sentence**: the comparisons it counts are the main
+  pass's alone, and the passes beside it — one stream chunked across its lines, each
+  named adapter, and an export whose root no adapter claims — are named, with
+  no count.
+- **`CONTRIBUTING.md`**: the commit that deletes `WORKPLAN.md` closes its
+  series, and its subject must say "the <name> series closes", because
+  `tests/test_record.py` finds each close by that phrase.
+
+Added
+
+- **The named zoo pin asserts both reasons**: each record it routes, on the
+  JSON path and the raw path, was unpacked from an export and is claimed by
+  at most one adapter. A pin, green on the parent.
+- **`tests/test_conformance.py`'s README test** holds the sentence to the
+  main pass and to the passes it names beside it; **`tests/test_record.py`**
+  holds `CONTRIBUTING.md`'s phrase to `CLOSES`, the pattern `plan_states`
+  finds each close by. Both are red on the parent, whose documents do not
+  say so.
+- **Mutations shown caught**: README without "which are the main pass's
+  alone", or without the named-adapter pass, is red; `CONTRIBUTING.md`'s
+  phrase as "the <name> series ends" is red.
+
 ### The framing sentences name the mutation that is red, and the crossing count is held to its condition (2026-10-23)
 
 Derived parent `5881daf`. The fifth of the commits that disposition the
