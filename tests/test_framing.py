@@ -258,14 +258,24 @@ def test_a_cap_of_none_is_r1s_behaviour_over_the_whole_sweep(rendering, form):
 # A boundary inside a multi-byte character.
 # --------------------------------------------------------------------------
 
-# Two records carrying 2-, 3- and 4-byte UTF-8 sequences. Hand-authored, not
-# captured: every rendering in the corpus is pure ASCII at the pinned sha, so
-# there is nothing there a chunk boundary could cut in half, and a test that
-# swept the corpus for this would pass by having nothing to find.
+# Two records carrying 2-, 3- and 4-byte UTF-8 sequences, behind a UTF-8 BOM.
+# Hand-authored, not captured: every rendering in the corpus is pure ASCII at
+# the pinned sha, so there is nothing there a chunk boundary could cut in half,
+# and a test that swept the corpus for this would pass by having nothing to
+# find.
+#
+# The BOM (B6, the receiver series' R1-6) puts `SPEC.md` §3.2's second
+# consequence under the same sweep as its first: the two-way splits at offsets
+# 1 and 2 cut the BOM itself, and the reader's head-of-stream tolerance
+# (§2.1) only applies to a BOM it is handed whole, at the start of a call.
+UTF8_BOM = b"\xef\xbb\xbf"
 MULTI_BYTE_STREAM = (
-    '{"trace_id":"t1","span_id":"s1","name":"llm","output":"café — 日本語 🙂"}\n'
-    '{"trace_id":"t1","span_id":"s2","name":"tool","output":"naïve ✓ 🚀"}\n'
-).encode()
+    UTF8_BOM
+    + (
+        '{"trace_id":"t1","span_id":"s1","name":"llm","output":"café — 日本語 🙂"}\n'
+        '{"trace_id":"t1","span_id":"s2","name":"tool","output":"naïve ✓ 🚀"}\n'
+    ).encode()
+)
 
 
 def test_the_multi_byte_fixture_really_holds_multi_byte_characters():
@@ -278,6 +288,10 @@ def test_the_multi_byte_fixture_really_holds_multi_byte_characters():
         len(character.encode()) for character in MULTI_BYTE_STREAM.decode("utf-8")
     }
     assert {2, 3, 4} <= widths
+    # Nor quietly lose its BOM, or grow a second one the reader would not
+    # tolerate: one, at offset 0, and nowhere else.
+    assert MULTI_BYTE_STREAM.startswith(UTF8_BOM)
+    assert MULTI_BYTE_STREAM.count(UTF8_BOM) == 1
 
 
 def test_a_boundary_inside_a_multi_byte_character_is_never_undecodable():
@@ -289,9 +303,28 @@ def test_a_boundary_inside_a_multi_byte_character_is_never_undecodable():
     prevents it, so this is asserted at **every** two-way split of the stream
     -- which includes every boundary inside every multi-byte sequence in it --
     and again one byte at a time, which splits all of them at once.
+
+    The stream opens with a BOM (B6), so the same sweep cuts the BOM at both of
+    its inner boundaries: §3.2's "a BOM split across chunks is likewise whole
+    by the time the reader sees it". A pin, and it says so: green on the
+    parent, where the remainder already held the BOM's halves together. What
+    it is there to catch is a framer that hands a partial BOM on across two
+    reader calls instead of holding it. A framer that strips a whole BOM at
+    offset 0 of each push is not caught, and stays green: the reader accepts
+    a BOM at the start of every call, so what it hands on reads the same.
     """
     whole = read_records(MULTI_BYTE_STREAM)
     assert whole.diagnostics == (), "the fixture itself must read clean"
+    # The control: the BOM handed to the reader in halves, with no framer
+    # between, is what the sweep below must never see. Without it, a reader
+    # that tolerated a split BOM on its own would leave the BOM half of this
+    # test asserting nothing about the framer.
+    for split in range(1, len(UTF8_BOM)):
+        halves = (
+            read_records(MULTI_BYTE_STREAM[:split]),
+            read_records(MULTI_BYTE_STREAM[split:]),
+        )
+        assert "undecodable_bytes" in [d.code for d in diagnostics_of(halves)]
 
     chunkings = [
         [MULTI_BYTE_STREAM[:split], MULTI_BYTE_STREAM[split:]]

@@ -20,7 +20,8 @@ The load-bearing claims:
   it, is a `200` and routes as many records as its JSON pair; truncated, each
   is the existing second `400` case. The `200` is answered in the request's
   own encoding, `application/x-protobuf` and zero bytes -- the empty
-  `ExportTraceServiceResponse` -- and every refusal stays JSON (V1a).
+  `ExportTraceServiceResponse` (V1a). A refusal is OTLP's `Status` in the
+  request's encoding too, the receiver's code in `message` (B3).
 - **One request is served, in two media types, and everything else is
   `415`**, counted, with the check it failed named in the event.
 - **A body that cannot be read is `400` and an event, never a traceback**, and
@@ -86,6 +87,77 @@ JSON = {"Content-Type": JSON_MEDIA_TYPE}
 #: holds the exported constant to this spelling.
 PROTOBUF_TYPE = "application/x-protobuf"
 PROTOBUF = {"Content-Type": PROTOBUF_TYPE}
+
+
+def status_class() -> Any:
+    """OTLP's `google.rpc.Status`, built from the three fields of its `.proto`.
+
+    The `otlp` extra ships `google.protobuf` and `opentelemetry.proto`, and not
+    `google.rpc`, so the message a refusal must be (`SPEC.md` §7.2) is declared
+    here as `google/rpc/status.proto` declares it -- `int32 code = 1`,
+    `string message = 2`, `repeated google.protobuf.Any details = 3` -- in a
+    pool of its own. A **test** may import the protobuf runtime; the package
+    may not, and does not need to (B3).
+    """
+    from google.protobuf import any_pb2, descriptor_pb2, descriptor_pool
+    from google.protobuf.message_factory import GetMessageClass
+
+    field = descriptor_pb2.FieldDescriptorProto
+    pool = descriptor_pool.DescriptorPool()
+    any_file = descriptor_pb2.FileDescriptorProto()
+    any_pb2.DESCRIPTOR.CopyToProto(any_file)
+    pool.Add(any_file)
+    status_file = descriptor_pb2.FileDescriptorProto(
+        name="google/rpc/status.proto",
+        package="google.rpc",
+        syntax="proto3",
+        dependency=["google/protobuf/any.proto"],
+    )
+    message = status_file.message_type.add(name="Status")
+    message.field.add(
+        name="code",
+        number=1,
+        type=field.TYPE_INT32,
+        label=field.LABEL_OPTIONAL,
+        json_name="code",
+    )
+    message.field.add(
+        name="message",
+        number=2,
+        type=field.TYPE_STRING,
+        label=field.LABEL_OPTIONAL,
+        json_name="message",
+    )
+    message.field.add(
+        name="details",
+        number=3,
+        type=field.TYPE_MESSAGE,
+        type_name=".google.protobuf.Any",
+        label=field.LABEL_REPEATED,
+        json_name="details",
+    )
+    pool.Add(status_file)
+    return GetMessageClass(pool.FindMessageTypeByName("google.rpc.Status"))
+
+
+def status_of(content_type: str | None, body: bytes) -> Any:
+    """A refusal's body read as OTLP's `Status`, in the encoding it declared.
+
+    Protobuf through the runtime the `otlp` extra ships, and OTLP/JSON through
+    `json_format.Parse`, which refuses a `code` that is not an integer. A
+    protobuf body must also be the `Status`'s own encoding byte for byte, so a
+    body that parses only by leaving bytes unknown is not one.
+    """
+    from google.protobuf.json_format import Parse
+
+    status = status_class()()
+    if content_type == PROTOBUF_TYPE:
+        status.ParseFromString(body)
+        assert status.SerializeToString() == body
+    else:
+        assert content_type == JSON_MEDIA_TYPE, content_type
+        Parse(body.decode("utf-8"), status)
+    return status
 
 
 def zoo_pairs() -> list[tuple[str, int]]:
@@ -548,11 +620,10 @@ def test_a_truncated_protobuf_body_is_400_by_the_existing_second_case(
     status, reply, records = posting.post(request.body[:-1], headers=PROTOBUF)
 
     assert status == 400
-    assert reply == b'{"code":"unreadable_body"}'
-    # A refusal stays JSON for a protobuf request, and is OTLP's
-    # `google.rpc.Status` in neither encoding: the receiver keeps its own code
-    # over OTLP's type, which §7.2 says is a choice (V1a).
-    assert posting.reply_type == JSON_MEDIA_TYPE
+    # A refusal of a protobuf request is OTLP's `google.rpc.Status` encoded,
+    # the receiver's code in `message` and `code` omitted (§7.2, B3).
+    assert reply == b"\x12\x0funreadable_body"
+    assert posting.reply_type == PROTOBUF_TYPE
     assert records.records == ()
     assert records.skipped_records == 1
     assert [d.code for d in records.diagnostics] == ["malformed_record"]
@@ -639,42 +710,42 @@ def test_the_protobuf_answer_is_the_empty_export_response_encoded() -> None:
         # is the request's declared type, never the bytes' (§7.2).
         ("Application/JSON; charset=utf-8", None, "z5", (200, JSON_MEDIA_TYPE, b"{}")),
         (JSON_MEDIA_TYPE, None, "empty", (200, JSON_MEDIA_TYPE, b"{}")),
-        # Every refusal stays `{"code": ...}` as JSON, whichever type asked.
+        # A refusal is OTLP's `Status` in the declared type too (B3), and in
+        # JSON when the request declared neither type this endpoint reads.
         (
             PROTOBUF_TYPE,
             None,
             "z1-truncated",
-            (400, JSON_MEDIA_TYPE, b'{"code":"unreadable_body"}'),
+            (400, PROTOBUF_TYPE, b"\x12\x0funreadable_body"),
         ),
         (
             PROTOBUF_TYPE,
             GZIP_ENCODING,
             "z1",
-            (400, JSON_MEDIA_TYPE, b'{"code":"unreadable_body"}'),
+            (400, PROTOBUF_TYPE, b"\x12\x0funreadable_body"),
         ),
         (
-            PROTOBUF_TYPE,
+            "Application/X-Protobuf",
             "deflate",
             "z1",
-            (415, JSON_MEDIA_TYPE, b'{"code":"unsupported_media_type"}'),
+            (415, PROTOBUF_TYPE, b"\x12\x16unsupported_media_type"),
         ),
         (
             "application/protobuf",
             None,
             "z1",
-            (415, JSON_MEDIA_TYPE, b'{"code":"unsupported_media_type"}'),
+            (415, JSON_MEDIA_TYPE, b'{"message":"unsupported_media_type"}'),
         ),
     ],
 )
-def test_the_answer_is_in_the_requests_declared_encoding_and_a_refusal_is_json(
+def test_the_answer_is_in_the_requests_declared_encoding_and_a_refusal_too(
     header: str, encoding: str | None, body: str, answer: tuple[int, str, bytes]
 ) -> None:
     """V1a at the pure layer: the reply's type follows the request's type.
 
     An accepted request is answered in the media type it declared, matched as
-    §7.2 matches it; a refusal is JSON for either, and OTLP's
-    `google.rpc.Status` in neither: the receiver's code over OTLP's type, a
-    choice §7.2 states.
+    §7.2 matches it, and so is a refusal (B3): OTLP's `google.rpc.Status`, the
+    receiver's code in `message`, and JSON for a request declaring neither.
     """
     (z1,) = raw_requests("z1/2026-10-13-recorded")
     (z5,) = raw_requests("z5/2026-10-13-recorded")
@@ -859,7 +930,7 @@ def test_every_request_that_is_not_the_one_served_is_415_and_says_which(
     endpoint = Endpoint()
     exchange = endpoint.handle(request_)
     assert exchange.response.status == 415
-    assert json.loads(exchange.response.body) == {"code": UNSUPPORTED_MEDIA_TYPE}
+    assert json.loads(exchange.response.body) == {"message": UNSUPPORTED_MEDIA_TYPE}
     assert exchange.records.records == ()
     assert exchange.records.diagnostics == ()
     assert [event.code for event in exchange.events] == [UNSUPPORTED_MEDIA_TYPE]
@@ -923,7 +994,7 @@ def test_a_refused_request_over_the_socket_is_the_status_and_the_count(
     `do_` of its own in the stdlib base."""
     assert posting.post(b"", method="GET")[:2] == (
         415,
-        b'{"code":"unsupported_media_type"}',
+        b'{"message":"unsupported_media_type"}',
     )
     assert posting.post(b"{}", target="/v2/traces")[0] == 415
     assert posting.post(b"{}", method="DELETE")[0] == 415
@@ -948,7 +1019,7 @@ def test_a_non_json_body_is_400_with_the_receivers_event_and_no_traceback(
     status, reply, records = posting.post(b"not json at all, not even close")
 
     assert status == 400
-    assert json.loads(reply) == {"code": UNREADABLE_BODY}
+    assert json.loads(reply) == {"message": UNREADABLE_BODY}
     assert records.records == ()
     # The reader's own diagnostics still come out: the only place those bytes
     # survive (`SPEC.md` §1.5).
@@ -996,7 +1067,7 @@ def test_a_body_that_declared_gzip_and_will_not_inflate_is_400(
             body, headers={**JSON, "Content-Encoding": GZIP_ENCODING}
         )
         assert status == 400, body
-        assert json.loads(reply) == {"code": UNREADABLE_BODY}
+        assert json.loads(reply) == {"message": UNREADABLE_BODY}
         assert records.records == ()
     assert posting.endpoint.counts == {UNREADABLE_BODY: 4}
     assert posting.endpoint.events[0].spanweave_code is None
@@ -1221,6 +1292,134 @@ def test_a_bare_connection_does_not_re_yield_the_previous_records(
     assert posting.endpoint.last is not None
     assert len(posting.endpoint.last.records.records) == 1
     assert posting.endpoint.counts == {}
+
+
+# --------------------------------------------------------------------------
+# A refusal is OTLP's `Status`, in the request's encoding (B3).
+# --------------------------------------------------------------------------
+
+
+def refusal_shapes() -> dict[str, tuple[int, dict[str, Any]]]:
+    """Every refusal this file makes, as a status and a request's other fields.
+
+    The `415` table's checks the declared type does not decide -- method,
+    target, content coding, transfer coding -- and the two `400` cases: a body
+    that will not inflate, and a body the declared reader skipped whole. Each
+    is posted below under each declared type, so every refusal row is held in
+    both encodings.
+    """
+    return {
+        "method": (415, {"method": "GET", "body": b""}),
+        "target": (415, {"target": "/v2/traces", "body": b"{}"}),
+        "coding": (415, {"body": b"{}", "content_encoding": "br"}),
+        "transfer": (415, {"body": b"{}", "transfer_encoding": "chunked"}),
+        "gzip": (
+            400,
+            {"body": b"\x1f\x8b not a member", "content_encoding": GZIP_ENCODING},
+        ),
+        # Bytes neither reader reads a record from: each skips them whole.
+        "unreadable": (400, {"body": b"not json at all, not even close"}),
+    }
+
+
+#: A declared type, as a request spells it, and the answer's type it names.
+DECLARED = {
+    JSON_MEDIA_TYPE: JSON_MEDIA_TYPE,
+    "Application/JSON; charset=utf-8": JSON_MEDIA_TYPE,
+    PROTOBUF_TYPE: PROTOBUF_TYPE,
+    "Application/X-Protobuf; charset=binary": PROTOBUF_TYPE,
+}
+
+
+@pytest.mark.parametrize("declared", sorted(DECLARED))
+@pytest.mark.parametrize("shape", sorted(refusal_shapes()))
+def test_every_refusal_is_otlps_status_in_the_requests_encoding(
+    shape: str, declared: str
+) -> None:
+    """The receiver's code in `message`, `code` omitted, in the declared type.
+
+    OTLP asks for a refusal's body to be a `google.rpc.Status` in the request's
+    encoding; the receiver's code rides in `message`, the one field that can
+    carry a string, and `code` is omitted, as OTLP says a server "MAY" do
+    (`SPEC.md` §7.2, B3). Red on the parent, whose body was `{"code": …}` as
+    JSON for either type: `json_format` refuses a string `code`, and a JSON
+    body is not a protobuf `Status`.
+    """
+    status, fields = refusal_shapes()[shape]
+    request = Request(
+        **{"method": "POST", "target": TRACES_TARGET, **fields},
+        content_type=declared,
+    )
+    endpoint = Endpoint()
+    exchange = endpoint.handle(request)
+    response = exchange.response
+    assert response.status == status
+    assert response.content_type == DECLARED[declared]
+    (event,) = exchange.events
+    answer = status_of(response.content_type, response.body)
+    assert answer.message == event.code
+    assert answer.code == 0
+    assert list(answer.details) == []
+
+
+@pytest.mark.parametrize("header", [None, "", "text/plain", "application/protobuf"])
+def test_a_refusal_of_a_request_declaring_neither_type_is_json(
+    header: str | None,
+) -> None:
+    """Neither type declared: the JSON form, since no protobuf was asked for."""
+    exchange = Endpoint().handle(
+        Request(method="POST", target=TRACES_TARGET, body=b"", content_type=header)
+    )
+    assert exchange.response.status == 415
+    assert exchange.response.content_type == JSON_MEDIA_TYPE
+    assert exchange.response.body == b'{"message":"unsupported_media_type"}'
+    assert status_of(JSON_MEDIA_TYPE, exchange.response.body).message == (
+        UNSUPPORTED_MEDIA_TYPE
+    )
+
+
+def test_a_protobuf_refusal_is_field_2_alone_byte_for_byte() -> None:
+    """`0x12`, the varint length, the code's ASCII: and nothing else.
+
+    `0x12` is field 2 (`message`) with wire type 2 (length-delimited). Spelled
+    here as bytes, not only parsed, so a length off by one or a field number
+    off by one is a failure of this line before any parser's leniency.
+    """
+    (z1,) = raw_requests("z1/2026-10-13-recorded")
+    refused = {
+        UNREADABLE_BODY: dataclasses.replace(z1, body=z1.body[:-1]),
+        UNSUPPORTED_MEDIA_TYPE: dataclasses.replace(z1, content_encoding="br"),
+    }
+    for code, request in refused.items():
+        response = Endpoint().handle(request).response
+        assert response.content_type == PROTOBUF_TYPE
+        assert response.body == b"\x12" + bytes([len(code)]) + code.encode("ascii")
+
+
+def test_a_status_message_longer_than_one_varint_byte_is_encoded_whole() -> None:
+    """The length is a varint, not a byte: held past 127 where codes are not.
+
+    No receiver code is that long, so this drives the encoder directly. A
+    length written as one byte, or a varint missing its continuation bit, does
+    not read back.
+    """
+    from spanweave_live.endpoint import _status
+
+    for message in ("x", "x" * 127, "x" * 128, "x" * 300, "x" * 20000):
+        body = _status(message)
+        assert status_of(PROTOBUF_TYPE, body).message == message
+
+
+def test_a_protobuf_refusal_over_the_socket_is_a_status_with_its_type(
+    posting: Posting,
+) -> None:
+    """The answer's encoding reaches the wire: `respond` writes the type."""
+    status, reply, _records = posting.post(
+        b"", method="GET", headers={"Content-Type": PROTOBUF_TYPE}
+    )
+    assert status == 415
+    assert posting.reply_type == PROTOBUF_TYPE
+    assert status_of(PROTOBUF_TYPE, reply).message == UNSUPPORTED_MEDIA_TYPE
 
 
 # --------------------------------------------------------------------------

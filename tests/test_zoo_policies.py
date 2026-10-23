@@ -5,10 +5,11 @@ per body (its `PROBES.md` L3); one more, Z5's, has no root and was never
 completed by `RootEnded` (L4). This file runs each policy at values the audit
 never ran, over the same captures (`SPEC.md` §4.8), on a fake clock, and pins
 what it does. **These are pins, not fixes**: no policy changed for them, and
-every assertion here but the three that read the documents holds on the
-parent commit too. They are readings of `SPEC.md` §5.3's definitions and
-§5.5's generations, held so that a policy which starts firing at another
-instant fails here rather than in somebody's stream.
+every assertion here holds on the parent of the batch that added it, except
+one that reads a sentence that batch wrote into the documents. They are
+readings of `SPEC.md` §5.3's definitions and §5.5's generations, held so that
+a policy which starts firing at another instant fails here rather than in
+somebody's stream.
 
 The schedule is one for every policy (`SPEC.md` §5.3): body *k* of a capture,
 counting from 0, is fed at `now = k`, and after it the router is ticked twice,
@@ -30,6 +31,10 @@ What the file holds:
 - On Z5, real and recorded, `RootEnded` never completes the trace, at any
   grace and up to `now = 10^6`, because its graph has no root; `Quiet` and
   `Cap` do, and `Cap(5)` leaves it to end of input.
+- On Z3 and Z1, `RootEnded` acts per generation (B5): body 0 re-fed after
+  the trace completed opens generation 2, which `RootEnded` alone never
+  completes on generation 1's root, up to `now = 10^6`, and end of input
+  completes it beside generation 1.
 """
 
 from __future__ import annotations
@@ -57,7 +62,7 @@ from spanweave_live import (
     Router,
     root_ended,
 )
-from tests.test_zoo_gate import L3_CAPTURES, json_bodies, zoo_records
+from tests.test_zoo_gate import L3_CAPTURES, captures, json_bodies, zoo_records
 
 REPO = Path(__file__).resolve().parent.parent
 SPEC = REPO / "SPEC.md"
@@ -78,6 +83,8 @@ ROOTLESS_SECONDS = (0.0, 1.0, 3600.0)
 HORIZON = 10.0**6
 #: Z5, real and recorded: one body, four records, and no root.
 ROOTLESS = ("z5/2026-10-13-real", "z5/2026-10-13-recorded")
+#: The two captures a second generation is opened on, by re-feeding body 0.
+REFED = ("z3/2026-10-13-real", "z1/2026-10-13-real")
 
 
 class Tick(NamedTuple):
@@ -92,6 +99,8 @@ class Run(NamedTuple):
     late: tuple[Event, ...]
     written: dict[str, bytes]
     router: Router
+    #: The fake clock `router`'s completion reads, for a test that goes on.
+    clock: list[float]
 
     @property
     def completions(self) -> list[tuple[Tick, Completed]]:
@@ -153,7 +162,7 @@ def drive(
         tick(now)
     (trace_id,) = trace_ids
     written = {path.name: path.read_bytes() for path in sorted(out.iterdir())}
-    return Run(trace_id, tuple(ticks), tuple(late), written, router)
+    return Run(trace_id, tuple(ticks), tuple(late), written, router, clock)
 
 
 def undigested(graph: spanweave.Graph) -> spanweave.Graph:
@@ -340,6 +349,96 @@ def test_root_ended_s_grace_runs_from_the_tick_that_first_saw_the_root(
     assert run.written == {f"{run.trace_id}.json": batch_of(*json_bodies(capture))}
 
 
+# --------------------------------------------------------------------------
+# RootEnded acts per generation: a later one is not completed on an earlier
+# one's root (B5; the zoo's cold review, run 2, R-11 and R-15).
+# --------------------------------------------------------------------------
+
+
+def test_pin_the_refed_captures_are_z3_and_z1_whose_root_arrives_last():
+    """A pin: the two captures named here are two of the four §5.3 runs."""
+    assert L3_CAPTURES[:2] == REFED
+    assert [c.split("/")[0] for c in REFED] == ["z3", "z1"]
+
+
+def second_generation(capture: str, out: Path) -> tuple[Run, float, bytes]:
+    """`RootEnded(1.0)` completes the trace once; then body 0 is fed again.
+
+    The re-feed is a second after that completion, through a fresh `Framer`,
+    and opens generation 2 as `late_arrival` (`SPEC.md` §5.5). Body 0 holds no
+    root -- the root arrives in the last body -- so generation 2 has none.
+    Returns the run, the re-feed's instant and body 0.
+    """
+    end = last(capture) + GRACE
+    run = drive(capture, (RootEnded(GRACE),), out, then=(end,))
+    tick, _ = only_completion(run)
+    assert tick.now == end
+    body = json_bodies(capture)[0]
+    assert not root_ended(spanweave.build(body)), "the premise: body 0 has no root"
+    at = end + 1.0
+    run.clock[0] = at
+    late = [
+        event
+        for record in Framer().document(body).records
+        for event in run.router.route(record).events
+        if event.code == LATE_ARRIVAL
+    ]
+    assert [event.seconds for event in late] == [1.0]
+    return run, at, body
+
+
+def ticked(run: Run, *instants: float) -> list[Completed]:
+    done: list[Completed] = []
+    for now in instants:
+        run.clock[0] = now
+        done.extend(run.router.tick())
+    return done
+
+
+@pytest.mark.parametrize("capture", REFED)
+def test_pin_a_second_generation_does_not_complete_on_the_first_s_root(
+    capture, tmp_path
+):
+    """A pin, green on the parent: `root_ended_at` is reset per generation.
+
+    Generation 1 saw its root end at `now = last`. Were that reading kept, the
+    first tick of generation 2 would already be a grace past it and complete
+    the trace on a root generation 2 does not hold. It is not kept (`SPEC.md`
+    §5.5, "this generation's records, this generation's silence"; §5.3).
+    """
+    run, at, _ = second_generation(capture, tmp_path)
+    assert ticked(run, at, at + HALF, at + GRACE, at + HALF + GRACE) == []
+    assert run.router.trace_ids == (run.trace_id,)
+
+
+@pytest.mark.parametrize("capture", REFED)
+def test_pin_root_ended_alone_never_completes_a_later_generation_and_end_does(
+    capture, tmp_path
+):
+    """A pin, green on the parent: `RootEnded` acts per generation (§5.3).
+
+    A later generation of a trace whose root arrived in an earlier one has no
+    root of its own here, so `RootEnded` alone never completes it, up to
+    `now = 10^6`; end of input (`Cap(0)`, `SPEC.md` §8.5) does, and writes it
+    beside generation 1 as the batch graph of its own records.
+    """
+    run, at, body = second_generation(capture, tmp_path)
+    assert (
+        ticked(run, at, at + GRACE, *(at + s for s in ROOTLESS_SECONDS), HORIZON) == []
+    )
+    run.router.completion = Completion(
+        policies=(Cap(0),), now=lambda: HORIZON, out_dir=tmp_path
+    )
+    (done,) = run.router.tick()
+    assert (done.policy, done.version) == (Cap(0), len(Framer().document(body).records))
+    second = tmp_path / generation_name(run.trace_id, 2)
+    assert done.path == second
+    assert second.read_bytes() == batch_of(body)
+    assert (tmp_path / generation_name(run.trace_id, 1)).read_bytes() == batch_of(
+        *json_bodies(capture)
+    )
+
+
 @pytest.mark.parametrize("capture", L3_CAPTURES)
 def test_cap_at_the_record_count_completes_at_the_last_record(capture, tmp_path):
     count = sum(zoo_records()[capture])
@@ -360,6 +459,17 @@ def rootless_grid() -> tuple[float, ...]:
     """Ticks past the body's own two: either side of each S, then the horizon."""
     instants = {s - HALF for s in ROOTLESS_SECONDS} | set(ROOTLESS_SECONDS)
     return (*sorted(t for t in instants if t > HALF), HORIZON)
+
+
+def test_pin_rootless_is_the_zoo_s_two_z5_captures():
+    """A pin: `ROOTLESS` drives a third of this file, so it is not left empty.
+
+    It is every capture the zoo files under Z5, and there are two of them, the
+    real and the recorded run (B5; the zoo's cold review, run 2, R-14).
+    """
+    z5 = tuple(c for c in captures() if c.split("/")[0] == "z5")
+    assert len(z5) == 2
+    assert z5 == ROOTLESS
 
 
 @pytest.mark.parametrize("capture", ROOTLESS)
@@ -456,6 +566,49 @@ def test_section_5_3_states_the_values_this_file_runs():
     assert number(horizon) == HORIZON
     assert "`Cap(4)` at the fourth record" in text
     assert "`Cap(5)` never" in text
+    # Where `RootEnded`'s grace runs from, at the instants
+    # `test_root_ended_s_grace_runs_from_the_tick_that_first_saw_the_root` runs.
+    assert f"the first to see it is `last + {HALF}`" in text
+    assert f"the tick at `last + {GRACE}` completes nothing" in text
+    # The record `test_cap_at_the_record_count_completes_at_the_last_record`
+    # completes at, with `count` as its *N*.
+    assert (
+        "`Cap(N)`, with *N* the capture's record count and a tick after every "
+        "record, completes at the *N*-th record"
+    ) in text
+
+
+def offset(text: str | None) -> float:
+    """`None` for `now = k` itself, else the `+ x` after it."""
+    return 0.0 if text is None else float(text.removeprefix(" + "))
+
+
+def test_section_5_3_s_schedule_is_the_one_this_file_drives(tmp_path):
+    """A pin, green on the parent: §5.3's `now = k` and its two ticks, measured.
+
+    The tick instants are read off the run, and the instant each body was fed
+    at off its generation's `completed` event, whose `seconds` runs from the
+    generation's first record (§5.4), so neither is this file's constant
+    compared with itself.
+    """
+    text = " ".join(section("5.3").split())
+    (schedule,) = re.findall(
+        r"is fed at `now = k( \+ [\d.]+)?`, and after it the router is ticked "
+        r"twice, at `now = k( \+ [\d.]+)?` and at `now = k( \+ [\d.]+)?`",
+        text,
+    )
+    fed, *ticks = (offset(group or None) for group in schedule)
+    capture = L3_CAPTURES[0]
+    bodies = len(json_bodies(capture))
+    run = drive(capture, (Quiet(PER_BODY),), tmp_path)
+    assert [tick.now for tick in run.ticks] == [
+        k + after for k in range(bodies) for after in ticks
+    ]
+    assert len(run.completions) == bodies
+    for k, (tick, done) in enumerate(run.completions):
+        (decision,) = [e for e in done.events if e.code == COMPLETED]
+        assert decision.seconds is not None
+        assert tick.now - decision.seconds == k + fed, k
 
 
 def test_the_readme_s_traps_are_the_number_it_says_and_the_third_is_this_one():

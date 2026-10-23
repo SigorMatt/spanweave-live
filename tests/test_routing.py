@@ -32,10 +32,13 @@ import spanweave
 from spanweave_live import (
     REFUSED,
     REFUSED_AT_CAP,
+    Cap,
+    Completion,
     Event,
     Framer,
     Routed,
     Router,
+    Subscriptions,
     trace_id_of,
 )
 
@@ -299,8 +302,7 @@ def test_the_no_trace_builder_says_what_a_batch_build_of_the_same_records_says()
 
 # --------------------------------------------------------------------------
 # An unpacked record no adapter claims is routed by its envelope, and every
-# record that reaches the no-trace builder is announced (V2, the zoo's L2) --
-# but one, under a named adapter (`SPEC.md` §4.3), pinned below as it is.
+# record that reaches the no-trace builder is announced (V2, the zoo's L2).
 # --------------------------------------------------------------------------
 
 #: The code and the three details of V2, spelled here rather than imported so
@@ -592,23 +594,6 @@ def test_an_unpacked_record_two_adapters_claim_is_refused_and_its_envelope_not_a
     assert refusal.value.code == "adapter_ambiguous"
 
 
-def test_under_a_named_adapter_an_ambiguous_record_reaches_no_trace_unannounced():
-    """A pin of an older gap, stated in `SPEC.md` §4.3 and not fixed by V2.
-
-    Routing classifies across every adapter whatever `adapter` the router was
-    given, so the record is ambiguous to routing; the no-trace builder, given
-    the name, absorbs it without refusing; and no event says so. Pinned so
-    that the sentence in §4.3 is a measurement, and so that whichever batch
-    decides what a named adapter means for routing moves this test with it.
-    """
-    router = Router(adapter="openinference")
-    routed = router.route(ambiguous("sA"))
-    assert routed.trace_id is None and routed.builder is router.no_trace
-    assert routed.events == ()
-    assert router.no_trace.version == 1
-    assert router.counts == {}
-
-
 def test_a_no_trace_record_the_builder_refuses_is_announced_and_then_refused():
     """Announced where it was sent; refused if the builder would not take it."""
     nameless = openinference("s0")
@@ -634,6 +619,168 @@ def test_a_no_trace_builder_holding_only_unclaimed_records_refuses_its_graph():
     with pytest.raises(spanweave.AdapterSelectionError) as refusal:
         router.no_trace.graph()
     assert refusal.value.code == "adapter_unconfident"
+
+
+# --------------------------------------------------------------------------
+# A named adapter routes as it builds (B2; the zoo's V2(a) and run 1's R-9).
+# Under `Router(adapter=X)` the trace id is X's `parse` of the record and
+# nothing else: no `classify` across adapters, no envelope, because
+# `spanweave.build(..., adapter=X)` reads every record as X's (`SPEC.md` §4.2).
+# --------------------------------------------------------------------------
+
+#: The two adapters the pinned library ships, by name. Spelled, not read from
+#: the registry, so a third one is a decision about this table and not a
+#: silent widening of it.
+NAMED = ("openinference", "otel_genai")
+
+
+def named_batch(adapter: str, *records: dict) -> bytes:
+    """`spanweave.build` of these records as a line-delimited input, under a name."""
+    body = b"".join(json.dumps(record).encode("utf-8") + b"\n" for record in records)
+    return spanweave.dumps(undigested(spanweave.build(body, adapter=adapter)))
+
+
+@pytest.mark.parametrize("adapter", NAMED)
+@pytest.mark.parametrize(
+    "second",
+    [ambiguous("sA"), unclaimable("s9")],
+    ids=["claimed by both adapters", "claimed by neither"],
+)
+def test_under_a_named_adapter_every_record_reaches_the_trace_its_parse_names(
+    adapter, second
+):
+    """Run 1's R-9 table, both shapes, under each name: live is the batch.
+
+    One claimed OpenInference record and one more of `t1`: a record both
+    shipped adapters claim, or a flat one neither does. `spanweave.build`
+    under the name reads both as that adapter's and builds one graph of two
+    nodes. Until B2 routing classified across every adapter, so the second
+    record went to the no-trace builder -- unannounced when both claimed it,
+    `no_trace`/`unclaimed` when neither did -- and `t1` held one node.
+    """
+    first = openinference("s0")
+    router = Router(adapter=adapter)
+    routed = [router.route(record) for record in (first, second)]
+
+    assert [r.trace_id for r in routed] == ["t1", "t1"]
+    assert router.trace_ids == ("t1",)
+    assert router._no_trace is None, "nothing reached the no-trace builder"
+    assert router.counts == {}
+    traced = router.builder("t1")
+    assert traced is not None and traced.version == 2
+    assert len(traced.graph().nodes()) == 2
+    assert live(traced) == named_batch(adapter, first, second)
+
+
+@pytest.mark.parametrize("adapter", NAMED)
+def test_under_a_named_adapter_trace_id_of_asks_that_adapter_alone(adapter):
+    """The public function takes the name too, and answers as the router does."""
+    assert trace_id_of(ambiguous("sA"), adapter=adapter) == "t1"
+    assert trace_id_of(unclaimable("s9"), adapter=adapter) == "t1"
+    assert trace_id_of(openinference("s0", trace="other"), adapter=adapter) == "other"
+    # Unnamed, the library is asked who claims each, as before (§4.2).
+    assert trace_id_of(ambiguous("sA")) is None
+    assert trace_id_of(unclaimable("s9")) is None
+
+
+@pytest.mark.parametrize("adapter", NAMED)
+def test_under_a_named_adapter_an_export_s_ambiguous_span_reaches_its_trace(adapter):
+    """The OTLP shape of the same thing: unnamed it is `refused`, named it is X's.
+
+    The span carries both dialects' attributes, so unnamed both adapters claim
+    it and the library refuses it (above). Under a name, `build` reads it as
+    that adapter's, and so does routing.
+    """
+    span = otlp_span("aaaaaaaaaaaaaaaa")
+    span["attributes"] += [
+        {"key": "gen_ai.operation.name", "value": {"stringValue": "chat"}},
+        {"key": "gen_ai.system", "value": {"stringValue": "demo"}},
+    ]
+    export = otlp_export(span)
+    router = Router(adapter=adapter)
+    (routed,) = [router.route(r) for r in Framer().document(export).records]
+
+    assert routed.trace_id == EXPORT_TRACE and routed.events == ()
+    assert router._no_trace is None and router.counts == {}
+    traced = router.builder(EXPORT_TRACE)
+    assert traced is not None
+    assert live(traced) == spanweave.dumps(
+        undigested(spanweave.build(export, adapter=adapter))
+    )
+
+
+@pytest.mark.parametrize("adapter", NAMED)
+def test_under_a_named_adapter_the_envelope_is_not_asked(adapter):
+    """An unclaimed span whose envelope the library refuses is still X's.
+
+    The span states the export's trace and an all-zero span id: unnamed, no
+    adapter claims it and its envelope is refused, so it is `no_trace`
+    (`no_envelope`), as `test_a_refused_envelope_is_never_read_past_to_the_trace_id_key`
+    pins. Under a name nothing is asked but the adapter's `parse`, which
+    states the trace -- and `build` under the name puts the span in that
+    trace's graph beside its sibling. A router that still asked the envelope
+    of an unclaimed unpacked record would send it to the no-trace builder.
+    """
+    export = otlp_export(otlp_span("", claimed=False), otlp_span("bbbbbbbbbbbbbbbb"))
+    records = Framer().document(export).records
+    with pytest.raises(spanweave.EnvelopeError):
+        spanweave.envelope(records[0])
+    router = Router(adapter=adapter)
+    routed = [router.route(record) for record in records]
+
+    assert [r.trace_id for r in routed] == [EXPORT_TRACE, EXPORT_TRACE]
+    assert router._no_trace is None and router.counts == {}
+    traced = router.builder(EXPORT_TRACE)
+    assert traced is not None and traced.version == 2
+    assert live(traced) == spanweave.dumps(
+        undigested(spanweave.build(export, adapter=adapter))
+    )
+
+
+@pytest.mark.parametrize("adapter", NAMED)
+def test_under_a_named_adapter_a_record_it_states_no_trace_for_is_no_id(adapter):
+    """`no_id` is the one `no_trace` answer a name leaves (`SPEC.md` §4.2).
+
+    A record with no trace id, and one that is not an object at all: the
+    adapter's `parse` reports no id for either, so each reaches the no-trace
+    builder announced `no_id` -- never `unclaimed`, because under a name
+    nothing is unclaimed, and never `no_envelope`, because no envelope is
+    asked. The no-trace builder is the batch build of the two under the name.
+    """
+    nameless = unclaimable("s9")
+    del nameless["trace_id"]
+    router = Router(adapter=adapter)
+    routed = [router.route(record) for record in (nameless, "not a record")]
+
+    assert [r.builder is router.no_trace for r in routed] == [True, True]
+    assert [[(e.code, e.detail) for e in r.events] for r in routed] == [
+        [(NO_TRACE, NO_ID)],
+        [(NO_TRACE, NO_ID)],
+    ]
+    assert router.counts == {NO_TRACE: 2}
+    assert router.trace_ids == ()
+
+
+@pytest.mark.parametrize("adapter", NAMED)
+def test_under_a_named_adapter_an_unread_export_is_a_claimed_trace(adapter):
+    """Under a name every record is claimed, so `max_unclaimed_traces` is idle.
+
+    The health check no adapter claims is, under a name, that adapter's (as
+    `build` under the name reads it), so it counts against `max_traces` and
+    the unclaimed bound -- here zero -- never refuses it (`SPEC.md` §4.5).
+    """
+    router = Router(adapter=adapter, max_traces=1, max_unclaimed_traces=0)
+    for record in Framer().document(unread_export()).records:
+        assert router.route(record).events == ()
+    assert router.trace_ids == (EXPORT_TRACE,)
+    assert router.counts == {}
+    traced = router.builder(EXPORT_TRACE)
+    assert traced is not None
+    assert live(traced) == spanweave.dumps(
+        undigested(spanweave.build(unread_export(), adapter=adapter))
+    )
+    (refused,) = router.route(openinference("s0", trace="another")).events
+    assert refused.code == REFUSED_AT_CAP
 
 
 # --------------------------------------------------------------------------
@@ -904,6 +1051,178 @@ def test_an_unread_trace_a_claimed_record_joins_is_one_trace_with_a_graph():
     assert held is not None and held.version == 3
     whole = unread_export() + b"\n" + joining + b"\n"
     assert live(held) == spanweave.dumps(undigested(spanweave.build(whole)))
+
+
+# --------------------------------------------------------------------------
+# The traces no adapter can read are bounded too: `max_unclaimed_traces`
+# (§4.5, B1; the zoo series' Qodo finding 2).
+# --------------------------------------------------------------------------
+
+
+def health_check(n: int, *, spans: int = 1) -> tuple:
+    """The records of one health check under its own trace id, `n`.
+
+    No span carries an attribute any adapter reads, as `unread_export`'s do;
+    `spans=2` is that export's root-and-child shape, which the bounded review's
+    `cap_bound.py` fed (`reviews/2026-10-20-zoo-fixes.md` R-1).
+    """
+    trace = f"{n:032x}"
+    shape = [otlp_span(UNREAD_ROOT, trace=trace, claimed=False)]
+    if spans == 2:
+        shape.append(
+            otlp_span(UNREAD_CHILD, trace=trace, parent=UNREAD_ROOT, claimed=False)
+        )
+    return Framer().document(otlp_export(*shape)).records
+
+
+def claimed_in(n: int, span_id: str = "cccccccccccccccc") -> tuple:
+    """One claimed span, in the trace `health_check(n)` names."""
+    return Framer().document(otlp_export(otlp_span(span_id, trace=f"{n:032x}"))).records
+
+
+def test_at_the_unclaimed_bound_a_new_unread_trace_is_refused_in_the_open():
+    """Five health checks, two places: two held, three counted refusals.
+
+    Each refusal names the bound it met, and makes no builder and no book.
+    """
+    router = Router(max_unclaimed_traces=2, completion=Completion(now=lambda: 0.0))
+    routed = [router.route(record) for n in range(5) for record in health_check(n)]
+
+    assert router.trace_ids == (f"{0:032x}", f"{1:032x}")
+    assert [r.events for r in routed[:2]] == [(), ()]
+    for n, refused in enumerate(routed[2:], start=2):
+        (event,) = refused.events
+        assert event.code == REFUSED_AT_CAP
+        assert (event.index, event.trace_id) == (n + 1, f"{n:032x}")
+        assert event.spanweave_code is None
+        assert "max_unclaimed_traces" in event.detail
+        assert refused.builder is None and refused.version is None
+    assert router.counts == {REFUSED_AT_CAP: 3}
+    # No book either: the one piece of state a `route` could have left behind
+    # for a trace it holds no builder for (`SPEC.md` §5.5).
+    assert sorted(router._books) == [f"{0:032x}", f"{1:032x}"]
+
+
+def test_a_further_record_for_a_held_unread_trace_is_never_refused_by_the_bound():
+    router = Router(max_unclaimed_traces=2)
+    for n in range(3):
+        for record in health_check(n):
+            router.route(record)
+    (more,) = (
+        Framer()
+        .document(
+            otlp_export(otlp_span(UNREAD_CHILD, trace=f"{0:032x}", claimed=False))
+        )
+        .records
+    )
+    absorbed = router.route(more)
+    assert absorbed.events == ()
+    assert absorbed.version == 2
+    assert router.counts == {REFUSED_AT_CAP: 1}
+
+
+def test_an_unread_trace_that_absorbs_a_claimed_record_frees_its_place():
+    """It is `max_traces`' from then, and the next health check is admitted."""
+    router = Router(max_unclaimed_traces=2)
+    for n in range(2):
+        for record in health_check(n):
+            router.route(record)
+    (joining,) = claimed_in(0)
+    assert router.route(joining).events == ()
+
+    (admitted,) = [router.route(record) for record in health_check(2)]
+    assert admitted.events == ()
+    assert router.trace_ids == (f"{0:032x}", f"{1:032x}", f"{2:032x}")
+    (refused,) = [router.route(record) for record in health_check(3)]
+    assert [event.code for event in refused.events] == [REFUSED_AT_CAP]
+
+
+def test_a_claimed_record_refused_at_max_traces_leaves_its_trace_in_this_count():
+    """The record that would join a held unread trace at a full `max_traces`
+    is refused there, naming `max_traces`, and the trace keeps its place here."""
+    router = Router(max_traces=1, max_unclaimed_traces=1)
+    router.route(openinference("s0", trace="t1"))
+    for record in health_check(0):
+        assert router.route(record).events == ()
+    (joining,) = claimed_in(0)
+    (at_cap,) = router.route(joining).events
+    assert at_cap.code == REFUSED_AT_CAP
+    assert "max_traces" in at_cap.detail
+    assert "max_unclaimed_traces" not in at_cap.detail
+
+    (refused,) = [router.route(record) for record in health_check(1)]
+    (event,) = refused.events
+    assert "max_unclaimed_traces" in event.detail
+    assert router.counts == {REFUSED_AT_CAP: 2}
+
+
+def test_a_claimed_trace_is_never_refused_by_the_unclaimed_bound():
+    router = Router(max_unclaimed_traces=0)
+    for n in range(4):
+        assert router.route(openinference("s0", trace=f"t{n}")).events == ()
+    (refused,) = [router.route(record) for record in health_check(0)]
+    assert [event.code for event in refused.events] == [REFUSED_AT_CAP]
+    assert router.trace_ids == ("t0", "t1", "t2", "t3")
+
+
+def test_a_record_with_no_trace_id_is_bounded_by_neither():
+    """The no-trace builder is not a trace, under either bound (`§4.3`)."""
+    router = Router(max_traces=0, max_unclaimed_traces=0)
+    routed = router.route(unclaimable("s0"))
+    assert [event.code for event in routed.events] == [NO_TRACE]
+    assert routed.builder is router.no_trace
+
+
+def test_completion_releases_an_unread_trace_from_the_unclaimed_count():
+    router = Router(
+        max_unclaimed_traces=1,
+        completion=Completion(policies=(Cap(1),), now=lambda: 0.0),
+    )
+    for record in health_check(0):
+        router.route(record)
+    (refused,) = [router.route(record) for record in health_check(1)]
+    assert [event.code for event in refused.events] == [REFUSED_AT_CAP]
+    router.tick()
+    assert router.trace_ids == ()
+    (admitted,) = [router.route(record) for record in health_check(1)]
+    assert admitted.events == ()
+
+
+def test_no_unclaimed_bound_is_the_default():
+    router = Router()
+    for n in range(12):
+        for record in health_check(n):
+            router.route(record)
+    assert len(router.trace_ids) == 12
+    assert router.counts == {}
+
+
+def test_the_cap_bound_shape_holds_eleven_builders_and_eleven_cursors():
+    """The bounded review's `cap_bound.py` (its R-1), under both bounds.
+
+    `max_traces=1`, `max_unclaimed_traces=10`, one subscriber on every trace;
+    one claimed trace, then 100 two-span health checks with their own ids. At
+    `c76f74e` that held 101 builders and 101 cursors with no event. Now: the
+    claimed trace and ten health checks are held, and the other 90 are refused
+    -- both records of each, since neither finds a builder: 180 events.
+    """
+    subscriptions = Subscriptions()
+    subscriptions.subscribe(lambda delivery: None, trace_id=None, every=1)
+    router = Router(max_traces=1, max_unclaimed_traces=10, subscriptions=subscriptions)
+    claimed = otlp_span("cccccccccccccccc", trace="11111111111111111111111111111111")
+    refused: set[str | None] = set()
+    for record in Framer().document(otlp_export(claimed)).records:
+        assert router.route(record).events == ()
+    for n in range(1000, 1100):
+        for record in health_check(n, spans=2):
+            for event in router.route(record).events:
+                assert event.code == REFUSED_AT_CAP
+                refused.add(event.trace_id)
+
+    assert len(router.trace_ids) == 11
+    assert len(subscriptions._cursors) == 11
+    assert len(refused) == 90
+    assert router.counts == {REFUSED_AT_CAP: 180}
 
 
 # --------------------------------------------------------------------------

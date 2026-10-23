@@ -6,7 +6,10 @@ began as the receiver series' batch brief written out, with the reason for each
 line, because a bar whose reasons are not written gets negotiated away one batch
 at a time — and between series it is the only copy: each series' execution
 state (`WORKPLAN.md`) is deleted at its close, and `TASKS.md` registers what
-each series did.
+each series did. The commit that deletes it closes the series, and its subject
+must say "the <name> series closes", with the series' name: `tests/test_record.py`
+finds each close by that phrase, and a commit that deletes `WORKPLAN.md`
+without it turns that test red, the earlier series' cases included.
 
 Read first: `CLAUDE.md` (the invariants — the standing rules are not style
 preferences), then the part of `SPEC.md` you are touching.
@@ -70,7 +73,21 @@ A batch is done when all of these hold.
 
 - [ ] **No test that reads the real clock, opens a real socket, or shuffles
       unseeded.** Drive the injected seams. A timeout test against the real clock
-      is a flake, and a flake gets tuned until it asserts nothing.
+      is a flake, and a flake gets tuned until it asserts nothing. The socket
+      half has **two exceptions**, each argued in `SPEC.md` and neither a
+      race: `tests/test_endpoint.py` binds the endpoint's adapter layer on
+      `127.0.0.1` port **0**, writes one request and asks `serve` for one
+      yield, with no thread, no timeout and no retry (§7.2); and
+      `tests/test_cli.py` spawns `spanweave-live serve --port 0` and posts to
+      it after a **read** of its `listening` line, never a sleep (§8.7). The
+      socket is real in both because what they hold is the socket's answer,
+      and the schedule is the test's. The record test (`test_record.py`)
+      holds this list to the test files that **import** a socket module, by
+      `import` or by `from … import`: a test file that imports one and is
+      not named here is red there. That check is static, read off each
+      file's imports, and does not see what a test opens: a test that opens
+      a socket through a module it does not import itself, or in a child
+      process, is outside it and is held to this rule by review.
 
 ## Halt, do not improvise
 

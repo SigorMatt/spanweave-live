@@ -13,8 +13,9 @@ the orchestrator's execution state, which batch is next and what it must
 contain. **It is edited only by the orchestrator**, and a sub-agent executing a
 batch never edits it. It exists only for the life of a series and is deleted at
 the close, with what outlives it folded into `TASKS.md`; the receiver series'
-last state is at `git show b500342:WORKPLAN.md`, and the zoo series' at
-`git show 3077bec:WORKPLAN.md`. No series is open at this tip, so there is no
+last state is at `git show b500342:WORKPLAN.md`, the zoo series' at
+`git show 3077bec:WORKPLAN.md`, and the backlog series' at
+`git show fff8a9e:WORKPLAN.md`. No series is open at this tip, so there is no
 `WORKPLAN.md` here.
 
 ## What this project is
@@ -45,10 +46,10 @@ either, and that too is a halt point.
 ## Standing rules — non-negotiable
 
 These were first written as a series' `WORKPLAN.md` §0.6 — the receiver
-series', and rule 1's envelope clause and rule 5's V2 clause the zoo series' —
-and are repeated here because they are the contract and a session must not
-have to read a plan to find them. A change that violates one is wrong even if
-it passes tests.
+series', rule 1's envelope clause and rule 5's V2 clause the zoo series', and
+rule 5's `no_graph` clause the backlog series' — and are repeated here because
+they are the contract and a session must not have to read a plan to find them.
+A change that violates one is wrong even if it passes tests.
 
 1. **It never reads a dialect.** A record's trace id, span id or kind comes from
    `spanweave`'s adapters (`spanweave.adapters.classify` and the claiming
@@ -77,11 +78,12 @@ it passes tests.
    nothing else does. The gate fails the build. (`SPEC.md` §1.4, §8.2.)
 
 5. **Nothing is dropped silently.** A refusal, a cap, a late arrival, a
-   consumer error — and from V2, a record that reaches no trace — is an
-   **event with a code**, counted and reported. (`SPEC.md` §1.5, §4.2.) One
-   exception is open: under a router given `adapter=`, a record two adapters
-   claim reaches the no-trace builder and is announced by nothing (`SPEC.md`
-   §4.3; `TASKS.md`, V2(a)).
+   consumer error — and from V2, a record that reaches no trace, and since the
+   zoo series' review a trace no adapter can read (`no_graph`) — is an
+   **event with a code**, counted and reported. (`SPEC.md` §1.5, §4.2, §5.4.) The
+   one exception, a record two adapters claim under a router given
+   `adapter=`, closed with B2: a named adapter routes as it builds (`SPEC.md`
+   §4.1).
 
 6. **The two pins are one pin.** `spanweave` is pinned to one commit in
    `pyproject.toml`, the `corpus/` submodule is at the same commit, and
@@ -102,7 +104,15 @@ it passes tests.
 9. **Read-only toward the observed system.** The receiver reads bytes and writes
    files, stdout and callbacks. It never calls back into the system it watches.
    Trace payloads are untrusted input: never `eval`, `exec`, `pickle` or
-   `yaml.load` anything that came out of a trace.
+   `yaml.load` anything that came out of a trace. Both halves are gated: the
+   `no-network` rule in `tests/gates.py` bans the network libraries, and since
+   B7 its `no-execution-of-content` rule bans those names and their kin
+   (`compile`, `__import__`, `marshal`, `shelve`, `yaml.unsafe_load` and the
+   rest of its lists) under `spanweave_live/`, with no seam; the gate fails the
+   build. That rule is a static ban on exactly the names it lists, not a proof
+   that nothing is executed or deserialized: a name it does not list, and
+   dynamic reach such as `getattr(builtins, "eval")` or `sys.modules`, are
+   outside it, as `SPEC.md` §1.4 says of the clock gate. (`SPEC.md` §1.3.)
 
 ## Architecture
 

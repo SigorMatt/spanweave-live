@@ -57,7 +57,12 @@ spanweave-live tail trace.jsonl --out graphs/ --once --deltas
 cat trace.jsonl | spanweave-live tail - --out graphs/
 
 # Receive OTLP/HTTP: POST /v1/traces, application/json or application/x-protobuf
-# (what a stock exporter sends), gzip accepted.
+# (what a stock exporter sends), gzip accepted. Unbounded as written: without
+# --max-traces and --max-unclaimed-traces, any client that can POST chooses how
+# many traces it holds a builder for until a completion releases them (SPEC.md §4.5).
+# A refused request (415, 400) is answered with OTLP's Status in the request's own
+# encoding, the receiver's code as its message; before B3 it was {"code": ...} as
+# JSON whatever the request declared (SPEC.md §7.2).
 spanweave-live serve --port 4318 --out graphs/ --root-grace 5
 ```
 
@@ -66,8 +71,8 @@ chooses by flag: `--quiet S` (no record for S seconds), `--root-grace S` (S
 seconds after an ended root was first seen), `--cap N` (N records absorbed).
 Give several and they compose as any-of; give none and only end of input
 completes a trace. The other flags are bounds, each of them the caller's number
-rather than a default this library invented: `--max-traces`, `--max-completed`,
-`--max-pending-bytes`. `--poll-seconds` and `--once` apply to a file,
+rather than a default this library invented: `--max-traces`,
+`--max-unclaimed-traces`, `--max-completed`, `--max-pending-bytes`. `--poll-seconds` and `--once` apply to a file,
 `--host` and `--requests` to the socket. `spanweave-live <command> --help`
 prints every flag, each policy and bound with the `SPEC.md` section that
 specifies it, including the first two of the three traps worth knowing before
@@ -88,11 +93,13 @@ you rely on them; the third is the policies' own:
   later one carries `orphan_parent`, as a batch build of those records does.
   That is the policy you chose showing, not a defect; generations are never
   merged, and a `late_arrival` event opens each one after the first. And
-  `--root-grace` alone never completes a trace whose root never arrives, nor
-  a trace no adapter can read — a plain HTTP health check exported beside your
-  agent's spans — which has no graph, so no root the receiver can see: give
-  `--quiet` or `--cap` beside it, or only end of input completes it. Such a
-  trace completes as `no_graph`, with no file (`SPEC.md` §5.3, §5.5).
+  `--root-grace` alone never completes a trace whose root never arrives;
+  nor, because it acts per generation, a later generation of a trace whose
+  root arrived in an earlier one; nor a trace no adapter can read — a plain
+  HTTP health check exported beside your agent's spans — which has no graph,
+  so no root the receiver can see. Give `--quiet` or `--cap` beside it, or
+  only end of input completes them. The last completes as `no_graph`, with
+  no file (`SPEC.md` §5.3, §5.5).
 
 Exit codes (`SPEC.md` §8.6): `0` the input ended and everything was delivered ·
 `1` it could not start · `2` usage · `3` it ran to the end but something it had
@@ -150,7 +157,7 @@ The five pieces, each specified in the section named:
 | | | |
 |---|---|---|
 | **`Framer`** | §3 | `push(chunk)` hands the reader complete lines only and keeps the remainder; `document(body)` hands a whole OTLP-JSON body over unsplit; `flush()` reads the remainder as a final line and reports it; `pending_bytes` is what it still holds. Diagnostics come back with the line's absolute offset in the stream. `max_pending_bytes` caps the remainder, and the oversize fragment is reported rather than dropped |
-| **`Router`** | §4 | One `spanweave.Builder` per trace, created on first sight, the trace id read through `spanweave.adapters.classify` and the claiming adapter's `parse`. A record no adapter claims that was unpacked from an OTLP export is routed by its envelope's trace id, through `spanweave.envelope`; a record with no trace id goes to the no-trace builder and is announced by a counted `no_trace` event, or by a counted `refused` where the library refuses it (more than one adapter claims it, or a `SpanweaveError`), except under a named adapter, where a record two adapters claim is announced by nothing (§4.3); a `Builder` refusal is a counted `refused` event and routing continues; `max_traces` is a cap and the cap is counted, and a trace counts against it from the first record an adapter claims |
+| **`Router`** | §4 | One `spanweave.Builder` per trace, created on first sight, the trace id read through `spanweave.adapters.classify` and the claiming adapter's `parse`, or, given `adapter=`, through that adapter's `parse` alone, as `spanweave.build` under the name reads every record. A record no adapter claims that was unpacked from an OTLP export is routed by its envelope's trace id, through `spanweave.envelope`; a record with no trace id goes to the no-trace builder and is announced by a counted `no_trace` event, or by a counted `refused` where the library refuses it (more than one adapter claims it, or a `SpanweaveError`); a `Builder` refusal is a counted `refused` event and routing continues; `max_traces` is a cap and the cap is counted, and a trace counts against it from the first record an adapter claims; `max_unclaimed_traces` bounds, the same way, the traces holding no such record |
 | **`Completion`** | §5 | Three policies, each a value — `Quiet(seconds)`, `RootEnded(grace_seconds)`, `Cap(records)` — composable as any-of over a `now` the caller supplies. `Router.tick()` returns the traces completed, materializes each final graph, writes it, and releases the builder. A record for a completed trace opens a new generation and emits `late_arrival` with the gap |
 | **`Subscriptions`** | §6 | A consumer registers a callback for one trace or for all, per record or `every=N`, and is handed `Update`s carrying a `spanweave` delta. Retention is set to the hungriest subscriber's window and no more. A callback that raises is isolated as `consumer_error`: the other subscribers are still called and the record is still absorbed |
 | **`tail` / `stdin` / `serve`** | §7 | `tail(path, *, now, sleep, poll_seconds)` follows a growing file, detects truncation and rotation by the platform's own `(st_dev, st_ino)` and reports both as events; `stdin()` reads a pipe to EOF; `serve(endpoint, *, listener=…)` answers `POST /v1/traces` over a socket the caller's factory owns |
@@ -164,10 +171,14 @@ a consumer matches on `spanweave_live.LATE_ARRIVAL` rather than on a literal.
 Records of two traces, shuffled together and framed in arbitrary chunks,
 produce each trace's graph **byte for byte** identical to `spanweave.build` of
 that trace alone. That is conformance gate A (`SPEC.md` §4.7,
-`tests/test_conformance.py`), run over every pair of renderings from the pinned
-corpus' scenarios — 1460 cross-scenario pairs × 10 seeds × 2 graphs per pair =
-29 200 byte-for-byte comparisons. Live and batch are one model, or this library
-is not worth having.
+`tests/test_conformance.py`), whose main pass runs over every pair of
+renderings from the pinned corpus' scenarios — 1460 cross-scenario pairs × 10
+seeds × 2 graphs per pair = 29 200 byte-for-byte comparisons, which are the
+main pass's alone. Beside it, and outside that count, gate A runs the passes
+§4.7 adds, each over the pairs §4.7 names: once as one stream chunked across
+its lines, once under each named adapter, and once with one side an export
+whose root no adapter claims. Live and batch are one model, or this
+library is not worth having.
 
 The same claim is held over traces nobody wrote for it: the **zoo gate**
 (`SPEC.md` §4.8, `tests/test_zoo_gate.py`) replays each of the twelve captures

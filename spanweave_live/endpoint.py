@@ -73,14 +73,14 @@ TRACES_TARGET: Final = "/v1/traces"
 #: The first of the two media types it reads: OTLP/HTTP JSON, handed to
 #: `Framer.document`. Parameters (`; charset=utf-8`) are allowed and ignored;
 #: the type itself is matched case-insensitively, as HTTP says it is. It is
-#: also the type of every refusal, whichever media type the request had, and of
-#: the answer to an accepted JSON request.
+#: also the type of the answer to a JSON request, accepted or refused, and of a
+#: refusal of a request that declared neither type (B3).
 JSON_MEDIA_TYPE: Final = "application/json"
 
 #: The second: OTLP/HTTP protobuf, the media type a stock exporter sends every
 #: export as, handed to `spanweave.read_protobuf` (V1, the zoo's L1). Matched by
-#: the same rule as the first. An accepted request of this type is answered in
-#: it (V1a).
+#: the same rule as the first. A request of this type is answered in it,
+#: accepted (V1a) or refused (B3).
 PROTOBUF_MEDIA_TYPE: Final = "application/x-protobuf"
 
 #: The media types this endpoint reads, in the order the refusal names them.
@@ -117,7 +117,8 @@ CLIENT_ABORTED: Final = "client_aborted"
 #: `partialSuccess` would be a dialect read (`SPEC.md` §7.2). For protobuf, the
 #: same message -- the same claim, `{}`'s and no more -- which encodes as **zero
 #: bytes**, so answering in the request's encoding needs no encoder and no
-#: protobuf import here (V1a). A refusal is JSON for either: `_coded` below.
+#: protobuf import here (V1a). A refusal is in the request's type too:
+#: `_refusal` below.
 _ACCEPTED: Final = {JSON_MEDIA_TYPE: b"{}", PROTOBUF_MEDIA_TYPE: b""}
 
 #: Read nothing, and said so. A request that was refused still yields one of
@@ -348,7 +349,7 @@ class Endpoint:
             # went nowhere.
             return Exchange(
                 request=request,
-                response=Response(status=400, body=self._coded(UNREADABLE_BODY)),
+                response=_refusal(request, 400, UNREADABLE_BODY),
                 records=read,
                 events=(
                     self._event(
@@ -442,7 +443,7 @@ class Endpoint:
     ) -> Exchange:
         return Exchange(
             request=request,
-            response=Response(status=status, body=self._coded(code)),
+            response=_refusal(request, status, code),
             records=_NOTHING,
             events=(self._event(code, detail),),
         )
@@ -458,23 +459,51 @@ class Endpoint:
             detail=detail,
         )
 
-    @staticmethod
-    def _coded(code: str) -> bytes:
-        """A refusal's body: the receiver's own code, and nothing else.
 
-        JSON whichever media type the request declared, and OTLP's
-        `google.rpc.Status` in neither encoding: a `Status`'s `code` is an
-        integer, so the receiver's code could ride only in its `message`, and
-        for a protobuf request only encoded. Keeping the code over OTLP's type
-        is a choice, and `SPEC.md` §7.2 says it is one.
+def _refusal(request: Request, status: int, code: str) -> Response:
+    """A refusal's answer: OTLP's `google.rpc.Status`, in the request's type.
 
-        `sort_keys=True` and a separator with no spaces, because a response is
-        output and output here is byte-identical for identical input
-        (`CLAUDE.md` 8).
-        """
-        return json.dumps({"code": code}, sort_keys=True, separators=(",", ":")).encode(
-            "utf-8"
+    OTLP asks for a refusal's body to be a `Status` in the request's encoding.
+    The receiver's code rides in `message`, the one field of a `Status` that
+    holds a string, and `code` -- an integer, `int32 code = 1` -- is omitted,
+    as OTLP says a server "MAY" do. A request declaring
+    `application/x-protobuf`, matched as `_media_type` matches it, gets the
+    `Status` encoded; any other gets it in OTLP/JSON, which is also the answer
+    to a request that declared neither type this endpoint reads (`SPEC.md`
+    §7.2, B3).
+
+    JSON with `sort_keys=True` and a separator with no spaces, because a
+    response is output and output here is byte-identical for identical input
+    (`CLAUDE.md` 8).
+    """
+    if _media_type(request.content_type) == PROTOBUF_MEDIA_TYPE:
+        return Response(
+            status=status, body=_status(code), content_type=PROTOBUF_MEDIA_TYPE
         )
+    body = json.dumps({"message": code}, sort_keys=True, separators=(",", ":"))
+    return Response(status=status, body=body.encode("utf-8"))
+
+
+def _status(message: str) -> bytes:
+    """A `google.rpc.Status` with field 2, `message`, alone, in protobuf.
+
+    The tag byte `0x12` -- field 2, wire type 2, length-delimited -- then the
+    length as a varint, then the bytes. Writing one field of the receiver's own
+    reply is not reading a dialect, so it needs no protobuf runtime, and none
+    is imported here (`SPEC.md` §7.2, B3).
+    """
+    data = message.encode("utf-8")
+    return b"\x12" + _varint(len(data)) + data
+
+
+def _varint(value: int) -> bytes:
+    """A non-negative integer as protobuf's base-128 varint, low group first."""
+    out = bytearray()
+    while value > 0x7F:
+        out.append((value & 0x7F) | 0x80)
+        value >>= 7
+    out.append(value)
+    return bytes(out)
 
 
 def _first_code(read: Records) -> str | None:

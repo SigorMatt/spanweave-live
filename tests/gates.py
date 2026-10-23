@@ -34,9 +34,9 @@ R8 added the fourth, for the standing rule nothing had held statically:
   dependency -- and a showcase is exactly the occasion on which one import
   drifts from `tests/` into the package and passes every other gate.
 
-All four are **static**: a dynamic `importlib.import_module("time")` passes,
-and that limit is stated in the rule's own docstring and held by a test rather
-than left for a reader to discover (T11).
+All five are **static** -- B7's fifth, `no-execution-of-content` (below), too:
+`importlib.import_module("time")` and `getattr(builtins, "eval")` pass, and
+each limit is stated in its rule's docstring and held by a test (T11).
 
 Why this and not a style rule: the clock, sleeping and sockets are *injected*
 in this project (`CLAUDE.md`, standing rules). A `time.time()` anywhere in the
@@ -429,6 +429,121 @@ def no_ambient_os(
     ]
 
 
+# B7 added the fifth rule, for the standing rule nothing had held statically
+# since R0 (`reviews/2026-10-04-run1.md` R0-4, its open half): **trace payloads
+# are untrusted input**, and nothing that came out of one is executed or
+# deserialized into objects (`CLAUDE.md` 9, `SPEC.md` §1.3). B7 listed the four
+# names that rule states: the builtins `eval` and `exec`, the module `pickle`,
+# and the one member `yaml.load` -- not `yaml` itself, whose `safe_load` builds
+# no objects. The backlog series' cold review measured the families those four
+# left passing (its second half's R-3), and on 2026-10-23 the lists were
+# widened to them: `compile` and `__import__` beside `eval` and `exec`;
+# `pickle`'s kin `_pickle`, `cPickle`, `marshal`, `shelve`, `dill` and
+# `jsonpickle`, and `runpy` and `code`, which run source; and `yaml`'s other
+# object-building loaders beside `load`. The rule is a static ban on **exactly
+# these names**, not a proof that nothing is executed or deserialized: a name
+# not listed here passes it, and so does dynamic reach (the rule's docstring).
+# No file of the package reads anything but bytes into `spanweave.read_records`,
+# so no file at the edge has to bind one of these, and like `no-consumer-rules`
+# this rule has no seam.
+UNSAFE_BUILTINS = ("eval", "exec", "compile", "__import__")
+UNSAFE_MODULES = (
+    "pickle",
+    "_pickle",
+    "cPickle",
+    "marshal",
+    "shelve",
+    "dill",
+    "jsonpickle",
+    "runpy",
+    "code",
+)
+UNSAFE_MEMBERS = {
+    "builtins": UNSAFE_BUILTINS,
+    "yaml": (
+        "load",
+        "load_all",
+        "full_load",
+        "full_load_all",
+        "unsafe_load",
+        "unsafe_load_all",
+    ),
+}
+
+
+def _module_aliases(tree: ast.AST) -> dict[str, str]:
+    """Every name bound to `builtins` or `yaml`, by its own name or `as` alias."""
+    aliases = {module: module for module in UNSAFE_MEMBERS}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name in UNSAFE_MEMBERS:
+                    aliases[alias.asname or alias.name] = alias.name
+    return aliases
+
+
+def _unsafe_names_used(tree: ast.AST) -> Iterator[tuple[str, int]]:
+    """Every use of a name the lists above ban, called or not, under any alias."""
+    aliases = _module_aliases(tree)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and node.id in UNSAFE_BUILTINS:
+            yield node.id, node.lineno
+        elif (
+            isinstance(node, ast.Attribute)
+            and isinstance(node.value, ast.Name)
+            and node.value.id in aliases
+            and node.attr in UNSAFE_MEMBERS[aliases[node.value.id]]
+        ):
+            yield f"{aliases[node.value.id]}.{node.attr}", node.lineno
+        elif isinstance(node, ast.ImportFrom) and node.module in UNSAFE_MEMBERS:
+            for alias in node.names:
+                if alias.name in UNSAFE_MEMBERS[node.module]:
+                    yield f"{node.module}.{alias.name}", node.lineno
+    for imported, line in _imported_modules(tree):
+        for banned in UNSAFE_MODULES:
+            if _matches_module(imported, banned):
+                yield imported, line
+
+
+def no_execution_of_content(
+    path: str,
+    source: str,
+    tree: ast.AST,
+    *,
+    seams: Mapping[str, frozenset[str]] | None = None,
+) -> list[Violation]:
+    """No name the lists above ban is used under the package. No seam.
+
+    A use is a call or a reference -- a reference is how a call gets a new
+    name -- and an alias does not hide it: `b.exec` after `import builtins as
+    b`, `y.load` after `import yaml as y`, `from yaml import load as parse`,
+    and `yaml.load` after `import yaml.constructor`, which binds `yaml` too.
+    A banned module is banned by an import of it or of a submodule of it.
+
+    The rule is **syntactic**: a static ban on exactly the names listed, not a
+    proof that nothing is executed or deserialized, and its limit is stated
+    rather than claimed away, as the import rules' is. A name the lists do not
+    hold passes it, and so does dynamic reach, since it reads names, not
+    values: `getattr(builtins, "eval")`, `sys.modules["builtins"].eval` and
+    `m = yaml; m.load(body)` pass it. Each is conspicuous in review. `seams` is
+    accepted so the rule has `Rule`'s shape, and nothing is read from it.
+    """
+    del seams
+    return [
+        Violation(
+            "no-execution-of-content",
+            path,
+            line,
+            f"uses {name}; trace payloads are untrusted input, and nothing that "
+            f"came out of one is executed or deserialized into objects "
+            f"(CLAUDE.md, standing rule 9; SPEC.md §1.3)",
+        )
+        for line, name in sorted(
+            (line, name) for name, line in _unsafe_names_used(tree)
+        )
+    ]
+
+
 Rule = Callable[[str, str, ast.AST], list[Violation]]
 
 ALL_RULES: tuple[Rule, ...] = (
@@ -436,6 +551,7 @@ ALL_RULES: tuple[Rule, ...] = (
     no_network,
     no_ambient_os,
     no_consumer_rules,
+    no_execution_of_content,
 )
 
 

@@ -30,7 +30,8 @@ its batch lands:
 | 9 | The showcase | What does a consumer do with all this, and what does live buy over batch? |
 
 Sections 3 onward are written by the batch that builds them (`TASKS.md`:
-the receiver series' R1–R8, amended since by the zoo series' V0–V3). §9 is
+the receiver series' R1–R8, amended since by the zoo series' V0–V3 and
+the backlog series' B1–B6 and B9). §9 is
 the odd one: it specifies a **test**, not a piece of the receiver, because
 the showcase adds no library behaviour and the reason it adds none is itself a claim worth stating (§9.1). This document begins with the two sections that constrain all of them:
 what the receiver will never do, and the three properties of the library
@@ -122,7 +123,8 @@ somebody.
 
 The receiver never reads a telemetry dialect. A record's trace id, its span id
 and its kind come from `spanweave`'s adapters — `spanweave.adapters.classify`
-and the claiming adapter's `parse` — and never from a key the receiver looks up
+and the claiming adapter's `parse`, or, under a router given an `adapter`, that
+adapter's `parse` alone (§4.2) — and never from a key the receiver looks up
 itself. There is no `record["trace_id"]`, no `resourceSpans` walk, no
 `"gen_ai."` prefix test, anywhere under `spanweave_live/`.
 
@@ -150,9 +152,12 @@ If a record's trace id cannot be had through the adapter surface or the
 envelope, the answer is "no trace id" and a counted event — `no_trace`
 (§4.2), or `refused` where the library refuses the record: more than one
 adapter claims it, or a `SpanweaveError` is raised while classifying or
-parsing it (§4.2, §4.4) — not a key lookup. One exception is open: under a
-router given an `adapter`, a record two adapters claim is announced by
-nothing (§4.3), a thread registered in `TASKS.md` (V2(a)).
+parsing it (§4.2, §4.4) — not a key lookup. Under a router given an
+`adapter`, nothing is ambiguous and nothing unclaimed: the named adapter is
+the claimant of every record, and one it states no single trace id for is
+`no_trace` (`no_id`) (§4.2). Until B2 one record there was announced by
+nothing — one two adapters claim, which routing classified across adapters
+and the no-trace builder, given the name, absorbed — and B2 removed the case.
 
 ### 1.2 No rules, no semantics
 
@@ -182,6 +187,26 @@ the receiver does not know it exists.
 
 The practical form of this: the receiver's output is files, stdout and
 callbacks. It has no side effect that reaches the observed system.
+
+Nor does anything the observed system sent reach the receiver as code. Trace
+payloads are untrusted input: nothing that came out of one is executed or
+deserialized into objects — no `eval`, no `exec`, no `pickle`, no `yaml.load`
+(`CLAUDE.md` 9). `tests/gates.py`'s `no-execution-of-content` rule (B7) is a
+**static ban on exactly the names it lists**, not a proof of that posture: no
+module under `spanweave_live/` uses one of them, called or referenced, under
+its own name or an `import … as` alias, and unlike the clock there is **no
+seam**, since no file at the edge has to bind one. Since 2026-10-23 the lists
+hold the families the backlog series' cold review measured passing B7's
+`eval`, `exec`, `pickle` and `yaml.load`: the builtins `eval`, `exec`,
+`compile` and `__import__`; the modules `pickle`, `_pickle`, `cPickle`,
+`marshal`, `shelve`, `dill`, `jsonpickle`, `runpy` and `code`; and `yaml`'s
+`load`, `load_all`, `full_load`, `full_load_all`, `unsafe_load` and
+`unsafe_load_all`. Its limit is stated as
+§1.4's is: a name the lists do not hold is outside the rule, and so is dynamic
+reach, since the rule is syntactic and reads names, not values —
+`getattr(builtins, "eval")` and `sys.modules["builtins"].exec` pass it, and a
+test holds that they do. The network half of this posture is §1.4's
+`no-network` rule.
 
 ### 1.4 No clock of its own
 
@@ -235,6 +260,9 @@ Not strictly a non-goal — it is the shape every other answer takes. A refusal,
 a cap, a late arrival, a truncation, a malformed body, a consumer that raised:
 each is an **event with a code**, counted and reported. The receiver's honest
 answer to "what did you not handle?" is a number per code, never silence.
+Two refusals are outside this today, and §7.2 names them: the answers
+`http.server` gives itself before a request reaches the endpoint, a `501`
+and an HTML `400`, are not events and are not counted.
 
 This is `spanweave`'s losslessness invariant one layer up. The library's rule is
 that no input record vanishes; the receiver's is that no *decision* vanishes.
@@ -300,8 +328,8 @@ library about the same bytes for reasons no fixture could pin.
 not in framing, so that is where its policies live: completion (§5) releases a
 builder so a finished trace stops costing memory, `max_traces` (§4.5) caps the
 traces holding a claimed record with a counted event rather than unbounded
-growth — and does not bound the traces no adapter claims, whose cost §4.5
-states — and retention (§6) is set
+growth, `max_unclaimed_traces` (§4.5) does the same for the traces no adapter
+claims, and retention (§6) is set
 from the longest window a subscriber actually asked for rather than kept "just
 in case". A delta is handed out per record because that is what a live consumer
 wants; it is not handed out per record *because it is free*.
@@ -392,6 +420,17 @@ rather than side effects of it:
 - A **BOM split across chunks** is likewise whole by the time the reader sees
   it, which is what lets the reader apply its head-of-stream tolerance (§2.1) to
   a stream the receiver is reading in pieces.
+
+Both are held by one sweep (B6): the multi-byte stream of
+`tests/test_framing.py` opens with a BOM, and it is pushed at every two-way
+split and one byte at a time, so the sweep cuts the BOM at both of its inner
+boundaries as it cuts every multi-byte character. The reader's tolerance is
+per call, so the BOM's halves handed to it in two calls are
+`undecodable_bytes` — asserted beside the sweep, as its control. A pin, and it
+says so: what it catches is a framer that hands a partial BOM on across two
+reader calls instead of holding it. A framer that strips a whole BOM at offset
+0 of a push is not caught, and stays green: the reader accepts a BOM at the
+start of every call, so what it hands on reads the same.
 
 The reader's **container detection and deduplication are per call** (§2.1,
 §2.2), and a push is one call. So a chunk's complete lines are read as one
@@ -590,13 +629,14 @@ class Routed:
     version: int | None          # the version the absorption produced
     events: tuple[Event, ...] = ()
 
-def trace_id_of(record: Record) -> str | None: ...
+def trace_id_of(record: Record, *, adapter: str | None = None) -> str | None: ...
 
 class Router:
     def __init__(
         self,
         *,
         max_traces: int | None = None,
+        max_unclaimed_traces: int | None = None,  # §4.5
         max_completed: int | None = None,  # §5.5
         adapter: str | None = None,
         temporal: bool = True,
@@ -642,8 +682,10 @@ R4 added `subscriptions` and, for the same reason `seconds` exists,
 `Event.version`: §6's three codes are each about a **version**, and §1.5 is only
 true where the caller can match on the number instead of reading it out of a
 sentence. It is `None` for every code that is not about one. R3's `released`
-still states its version in `detail` only; moving it is §5's edit to make and
-nothing in R4 needed it.
+stated its version in `detail` only until B4 (the receiver series' run-2
+review, T5); since B4 it is §5's fourth code about a version, and carries it in
+`Event.version` too — the builder's version at release, the number
+`Completed.version` holds (§5.4). `detail` keeps its text.
 
 R5 added `Event.offset` to the code and **not** to the block above, while its
 commit message and its CHANGELOG entry both said §4.1 was amended; R5a adds the
@@ -658,9 +700,10 @@ row amended this block by hand and two of them got it wrong somewhere.
 `offset` is where in a file's content a tail had read to, so it is `None` for
 every code §4, §5 and §6 emit.
 
-R3a added `max_completed` — beside `max_traces`, because the two are the
+R3a added `max_completed` — beside `max_traces`, because the two were the
 router's two bounds and a reader looking for what this router will not grow past
-should find both in one place — and `Event.at`, for the reason `seconds`,
+should find both in one place; B1 put the third, `max_unclaimed_traces`
+(§4.5), between them for the same reason — and `Event.at`, for the reason `seconds`,
 `version` and `offset` each exist. `at` is a **clock reading**, not a duration:
 `forgotten` (§5.5) is about the instant a trace was completed, which is the one
 fact a caller needs to tell a forgotten completion from one that never happened,
@@ -675,13 +718,31 @@ narrower definition here would be a shape the library never promised.
 
 `adapter` and `temporal` are passed through to every `Builder` the router
 makes, so a caller that names a dialect or turns temporal edges off gets the
-same thing live as `spanweave.build` gives it in batch. The router reads
-neither.
+same thing live as `spanweave.build` gives it in batch. That sentence is the
+rule for routing too (B2): `spanweave.build(…, adapter=X)` reads every record
+as X's, so a router given `adapter=X` asks X alone which trace a record
+belongs to (`trace_id_of(record, adapter=X)`, §4.2), and puts each record in
+the trace the batch build under the same name puts it in. Until B2 routing
+classified across every adapter whatever the name, and two records broke the
+rule — one two adapters claim, and a flat one no adapter claims — each reaching
+the no-trace builder where `build` under the name put it in its trace (the
+zoo series' V2(a) and its cold review's run 1, R-9). The router reads
+`temporal` never, and `adapter` only to pass the name to the library.
 
 ### 4.2 The trace id comes from the adapter surface, never from a key
 
-`trace_id_of(record)` asks `spanweave.adapters.classify(record)` which adapters
-claim the record, takes the single claimant, calls that adapter's
+**Under a named adapter**, `trace_id_of(record, adapter=X)` — which is what a
+`Router(adapter=X)` asks — calls X's `parse([record])` and reads `trace_id` off
+the spans it yields, and that is the whole of it: no `classify` across
+adapters, because `spanweave.build(…, adapter=X)` asks none, and no envelope,
+because X's `parse` is the claimant's answer and an unpacked record's
+`trace_id` is already the transport's, renamed by the reader. One answer is no
+trace id there, `no_id`, below; a `SpanweaveError` from X's `parse` is the
+library's refusal, below. The rest of this section is the router given no
+`adapter`.
+
+Without a name, `trace_id_of(record)` asks `spanweave.adapters.classify(record)`
+which adapters claim the record, takes the single claimant, calls that adapter's
 `parse([record])`, and reads `trace_id` off the spans it yields. Where **no**
 adapter claims a record the reader unpacked from an OTLP export, it asks
 `spanweave.envelope(record)` instead and takes the envelope's `trace_id`
@@ -710,7 +771,9 @@ the name of the answer:
   away — and never reads past the refusal to a key it could use.
 - **`no_id`: the claimant reported no single trace id** — no `trace_id` on the
   spans it parsed, or more than one distinct id across them. Choosing among
-  several would be a policy, and inventing one is a halt point.
+  several would be a policy, and inventing one is a halt point. Under a named
+  adapter the name is the claimant, and this is the only one of the three
+  that arises: nothing is unclaimed there, and no envelope is asked.
 
 §1.1 fixes the shape of all three: "If a record's trace id cannot be had
 through the adapter surface or the envelope, the answer is 'no trace id' and a
@@ -725,8 +788,8 @@ stay `refused` and nothing else. **More than one adapter claimed the record**:
 the library refuses an ambiguous record rather than guessing (`spanweave`
 `SPEC.md` §6.1), so there is nobody to ask for a trace id. The record goes to
 the no-trace builder, which raises the library's own refusal, and that becomes
-a `refused` event (§4.4) — except under a router given an `adapter`, the one
-exception §4.3 states, where it is absorbed and announced by nothing. And a
+a `refused` event (§4.4). Under a router given an `adapter` there is no such
+record: nothing is classified, and the name claims it. And a
 `SpanweaveError` while classifying or parsing, below.
 
 **The claimant's id and the envelope's, measured equal.** Where an adapter
@@ -756,10 +819,20 @@ over the record and `parse` then translates it a second time — the builder's o
 that second parse is, and the answer is **not** "half", which is what this
 section said until R2a and what the thread that opened it assumed.
 
-Measured twice, independently, on 2000 distinct OpenInference `CHAIN` spans
-with `perf_counter` over three repeats: `trace_id_of` costs **20–24 µs** per
-record against `Builder.feed`'s **97–131 µs**, i.e. **15.5–17.1 %** of
-`trace_id_of + feed`, good to roughly ±3 points and no finer. An upstream
+The measurement is `tools/bench_routing.py`, which anyone can re-run (`uv run
+python tools/bench_routing.py`): over 2000 distinct OpenInference `CHAIN` spans
+of one trace it times `trace_id_of` on every record and a fresh `Builder`'s
+`feed` on every record with `perf_counter`, three repeats, and prints each
+repeat's microseconds per record and `trace_id_of`'s share of `trace_id_of +
+feed`. It is not a test and `make check` does not run it: a timing is the
+machine's answer, not the library's. Its run of **2026-10-22**, on this
+repository's development machine (an Intel Core i7-4600U, Linux x86_64,
+Python 3.14.6), gave `trace_id_of` **24.4–25.0 µs** per record against
+`feed`'s **124.3–127.1 µs**, and a share of **16.4–16.5 %** in each repeat —
+the share computed within a repeat, not from the two ranges taken as
+independent bounds, which would give a wider interval than any repeat
+measured. R2a's two earlier runs, of the same shape with no artifact, gave
+15.5–17.1 %. An upstream
 `spanweave.trace_id_of(record)` would remove most of *that*, not half of
 routing: it is an **optimisation, not a necessity**, and it gets no batch until
 a receiver workload makes routing the cost rather than `feed` and
@@ -792,17 +865,19 @@ record, exactly as a batch build of the same records reports them (`spanweave`
 `SPEC.md` §6.1, §7). The decision that sent each record there is the
 receiver's, so although that builder is never completed and never written
 (§5.4, §8.5), every record it holds was announced by one counted `no_trace`
-event that says why (§4.2).
+event that says why (§4.2). It is bounded by **neither** `max_traces` nor
+`max_unclaimed_traces` (§4.5): it is not a trace, and nothing releases it, so
+what a stream of records with no trace id costs is that builder's growth, and
+no bound here pretends otherwise.
 
-One exception, older than V2 and found by it, is stated here rather than
-fixed in passing: `trace_id_of` classifies across every adapter even when the
-router was given an `adapter` (§4.1), so under a named adapter a record two
-adapters claim is "ambiguous" to routing, reaches the no-trace builder — which,
-given the name, absorbs it without refusing — and is announced by nothing,
-where `spanweave.build` under the same name reads it as that adapter's. Making
-routing honour the name is a change to what §4.1's `adapter` means for routing,
-and it is registered in `TASKS.md` for the next receiver series (the zoo
-series' close, V4), not decided here.
+Under a router given an `adapter` the no-trace builder holds only `no_id`
+records (§4.2), and it reads them as the named adapter's, as `spanweave.build`
+under the name does: there is no `unclaimed_record` there, because nothing is
+unclaimed. Until B2 a record two adapters claim reached it under a name and
+was announced by nothing, and a flat record no adapter claims reached it
+announced `unclaimed` and was read as the name's, where the batch build under
+the name put each in its trace (§4.1); B2 made routing ask the name, and both
+reach their trace.
 
 One consequence inherited rather than chosen: a no-trace builder holding
 **only** unclaimed records refuses `graph()`, because `spanweave` refuses an
@@ -847,16 +922,53 @@ whose graph the library refuses (`adapter_unconfident`), as `spanweave.build` of
 the same records refuses. It is the case the paragraph above keeps off the cap,
 records the library cannot read, which must not crowd out the traces it can:
 the builder such a trace holds is not counted, and a record no adapter claims is
-never refused at the cap, whichever trace it names. At the cap, the claimed
+never refused at this cap, whichever trace it names — its own bound is
+`max_unclaimed_traces`, below. At the cap, the claimed
 record that would make such a trace count is `refused_at_cap`, as a new trace's
 first record is: it is not absorbed, `Routed.builder` is `None`, and the trace
 keeps the builder and the records it had. Its arrival is still that trace's
 activity (§5.3): a held trace whose claimed records keep arriving at a full cap
 is not quiet. A claimed record refused for a **new** trace makes no state at
-all — no builder, no book, no activity. The cost, said rather than hidden:
-`max_traces` does not bound the builders of traces no adapter claims. What
-releases them is completion — `Quiet`, `Cap` and end of input, and never
-`RootEnded` alone (§5.3) — which reports each as `no_graph` (§5.4).
+all — no builder, no book, no activity. What releases a trace no adapter claims
+is completion — `Quiet`, `Cap` and end of input, and never `RootEnded` alone
+(§5.3) — which reports each as `no_graph` (§5.4).
+
+**The traces no adapter claims have a bound of their own:
+`max_unclaimed_traces`** (B1). `max_traces` does not count them, so before B1
+nothing bounded their builders, and a client that can POST exports with fresh
+trace ids and no span any adapter reads grew them, and their subscription
+cursors, without bound and without an event, as the bounded fix review's
+`cap_bound.py` measured (`reviews/2026-10-20-zoo-fixes.md`, R-1). They get
+their own bound rather than a share of `max_traces`, so that the traces the
+library can read are never crowded out by the ones it cannot — the reason this
+section keeps them off `max_traces` in the first place. It counts the traces the
+router holds a builder for that hold **no** claimed record, and nothing else:
+
+- At the bound, an unclaimed record that would start a **new** such trace is
+  `refused_at_cap`, counted, carrying the record's index and the trace id, with
+  a `detail` naming `max_unclaimed_traces` — where `max_traces`' refusal names
+  `max_traces` — and `Routed.builder` `None`. No builder, no book and no
+  activity are made, and so no subscription cursor (§6.4).
+- A record for such a trace **already held** is never refused by it.
+- A trace that absorbs its first claimed record **leaves** this count and is
+  `max_traces`' from then, which frees a place here. The claimed record that
+  would join it at a full `max_traces` is `refused_at_cap` there, as above, and
+  the trace stays in this count.
+- A claimed record is never refused by this bound, and a record with no trace
+  id by neither bound (§4.3).
+- Completion releases a trace from whichever count holds it.
+
+Under a router given an `adapter`, every record with a trace id is claimed —
+the name is its claimant (§4.2) — so every trace counts against `max_traces`
+from its first record, and `max_unclaimed_traces` bounds nothing there: a
+health check is the named adapter's trace, as `spanweave.build` under the name
+reads it.
+
+`max_unclaimed_traces=None` is no bound, as `max_traces=None` is no cap, and
+both are the defaults. The cost of the defaults, said rather than hidden: an
+unbounded `serve` — one given neither flag (§8.1) — holds a builder for every
+trace id a client sends until a completion releases it, and a client that can
+POST chooses how many.
 
 Which traces to evict, and when, is **not** here: eviction is completion's
 business (§5), and a cap that quietly released a live builder would be a
@@ -912,6 +1024,24 @@ surface says "no trace id" and the key says `t1`, so a dialect read puts an
 warning is still right about why the read is wrong; the corpus is simply not
 where it shows.
 
+**Once as one stream, chunked across its lines** (B6). The passes above push
+each line in chunks of its own, so their interleaving is line-atomic: the
+framer's remainder is empty whenever the other trace's line begins, and a
+framer that lost what followed a push's last `\n` would pass every one of
+them. So one pass concatenates the interleaved arrivals into one byte stream,
+as one tail or one pipe would carry them, and cuts that stream in seeded
+chunks of one byte to twice its longest line, over every cross-scenario pair
+of two line-delimited renderings (a document is never pushed, §3.3), at the
+first seed. A push arriving while the remainder holds one trace's partial
+line and carrying the other trace's bytes is **counted**, by one counter that
+every pass of gate A pushes through, and each pass is held to its count: every
+line-atomic pass must count 0, at each seed it runs, and this pass more than 0,
+or it would be the line-atomic pass again. So a count of every push with a
+non-empty remainder, or of a push carrying the remainder's own trace, is red:
+it is above zero on the line-atomic passes too. It is a pin,
+and says so; the framer that drops what follows a push's last `\n` is red
+here and green on every line-atomic pass.
+
 **One side an export whose root nobody claims** (V2). No conformance scenario
 holds a span of an export that no adapter claims (a test asserts it), so gate
 A borrows one from the corpus' zoo, read in place: `zoo/z4/2026-10-12-recorded`,
@@ -921,6 +1051,15 @@ renderings, at each of the ten seeds, and both traces must come out as their
 batch graphs byte for byte with nothing in the no-trace builder — which is
 only true if the root is routed by its envelope (§4.2). Its trace id is its
 own, so nothing is relabelled.
+
+**Once under each named adapter** (B2). The router is given `adapter=X` and
+the batch side is `spanweave.build(rendering, adapter=X)`, over the pairs of
+renderings written in X's dialect alone, at the first seed: §4.1's rule for a
+named adapter, held over the corpus. It is a pin, and says so: each of those
+renderings is claimed by its own adapter alone, so a router that classified
+across adapters under a name passes it as well. What a name changes —
+a record two adapters claim, or one no adapter claims — is held by
+`tests/test_routing.py`.
 
 ### 4.8 The zoo gate — a stranger's captures, live and batch
 
@@ -975,6 +1114,20 @@ the graph written is the JSON replay's **byte for byte**, on every row of the
 table. The comparison is with what the JSON replay wrote, so the protobuf path
 is held to the JSON path and nothing else; V2 moved Z4's two rows on both
 sides together.
+
+**And every capture again under each named adapter** (B2), on the JSON path
+and the raw path: a router given `adapter=X`, with no completion, holds one
+trace whose graph is `spanweave.build` of the joined bodies under the same
+name, byte for byte, with nothing in the no-trace builder and no event —
+whichever dialect the capture was written in, because a name reads every
+record as its own (§4.1). A pin, as gate A's named pass is, and for two
+reasons, each of which the test asserts: no capture holds a record two
+adapters claim, and no zoo record is flat — every one, on either path, was
+unpacked from an export, so before B2 the one record no adapter claims, Z4's
+root, was routed by its envelope to the trace id the named adapter's `parse`
+gives it. Routing that classified across adapters under a name, as it did
+before B2, differs from `build` under the name only on a record two adapters
+claim or on a flat record no adapter claims, so this held before B2 too.
 
 **Two rows say `(L2)`, because V2 moved them.** Z4's root span is claimed by
 no adapter (the zoo's `PROBES.md` S1). Until V2, §4.2 gave it no trace id and
@@ -1125,6 +1278,24 @@ Three rules make the reading deterministic:
   complete traces early or never. The receiver's claim is about what it saw and
   when **it** saw it, which is the only claim it is in a position to make.
 
+**A completion attached after records were routed** measures from the first
+reading after the attach. `Router.completion` is a public field, so a caller
+can set it on a router that has already routed records with none. Those
+records read no clock (the second rule above), so the router has no reading of
+when any of them arrived; the first clock reading for a held trace after the
+attach opens its book at that reading. That is the first tick, which takes its
+one reading and opens the book of each held trace not yet opened, or a record
+routed for that trace, which reads the clock because a completion is now set,
+whichever comes first. `Quiet` then counts silence from **that reading**, not
+from the records before it, and the `completed` event's `seconds` runs from it
+too: silence before the attach is silence the receiver did not see. That is
+the clock rule above, not a new one, and `tests/test_completion.py` pins both
+orders: attach then tick (the receiver series' T1), and attach then a record
+then a tick. The CLI does not meet it: it constructs its router with a
+`Completion` always, its tuple empty when no flag names a policy, so its
+end-of-input `Cap(0)` (§8.5), attached in place of that one, finds every book
+already open.
+
 ### 5.3 The three policies, and the instant each fires
 
 Each is a value, each answers one question about `TraceState`, and the boundary
@@ -1190,6 +1361,18 @@ at the tick at `now = last + S`, for each of the same S; `Cap(4)` at the fourth
 record; and `Cap(5)` never, so only the end-of-input `Cap(0)` (§8.5) completes
 it, with the batch graph.
 
+**And `RootEnded` acts per generation**, so the same holds for a later
+generation of a trace whose root *did* arrive, in an earlier one. A record
+after the trace completed opens a new builder (§5.5), and its book starts
+again: `root_ended_at` is reset with the generation's first record, as
+`Quiet`'s silence and `Cap`'s count are, so the grace a new generation waits
+on runs from a root **it** holds, never from the root an earlier generation
+saw end. A generation that holds no root of its own is therefore never
+completed by `RootEnded` alone either, and end of input completes it, written
+beside the earlier ones. `tests/test_zoo_policies.py` pins it on Z3 and Z1:
+each completed by the `RootEnded` run above, then body 0 fed again, which
+holds no root because their root arrives in the last body.
+
 **Nor does `RootEnded` alone ever complete a trace with no graph.** A trace none
 of whose records any adapter claims (§4.5) has a graph the library refuses, so
 it has no root the receiver can see, ended or not: a tick reads the refusal as
@@ -1253,8 +1436,12 @@ Completing one trace is four steps, in this order, and the events come back on
    it does not exist, with its parents.
 4. **Release.** The builder is dropped — that is the point of the whole section
    (§2.3: a finished trace should stop costing memory) — and `RELEASED` carries
-   the version released. `router.builder(trace_id)` is `None` afterwards and the
-   id leaves `trace_ids` (§4.3).
+   the version released, as `Event.version` (B4) and in its `detail`: the
+   builder's version at release, which is `Completed.version`, and in a
+   generation a late arrival opened (§5.5) that generation's own version.
+   `COMPLETED` is about a duration and its `version` stays `None`.
+   `router.builder(trace_id)` is `None` afterwards and the id leaves
+   `trace_ids` (§4.3).
 
 A router holding subscriptions (§6) has a **fifth** step after those four, and it
 is bookkeeping rather than a decision: each subscriber whose cursor is behind the
@@ -1297,11 +1484,14 @@ is no late arrival to report, because nothing was re-opened. The cap's event is
 the report, the trace stays completed, and a later record that *is* admitted
 carries the gap from the original completion — which is still the true gap. A
 record no adapter claims is admitted even there, because a trace counts against
-the cap only from its first claimed record (§4.5).
+the cap only from its first claimed record (§4.5) — unless the router is at
+`max_unclaimed_traces`, where it is `refused_at_cap` for the same reason and
+with the same consequences.
 
 The new builder starts at version 0 and is the newest builder the router holds,
-so the id rejoins `trace_ids` at the end (§4.3). Its `Cap` and `Quiet` are its
-own: this generation's records, this generation's silence.
+so the id rejoins `trace_ids` at the end (§4.3). Its `Cap`, `Quiet` and
+`RootEnded` are its own: this generation's records, this generation's silence,
+this generation's root (§5.3).
 
 **The file already written is not rewritten and not appended to.** If this
 second generation completes too, it is written beside the first, not over it:
@@ -1377,8 +1567,8 @@ overhead and not the id. At ten traces a second a receiver reaches 10^6 complete
 traces in **about 28 hours** (`reviews/2026-10-06-run2.md` §0(b), F1). The
 numbers are here rather than in the plan because a reader deciding what to do
 about this needs them, and the plan is deleted at series close. `max_traces`
-(§4.5) bounds none of it — it bounds the builders of traces holding a claimed
-record. The figures were measured before
+(§4.5) bounds none of it, nor does `max_unclaimed_traces` — they bound the
+builders of traces holding a claimed record and of traces holding none. The figures were measured before
 the bound below existed and they are what it is for, so they stay: they are how
 a caller turns a bound into bytes.
 
@@ -1600,6 +1790,7 @@ class Router:
         self,
         *,
         max_traces: int | None = None,
+        max_unclaimed_traces: int | None = None,  # §4.5
         max_completed: int | None = None,  # §5.5
         adapter: str | None = None,
         temporal: bool = True,
@@ -1613,8 +1804,8 @@ That block is the whole public surface, declared **exactly** as the code accepts
 it. `Event` gains one more optional field for it — `version: int | None` — for
 §4.1's reason: the three codes above are all about a **version**, and a number a
 caller can only read out of a sentence is a number it cannot match on. R3's
-`released` keeps its version in `detail`; moving it is §5's edit and nothing
-here needed it.
+`released` kept its version in `detail` alone until B4, which gave it the
+field for the same reason (§4.1, §5.4); its `detail` is unchanged.
 
 `subscriptions` is a mutable registry rather than a frozen value, which is what
 makes it unlike `completion` (§5.1): a policy is a value the caller constructed,
@@ -1657,8 +1848,9 @@ each window is exactly `N` wide.
 version does not move (§4.4), so there is nothing that changed to report, and
 reporting `delta(since=version - 1)` anyway would hand the *previous* record's
 difference over a second time. The refusal is already an event. A record refused
-at `max_traces` (§4.5) is not absorbed either: for a new trace there is no
-builder at all, and a held trace's builder keeps the version it had.
+at `max_traces` or `max_unclaimed_traces` (§4.5) is not absorbed either: for a
+new trace there is no builder at all, and a held trace's builder keeps the
+version it had.
 
 **The iteration order is registration order**, 0-based on `Subscription.order`,
 and it is the order consumers are called in, for every record, in every process.
@@ -1747,12 +1939,13 @@ absorbed record, and a trace with a subscriber on it now holds a fixed number
 instead. The cursors are bounded by the builders — one `int` per subscription
 per trace the router **currently holds a builder for**, forgotten when the
 builder is released (§6.5) — so `max_traces` bounds those of the traces holding
-a claimed record, and not those of the traces no adapter claims, which only
-completion releases (§4.5). The unbounded costs this receiver does have are the
-ones §4.5 and §5.5 name and this section does not pretend to fix: the builders
-of traces no adapter claims, and the per-trace-id book that outlives
-completion, awaiting a forgetting policy. Nothing here makes either worse, and
-nothing here depends on how they are settled.
+a claimed record, and `max_unclaimed_traces` those of the traces no adapter
+claims (§4.5); left at their defaults, neither bounds anything. The unbounded
+costs this receiver does have are the ones §4.3, §4.5 and §5.5 name and this
+section does not pretend to fix: the builders of both kinds of trace when their
+bounds are left unset, the no-trace builder, and the per-trace-id book that
+outlives completion when `max_completed` is. Nothing here makes any of them
+worse, and nothing here depends on how they are settled.
 
 ### 6.5 The three codes, and what each refuses to be silent about
 
@@ -1780,6 +1973,20 @@ nothing here depends on how they are settled.
   with; nothing approximate is offered in its place, for the library's own
   reason. (The second way was `the way to reach it` in this section until R5a,
   which is where the sentence over-narrowed: `reviews/2026-10-06-run2.md` F4.)
+
+  **A window lost this way is not retried and not re-reported.** The cursor
+  advanced when the subscriber was found due, before the delta was asked for —
+  the rule §6.2 states for a subscriber that raised, for the same reason — so
+  the next window this subscriber is due for starts at the version refused at,
+  and the lost one is said once, by this event, and never again. Whether that
+  next window can be produced is retention's answer and not this rule's: for
+  the joiner it can, because the widening has landed by then; for a caller who
+  narrowed the journal it may not, and each window lost so is an event of its
+  own. A subscriber whose first window was lost is therefore first handed a
+  delta from a version it never saw, so **its fold starts from that update's
+  `builder.graph()`** — the graph at the update's version — and every later
+  delta folds onto it: that is the "first graph" of §6.6's claim, for a
+  subscriber whose first update is not `since=0`.
 - **`delta_unsent`** — a subscriber's **tail could not be produced**. A trace
   that completes (§5.4) while a subscriber's cursor is behind its final version
   has a window that subscriber never asked for by the rule but is owed by the
@@ -2332,8 +2539,8 @@ one answer the receiver can give without counting spans, and a truthful
 A body the reader read in part gets the same answer, and the exchange's
 diagnostics say what was skipped (above).
 
-That answer is **the other departure from OTLP**, beside the refusal body's
-below, because for a body read in part OTLP asks for more than full success.
+That answer is **this section's one departure from OTLP**, because for a body
+read in part OTLP asks for more than full success.
 The same `.pyi`'s `partial_success` property, after its summary line, says:
 "If the request is only partially accepted (i.e. when the server accepts only
 parts of the data and rejects the rest) the server MUST initialize the
@@ -2342,24 +2549,48 @@ of items it rejected." The receiver does neither, because the reader's
 `skipped_records` counts records, not spans, and counting the spans a request
 carried is a dialect read (§1.1). The behaviour is unchanged and older than
 the sentence naming it: R6 (`8ae7a5d`) answered a JSON body read in part so.
-A conformant `partial_success` for a body read in part is a thread for the
-next receiver series.
+A conformant `partial_success` for a body read in part was **declined** by the
+maintainer on 2026-10-21 (the backlog series): an OTLP/HTTP body is one export,
+read whole or refused, and the count OTLP asks for is of spans, which only a
+dialect read can count (§1.1). The departure stands.
 
-A refusal answers `{"code": "<the receiver's code>"}`, serialized with
-`sort_keys=True`, as `application/json` for **either** media type, so the
-poster is told what the event says. That is OTLP's `google.rpc.Status` in
-neither encoding. OTLP asks for a refusal's body to be a `Status` in the
-request's encoding — for protobuf, it "MUST be a Protobuf-encoded" `Status` —
-and `Status.code` is an integer (`int32 code = 1`), so
-`{"code":"unreadable_body"}` does not parse as an OTLP/JSON `Status` either.
-The receiver keeps its own code in the body, which a `Status` could carry only
-in `message`, and for a protobuf request only encoded. A `Status` with nothing
-in it would need no encoder: OTLP says the server "MAY omit `Status.code`",
-`Status.message` "SHOULD contain a developer-facing error message", and an
-all-default `Status` encodes as zero bytes, so a zero-byte refusal would meet
-OTLP's MUSTs and carry nothing. Keeping the code over the type is therefore
-**a choice and not a necessity**, and it is this section's: the poster is told
-the receiver's code, in a body that is not OTLP's.
+A refusal `Endpoint` makes answers **OTLP's `google.rpc.Status`, in the
+request's encoding** (B3), so the poster is told what the event says in the
+message OTLP names for it. That is every refusal that reaches `respond`, and
+only those: two answers `http.server` gives itself, before a request reaches
+`respond`, are **neither a `Status` nor counted** — a `501` for a method
+outside `_METHODS`, the methods `handler_class` routes (below), such as
+`TRACE`, and an HTML `400` for a malformed request line. `Endpoint.counts`
+and `Endpoint.requests` do not move for either, so each is a refusal §1.5
+does not yet cover; the behaviour is older than B3 and unchanged, and the
+sentence is scoped to say so (the series' cold review, run 1's R-6). OTLP
+asks for a refusal's body to be a `Status` in the request's encoding — for
+protobuf, it "MUST be a Protobuf-encoded" `Status`. The
+receiver's code rides in `Status.message`, which "SHOULD contain a
+developer-facing error message" and is the one field of a `Status` that holds
+a string; `Status.code` is an integer (`int32 code = 1`) and is **omitted**,
+because OTLP says the server "MAY omit `Status.code`" and the receiver has no
+integer of its own to put there. So:
+
+- a request declaring `application/json` is refused with
+  `{"message":"<the receiver's code>"}`, serialized with `sort_keys=True` and
+  no spaces, as `application/json`;
+- a request declaring `application/x-protobuf` is refused with the `Status`
+  holding field 2 alone, as `application/x-protobuf`: the byte `0x12` (field 2,
+  wire type 2), the length as a varint, and the code's ASCII bytes;
+- a request declaring **neither** type — no `Content-Type`, an empty one, or a
+  type this endpoint does not read, the `415` of the media-type check — gets
+  the JSON form, because no protobuf was asked for.
+
+The declared type is matched as an accepted request's is, by HTTP's rule
+(case, parameters), so `Application/X-Protobuf; charset=binary` is refused in
+protobuf. **Writing one field of the receiver's own reply is not reading a
+dialect**, so no protobuf runtime is imported under `spanweave_live/` to do it
+and V1's decision holds (the maintainer's decision for B3, 2026-10-21). Before
+B3 a refusal answered `{"code": "<the receiver's code>"}` as `application/json`
+for either media type, which was a `Status` in neither encoding:
+`json_format` refuses a string `code`, and a JSON body is not a protobuf
+`Status`.
 
 Nothing in `Endpoint.handle` raises for anything a request can carry — not a
 body that is not JSON, not one declared protobuf that does not parse, not one
@@ -2421,8 +2652,10 @@ thing and the thing it serves, in that order, rather than policies. It builds
 the class with `type(...)` instead of a `class` statement, because a `class`
 statement needs its base at import time and that import is the one this module
 does not make. Every method in `GET POST PUT PATCH DELETE HEAD OPTIONS` is
-routed through `respond`, so a request this endpoint does not serve gets the
-endpoint's own counted `415` rather than `http.server`'s uncounted `501`;
+routed through `respond`, so a request in any of those methods that this
+endpoint does not serve gets the endpoint's own counted `415` rather than
+`http.server`'s uncounted `501`, which a method outside them still gets
+(above);
 `log_message` is silenced, because a line per request on stderr is the caller's
 business (§1.2) and `counts` is the receiver's own answer.
 
@@ -2515,13 +2748,28 @@ the `{}` a JSON request gets. At the pure layer, a table of requests holds the
 answer's type to the declared one under HTTP's matching (case, parameters,
 `gzip`, an empty body), a protobuf body declared JSON to `{}` as JSON, and
 every refusal of a protobuf request — `400` on a truncated body and on a body
-that will not inflate, `415` on a coding or a spelling it does not read — to
-`{"code": …}` as `application/json`. V1a's named mutations, all shown caught:
+that will not inflate, `415` on a coding — to the `Status` in protobuf, and a
+spelling of protobuf it does not read to the `Status` in JSON (B3). V1a's named
+mutations, all shown caught:
 **the answer's type taken from anything but the request's declared media
 type** — always `application/json`, as before V1a; the header verbatim, with
 its case and parameters; or a type guessed from the body's first byte — and
-**a non-empty protobuf success body** (`{}` under the protobuf type). A refusal
-answered in the request's type is red too.
+**a non-empty protobuf success body** (`{}` under the protobuf type).
+
+**The refusal's `Status` is held on every refusal this file makes** (B3): each
+of the four checks the declared type does not decide (method, target, content
+coding, transfer coding) and both `400` cases, under `application/json` and
+`application/x-protobuf` and a spelling of each with case and parameters,
+decodes as a `Status` whose `message` is the event's code, whose `code` is
+`0` and which carries no `details`, with the declared type as the answer's.
+The test reads the body with the protobuf runtime the `otlp` extra ships, and
+OTLP/JSON with `json_format.Parse`; the extra does not ship `google.rpc`, so the
+test declares `Status` from its `.proto`'s three fields in a descriptor pool of
+its own. A request declaring neither type is held to the JSON form, a protobuf
+refusal to its bytes as spelled above, and a `message` longer than one varint
+byte to reading back whole. B3's named mutations, all shown caught: **a
+protobuf refusal with the JSON body**; **`code` sent as the receiver's
+string**, which `json_format` refuses; and **the length byte off by one**.
 
 V1's two named mutations, both shown caught: **the protobuf body handed to the
 JSON reader** (`Framer.document` instead of `read_protobuf`), which reads each
@@ -2532,12 +2780,15 @@ two places.
 
 The named mutation for this section is the obvious one and the one the series
 has been warned about since R1: `Endpoint` hands the body to `Framer.push`
-instead of `Framer.document`. It takes **ten** tests here down, and the shape of
-the ten is the whole lesson: both `verbatim` cases of the central test still
-**pass**, and the four `trimmed` and `compact` cases fail — the trimmed body on
-the status, because `push` hands over a document missing its closing brace and
-that is a `400`, and the compacted body on the records, because `push` completes
-no line and reads nothing at all. A suite whose bodies were only the corpus' own
+instead of `Framer.document`. How many tests it takes down is not stated here,
+because that count is the suite's size and moves whenever a test that posts a
+body is added, and a number nothing re-derives is a number that goes stale
+unnoticed (`TASKS.md`, the zoo series' run 1, R-14). The shape is the whole
+lesson: both `verbatim` cases of the central test still **pass**, and the four
+`trimmed` and `compact` cases fail — the trimmed body on the status, because
+`push` hands over a document missing its closing brace and that is a `400`, and
+the compacted body on the records, because `push` completes no line and reads
+nothing at all. A suite whose bodies were only the corpus' own
 bytes would have been green, which is why `spellings()` has three entries and
 why one test in that file asserts, at the framer and with no socket in it, that
 the three really do differ.
@@ -2590,13 +2841,15 @@ and what to exit with.
 ```text
 spanweave-live tail <path> --out <dir>
     [--quiet S] [--root-grace S] [--cap N]
-    [--max-traces N] [--max-completed N] [--max-pending-bytes N]
+    [--max-traces N] [--max-unclaimed-traces N]
+    [--max-completed N] [--max-pending-bytes N]
     [--deltas] [--poll-seconds S] [--once]
 
 spanweave-live serve --port P --out <dir>
     [--host H] [--requests N]
     [--quiet S] [--root-grace S] [--cap N]
-    [--max-traces N] [--max-completed N] [--max-pending-bytes N]
+    [--max-traces N] [--max-unclaimed-traces N]
+    [--max-completed N] [--max-pending-bytes N]
     [--deltas]
 ```
 
@@ -2619,6 +2872,7 @@ Everything else is a knob some section above already argued for:
 | `--root-grace S` | `RootEnded(S)` | §5.3 |
 | `--cap N` | `Cap(N)` | §5.3 |
 | `--max-traces N` | `Router(max_traces=N)` | §4.5 |
+| `--max-unclaimed-traces N` | `Router(max_unclaimed_traces=N)` | §4.5 |
 | `--max-completed N` | `Router(max_completed=N)` | §5.5 |
 | `--max-pending-bytes N` | `Framer(max_pending_bytes=N)` | §3.4 |
 | `--deltas` | one `Subscriptions.subscribe(…, trace_id=None, every=1)` | §6.1 |
@@ -2750,9 +3004,7 @@ easy to read as more:
   adapter claims it, or a `SpanweaveError` while classifying or parsing it —
   reaches no trace too and is counted under `refused` (§4.2), and `refused`
   also counts the refusals inside identified traces (§4.4). So the records
-  that reached no trace are not one number on this line. The CLI's router is
-  given no `adapter` (§8.1), so §4.3's exception, a record announced by
-  nothing, does not arise here.
+  that reached no trace are not one number on this line.
 - **`no_graph`** is one per completion that found no graph to write (§5.4). A
   trace re-opened by a late arrival is completed once per generation (§5.5),
   and each generation with no graph is counted, so how many of a run's
@@ -2864,7 +3116,7 @@ EOF are the two stops that **are** end of input, and only those two flush
 
 ### 8.7 What this section is tested against
 
-`tests/test_cli.py`, and **77 of its 86 collected items run the CLI as a
+`tests/test_cli.py`, and **78 of its 87 collected items run the CLI as a
 process** — `subprocess`, a pipe, an exit status — because an in-process call
 would test the functions and not the thing a human runs. The other **nine** read
 the package in-process, because that is the only way to ask what they ask: the

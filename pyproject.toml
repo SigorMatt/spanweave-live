@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "spanweave-live"
-version = "0.0.2"
+version = "0.0.3"
 description = "A receiver that turns telemetry in flight into live spanweave graphs. Pre-1.0: nothing is frozen."
 readme = "README.md"
 license = "MIT"
@@ -89,6 +89,7 @@ packages = ["spanweave_live"]
 include = [
     "/spanweave_live",
     "/tests",
+    "/tools",
     "/.github",
     "/*.md",
     "/LICENSE",

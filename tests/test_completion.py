@@ -222,6 +222,68 @@ def test_the_clock_is_read_once_per_record_and_once_per_tick():
     assert clock.reads == 4
 
 
+def test_pin_a_completion_attached_after_routing_measures_from_the_tick():
+    """A pin, green on the parent: B5 changed no behaviour for it (`SPEC.md` §5.2).
+
+    `Router.completion` is a public field, so a caller can attach a policy to a
+    router that already routed records with none. Those records read no clock
+    and opened no book, so the first tick opens the book at its own reading:
+    `Quiet` counts silence from that tick, and the `completed` event's
+    `seconds` runs from it, not from the records. The receiver series' T1,
+    probe B: an hour of silence before the attach is not seen, and the trace
+    completes one `Quiet(1.0)` after the first tick, reporting 1.0.
+    """
+    clock = Clock()
+    router = Router()
+    router.route(openinference("a"))
+    router.route(openinference("b", parent="a"))
+    assert clock.reads == 0, "a router with no policy reads no clock"
+
+    clock.tick(3_600.0)
+    router.completion = Completion(policies=(Quiet(1.0),), now=clock)
+    assert router.tick() == (), "the hour before the attach is not silence seen"
+
+    clock.tick(1.0)
+    (done,) = router.tick()
+    assert (done.trace_id, done.policy, done.version) == ("t1", Quiet(1.0), 2)
+    (decision,) = [event for event in done.events if event.code == COMPLETED]
+    assert decision.seconds == 1.0
+
+
+def test_pin_a_record_routed_after_the_attach_opens_the_book_before_any_tick():
+    """A pin, green on its parent: no behaviour changed for it (`SPEC.md` §5.2).
+
+    The other order of the case above. After the attach, the first clock
+    reading for a held trace opens its book, and that reading need not be a
+    tick: a record routed for the trace with a completion set reads the clock
+    (§5.2's second rule), and the book opens at the record. `Quiet` counts
+    from there, and the `completed` event's `seconds` runs from it. Body 0 is
+    routed with no completion, `Quiet(1.0)` is attached an hour later, body 1
+    is routed half a second after that with no tick between, and the trace
+    completes at the first tick at or after one second past body 1 — not one
+    second past the first tick, which a book opened only by a tick would do.
+    """
+    clock = Clock()
+    router = Router()
+    router.route(openinference("a"))
+    assert clock.reads == 0, "a router with no policy reads no clock"
+
+    clock.tick(3_600.0)
+    router.completion = Completion(policies=(Quiet(1.0),), now=clock)
+    clock.tick(0.5)
+    router.route(openinference("b", parent="a"))
+    assert clock.reads == 1, "the record read the clock; no tick has run"
+
+    clock.tick(0.75)
+    assert router.tick() == (), "0.75 s after the record is not 1.0 s of quiet"
+
+    clock.tick(0.25)
+    (done,) = router.tick()
+    assert (done.trace_id, done.policy, done.version) == ("t1", Quiet(1.0), 2)
+    (decision,) = [event for event in done.events if event.code == COMPLETED]
+    assert decision.seconds == 1.0
+
+
 # --------------------------------------------------------------------------
 # Each policy fires exactly when its definition says. Both sides of every
 # boundary: the tick before must not fire, the tick at it must.
@@ -522,6 +584,56 @@ def test_each_step_of_completing_is_an_event_with_a_code(tmp_path):
     assert (done.index, written.index, released.index) == (1, 1, 1)
     assert written.detail == str(completed[0].path)
     assert released.seconds is None
+
+
+def test_released_carries_the_version_it_released():
+    """`released`'s version is a field, as `Completed.version` is (`§4.1`, `§5.4`).
+
+    Three records, so the version is not the generation (1), the index of any
+    one record, or the count of builders left (0): a field filled from any of
+    those is a different number here. `completed` itself is about a duration,
+    not a version, and keeps `version=None`.
+    """
+    clock = Clock()
+    router = router_with(Cap(3), clock=clock)
+    for span in ("a", "b", "c"):
+        router.route(openinference(span))
+
+    (done,) = router.tick()
+    completed, released = done.events
+    assert codes(done.events) == [COMPLETED, RELEASED]
+    assert done.version == 3
+    assert released.version == done.version
+    assert completed.version is None
+    # The sentence keeps its text: the field is added, not moved.
+    assert "released at version 3;" in released.detail
+
+
+def test_a_late_generation_s_released_carries_its_own_version():
+    """A generation opened by a late arrival is released at **its** version.
+
+    Generation 1 absorbs three records, generation 2 one, so the second
+    `released` is 1: not the first generation's 3, not the generation number
+    (2), not the router's arrival count (4) (`§5.5`).
+    """
+    clock = Clock()
+    router = router_with(Quiet(1.0), clock=clock)
+    for span in ("a", "b", "c"):
+        router.route(openinference(span))
+    clock.tick(1.0)
+    (first,) = router.tick()
+
+    clock.tick(1.0)
+    late = router.route(openinference("d"))
+    assert codes(late.events) == [LATE_ARRIVAL]
+    clock.tick(1.0)
+    (second,) = router.tick()
+
+    released = [
+        event for event in first.events + second.events if event.code == RELEASED
+    ]
+    assert [event.version for event in released] == [first.version, second.version]
+    assert (first.version, second.version) == (3, 1)
 
 
 def test_the_written_file_is_the_batch_graph_of_the_records_absorbed(tmp_path):
@@ -886,6 +998,85 @@ def test_a_late_record_opens_a_new_builder_and_says_so_with_the_gap():
     assert late.builder is not None
     assert late.builder.version == 1
     assert router.builder("t1") is late.builder
+
+
+def test_pin_a_late_arrival_s_event_carries_no_version():
+    """A pin, green on its parent: no behaviour changed for it (`SPEC.md` §4.1).
+
+    `Event.version` is "`None` for every code that is not about one", and
+    `late_arrival` is about a gap, not a version: the record it reports is
+    absorbed at version 1 of generation 2, and the event carries neither
+    number. `Routed.version` is where the absorption's version is.
+    """
+    clock = Clock()
+    router = router_with(Cap(1), clock=clock)
+    router.route(openinference("a"))
+    assert len(router.tick()) == 1
+
+    clock.tick(1.0)
+    late = router.route(openinference("b"))
+    (event,) = late.events
+    assert event.code == LATE_ARRIVAL
+    assert event.version is None
+    assert late.version == 1
+    assert "generation 2" in event.detail
+
+
+def test_pin_a_late_unclaimed_record_at_a_full_unclaimed_bound_is_refused():
+    """A pin, green on its parent: no behaviour changed for it (`SPEC.md` §5.5).
+
+    B1's clause of §5.5: a late record no adapter claims, for a completed
+    trace, at a full `max_unclaimed_traces`, is `refused_at_cap`; the trace
+    stays completed and no `late_arrival` is emitted. With a free place, the
+    same record is admitted as `late_arrival`, and the gap it carries runs
+    from the original completion, which is what "stays completed" means.
+
+    `max_unclaimed_traces=1` and `Cap(1)`: health check 0 is completed at the
+    first tick, health check 1 takes the one place 2 s later, and health
+    check 0's record again 3 s after that is refused. The tick then completes
+    health check 1, and the same record 4 s later is a `late_arrival` with a
+    gap of 9 s.
+    """
+    from tests.test_routing import health_check
+
+    t0, t1 = f"{0:032x}", f"{1:032x}"
+    clock = Clock()
+    router = router_with(Cap(1), clock=clock, max_unclaimed_traces=1)
+    (late_record,) = health_check(0)
+    assert router.route(late_record).events == ()
+    (first,) = router.tick()
+    assert first.trace_id == t0
+
+    clock.tick(2.0)
+    (other,) = health_check(1)
+    assert router.route(other).events == ()
+    assert router.trace_ids == (t1,)
+
+    clock.tick(3.0)
+    refused = router.route(late_record)
+    (event,) = refused.events
+    assert event.code == REFUSED_AT_CAP
+    assert event.trace_id == t0
+    assert "max_unclaimed_traces" in event.detail
+    assert refused.builder is None and refused.version is None
+    assert router.trace_ids == (t1,)
+    assert LATE_ARRIVAL not in router.counts
+
+    (second,) = router.tick()
+    assert second.trace_id == t1
+    assert router.trace_ids == ()
+
+    clock.tick(4.0)
+    admitted = router.route(late_record)
+    (late,) = admitted.events
+    assert late.code == LATE_ARRIVAL
+    assert late.trace_id == t0
+    assert late.seconds == 9.0, "the gap runs from the original completion"
+    assert "generation 2" in late.detail
+    assert admitted.builder is not None and admitted.version == 1
+    assert router.trace_ids == (t0,)
+    assert router.counts[REFUSED_AT_CAP] == 1
+    assert router.counts[LATE_ARRIVAL] == 1
 
 
 def test_a_late_arrival_is_never_silent():

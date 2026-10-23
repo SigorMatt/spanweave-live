@@ -8,10 +8,754 @@ of change is a **batch**: an entry names its batch or, after a series' close,
 what it fixes, and `TASKS.md` is the registry that lists the batches one line
 apiece. A batch entry may cite its series' `WORKPLAN.md`, which was deleted at
 that series' close; each such citation is dated history, resolvable at
+`git show fff8a9e:WORKPLAN.md` for the backlog series' entries (B1–B10), at
 `git show 3077bec:WORKPLAN.md` for the zoo series' entries (V0–V4) and at
 `git show b500342:WORKPLAN.md` for the receiver series' (R0–R9).
 
 ## Unreleased
+
+## 0.0.3 — the backlog series (2026-10-22)
+
+The version moved from `0.0.2` at the series' close (B10): nothing is frozen,
+a `Router` field and a CLI flag were added (B1), `released` gained its version
+(B4) and a refusal its `Status` body (B3). Under this heading are the backlog
+series' batches B1–B10, newest first.
+
+### The series' cold review, both halves, archived byte for byte, its dispositions, and the record lines (2026-10-23)
+
+Derived parent `5a59e41`. The seventh and last of the commits that
+disposition the series' cold review. It archives both halves, dispositions
+every finding of both in `TASKS.md`, and sets right the record lines that
+answer the first half's R-1 and R-3 (H1 R-1, H1 R-3) and the second half's
+R-5, R-6, R-8, R-9 and T-3 (H2 R-5, H2 R-6, H2 R-8, H2 R-9, H2 T-3). The
+dispositions are the maintainer's, the 2026-10-23 `review` row of the backlog
+series' decisions log in `TASKS.md`. **Prose only**, and two files copied: no
+behaviour changed and no test changed, and `SPEC.md` is untouched. So, as for
+the zoo series' *The series' cold review, both halves, archived byte for
+byte, and its dispositions*, no parent run and no mutation of added code
+apply. Nothing under `tests/` reads `reviews/` but `tests/install_check.py`,
+which keeps it out of the wheel and the sdist, and no test holds an archive
+to its sha256.
+
+Added
+
+- **`reviews/2026-10-22-backlog-run1.md`** and
+  **`reviews/2026-10-23-backlog-run2.md`**, `patches/REVIEW-2026-10-22.md`
+  and `patches/REVIEW-2026-10-23.md` unchanged: each a `cp`, `cmp` silent.
+  Run 1 is 12906 bytes, sha256
+  `0736f95c01ecf502895a715ef86829ef1147a2cc2a68044116625b8deeb3be78`; run 2
+  is 33627 bytes, sha256
+  `8a1f17e1f63f0261e7db54afad780ca74938be16fbdd61fe9701e6d39c5593b6`. Both
+  are in the table under the backlog series' new *The review* in `TASKS.md`,
+  the zoo series' table, by the same columns. Until now the findings the six
+  entries below answer could not be read in a stranger's checkout.
+- **One disposition line per finding**, 26 in all, under *The review*: run
+  1's five blocking findings and one thread, and run 2's nine blocking
+  findings, five threads and six notes. Each names the commit that took it,
+  `e0ab738` to `5a59e41`, or the record line this commit sets right, or that
+  it is registered as a thread or recorded as a note.
+- **Four threads**, registered under the backlog series' *Threads,
+  registered* with the review's measurements, for the next receiver series:
+  run 1's R-4 (a mutation of B2's routing equivalent at the pin), run 1's R-6
+  (`http.server`'s own `501` and HTML `400`, neither a `Status` nor
+  counted), run 2's T-1 (the framer's mid-stream BOM depends on chunking) and
+  run 2's T-2 (a tree with no `.git` fails more than B8(i) registered).
+- **A row of the decisions log**, dated 2026-10-23, batch `review`, the
+  maintainer's: the grading by the series' merge rule as run 2 reads it, what
+  was accepted and why, what is registered and what recorded. The log now
+  says it is eight rows, and `tests/test_record.py` holds that.
+
+Fixed
+
+The record lines, set right in `TASKS.md` where each sentence was, each now
+saying what it said until 2026-10-23:
+
+- **B1's entry** names `3ceb8df`'s derived parent, `11a1452`, which its body
+  does not (H1 R-1).
+- **Under the batches table**: B1–B9 were each marked `done` before any CI
+  ran on their tips; CI ran at the run tips `72d60e8` and `6aa7750`, green on
+  all seven jobs; the plan's §2 and §0.1 step 8 disagreed, and the next plan
+  carries one rule (H1 R-3, H2 R-9).
+- **R2a's entry** (the receiver series): R2a's "69" reproduces with its
+  corrupted- and skipped-record tests deselected, and 68 is with its
+  dedup-cache test deselected too (H2 R-5). The open-items row for T9 says
+  so.
+- **The folded §4's two pointers** say the counts are in the plan's §4 at
+  `fff8a9e`, not in B1–B6's or `57ad222`'s bodies (H2 R-6).
+- **The open-items table's row for zoo run 1's R-14** reads as the plan had
+  it ("is 16"), with a note that B9 measured 19; **zoo run 1's R-10** carries
+  its deferral mark; and **the receiver series' T9 and T12 marks** stand
+  apart from the text they close (H2 R-8).
+- **The zoo series' *What remains before the merge*** says PR #2 merged at
+  `2478e2c` (H2 T-3).
+
+Measured for this entry, in the main checkout at the parent unless named:
+
+- **The archives**: `cmp` printed nothing for either, `sha256sum` gave the
+  two digests above, and `wc -c` the two sizes. `git check-ignore` does not
+  ignore them.
+- **CI**: `gh run list --branch backlog` and `gh run view`, read-only, give
+  runs at `11a1452`, `72d60e8` and `6aa7750` only, all seven jobs green at
+  the two run tips; the ruleset's required checks, read with `gh api`, are
+  the seven names `TASKS.md` lists.
+- **R2a's 69 and 68**, in a worktree at `7fdbff3` with its `corpus/` pin:
+  R2a's mutation, `push` reporting `skipped_records=0`, is 52 failed /
+  120 passed over `tests/test_framing.py`; with
+  `-k "not corrupt and not skipped"` it is 69 passed, and with
+  `and not dedup` added, 68.
+- **The counts' places**: `git log -1 --format=%B` of B1–B6 gives no
+  `make check` count; the plan's §4 at `fff8a9e` gives each of B1–B9's,
+  and the 82, 164 and 1822 of B2's measurement; B10's body gives its own.
+- **The merge**: `2478e2c`'s parents are `cddc694` and `6024cb1`, "Merge pull
+  request #2 from SigorMatt/zoo".
+
+`make install-check` was run, because `reviews/` grew and the install check is
+what keeps it out of what ships.
+
+### The record of the series' reasons and counts made true (2026-10-23)
+
+Derived parent `50acb4f`. The sixth of the commits that disposition the
+series' cold review, answering the first half's R-5 and R-6's sentence (H1
+R-5, H1 R-6) and the second half's R-7, T-4 and N-6 (H2 R-7, H2 T-4, H2
+N-6). Sentences of the record were short or wrong: B2's reason the named
+zoo pin was green on the parent gave one of its two reasons; B3's "A refusal
+answers OTLP's `google.rpc.Status`" did not say which refusals; B10's `SPEC.md`
+§0 named B7 among the batches that amended a section from 3 onward, and B7
+amended §1.3 alone; README's gate A count read as gate A's total after B2 and
+B6 added passes outside it; and the phrase a closing commit's subject must
+carry was written only in the record test's docstring. **No behaviour
+changed**: the http.server answers R-6 names are unchanged, and are a thread.
+
+Changed
+
+- **`SPEC.md` §4.8 and the named zoo pin's docstring**
+  (`tests/test_zoo_gate.py`) give both reasons the pin was green before B2:
+  no capture holds a record two adapters claim, and no zoo record is flat, so
+  Z4's root, which no adapter claims, was routed by its envelope to the trace
+  id the named adapter's `parse` gives it.
+- **`SPEC.md` §7.2**: a refusal `Endpoint` makes answers OTLP's `Status`.
+  The two answers `http.server` gives itself before a request reaches
+  `respond` — a `501` for a method outside `_METHODS`, and an HTML `400` for
+  a malformed request line — are neither a `Status` nor counted. The
+  `handler_class` paragraph says a method outside the ones it routes still
+  gets the `501`. **§1.5** says the same two are outside "each is an event"
+  today, because §7.2 now names them.
+- **`SPEC.md` §0**: the backlog series' batches that amended a section from 3
+  onward are B1–B6 and B9.
+- **README's gate A sentence**: the comparisons it counts are the main
+  pass's alone, and the passes beside it — one stream chunked across its lines, each
+  named adapter, and an export whose root no adapter claims — are named, with
+  no count.
+- **`CONTRIBUTING.md`**: the commit that deletes `WORKPLAN.md` closes its
+  series, and its subject must say "the <name> series closes", because
+  `tests/test_record.py` finds each close by that phrase.
+
+Added
+
+- **The named zoo pin asserts both reasons**: each record it routes, on the
+  JSON path and the raw path, was unpacked from an export and is claimed by
+  at most one adapter. A pin, green on the parent.
+- **`tests/test_conformance.py`'s README test** holds the sentence to the
+  main pass and to the passes it names beside it; **`tests/test_record.py`**
+  holds `CONTRIBUTING.md`'s phrase to `CLOSES`, the pattern `plan_states`
+  finds each close by. Both are red on the parent, whose documents do not
+  say so.
+- **Mutations shown caught**: README without "which are the main pass's
+  alone", or without the named-adapter pass, is red; `CONTRIBUTING.md`'s
+  phrase as "the <name> series ends" is red.
+
+### The framing sentences name the mutation that is red, and the crossing count is held to its condition (2026-10-23)
+
+Derived parent `5881daf`. The fifth of the commits that disposition the
+series' cold review, answering the second half's R-2 and N-2 (H2 R-2, H2
+N-2). B6's `SPEC.md` §3.2 and the BOM sweep's docstring named, as what the
+sweep catches, a framer that accepts a BOM only whole at offset 0 of a
+push, which stays green, as the plan's B6 row was corrected to say at
+`3159579`. B6's one-stream pass asserted its crossing count above zero,
+and nothing held the count's condition: a count of every push with a
+non-empty remainder, or of a push carrying the remainder's own trace, was
+above zero too.
+**No behaviour of the library changed**: the tests are pins, green on the
+parent.
+
+Changed
+
+- **`SPEC.md` §3.2 and `tests/test_framing.py`'s sweep docstring** say what
+  the sweep catches: a framer that hands a partial BOM on across two reader
+  calls instead of holding it. A framer that strips a whole BOM at offset 0
+  of a push is not caught, because the reader accepts a BOM at the start of
+  every call.
+- **`SPEC.md` §4.7**: the one-stream pass's count is taken by one counter
+  that every pass of gate A pushes through, and each pass is held to its
+  count — every line-atomic pass 0, at each seed it runs, and the
+  one-stream pass more than 0.
+- **`tests/test_conformance.py`**: the counter is `Crossings`, and
+  `replay` and the named-adapter pass push through it. The main pass, the
+  V2 pass and the named-adapter passes assert it counts 0 for every pair;
+  the one-stream pass still asserts more than 0.
+
+Added
+
+- **Mutations shown caught**: the weak count (every push with a non-empty
+  remainder) and the same-trace count are each red on the line-atomic
+  passes; on the parent's test both passed.
+
+### The record test holds what its sentences say: the socket list by its imports, and the open-items table's shas (2026-10-23)
+
+Derived parent `8f3dd91`. The fourth of the commits that disposition the
+series' cold review, answering the second half's R-4 and N-5 (H2 R-4, H2
+N-5). B9's `CONTRIBUTING.md` bullet said a test file that opens a socket
+anywhere else is red in the record test, while the test reads imports, and
+its `from <module> import <name>` half was held by no committed case. B10's
+open-items table cited a batch commit per taken item, and the rows it closes
+carried a close mark in place, and no test read either. **No behaviour of
+the library changed**, and no tracked record was false: the tests are new,
+and `TASKS.md` reads as it did.
+
+Changed
+
+- **`CONTRIBUTING.md`'s socket bullet** says what the record test holds: a
+  test file that **imports** a socket module, by `import` or by
+  `from … import`, must be one of the named exceptions. The check is static
+  and does not see what a test opens; a socket opened through a module the
+  test does not import itself, or in a child process, is held by review.
+- **`tests/test_record.py`**: the socket-rule test and its scan are named
+  for imports (`…_that_import_one`, `_imports_a_socket_module`), and their
+  docstrings no longer say the check sees a test that opens a socket.
+
+Added
+
+- **The scan's import forms**, one planted file each: `import socket`,
+  `from socket import create_connection` (the review's plant),
+  `from http.server import …`, `from http import client` and a
+  function-level `import http.client` are found; `import socket` in a
+  string, `import json` and `from http import HTTPStatus` are not.
+- **The open-items table against the registry**: each item a batch closed
+  names that batch's registered commit, every outcome is closed, declined
+  or deferred, and each row the item names where it is registered, in the
+  zoo or the receiver series, carries a dated `closed by Bn` mark with the
+  same commit. Declined and deferred marks are held by review.
+- **Mutations shown caught**: the scan's `imported.add(node.module)`
+  dropped is red; the table's B4 row pointed at its `plan:` commit `7319ac2`
+  is red; the "Closed by B5" mark on zoo run 2's R-11 deleted is red. Each
+  of these passed the parent's record test.
+
+### The trace-content rule says what it bans, and bans the families the review found (2026-10-23)
+
+Derived parent `ece0491`. The third of the commits that disposition the
+series' cold review, answering the second half's R-3 and N-3 (H2 R-3, H2
+N-3). B7's `SPEC.md` §1.3 said nothing from a trace "is executed or
+deserialized into objects" and that the `no-execution-of-content` rule
+"holds that statically", while the rule listed four names and the review
+measured whole families passing it. **No behaviour of the library changed**:
+the gate is in `tests/`, and the widened rule finds nothing under
+`spanweave_live/` (`re.compile` in `framing.py` is an attribute of `re`, not
+the builtin `compile`, and is not flagged).
+
+Changed
+
+- **`tests/gates.py`'s `no-execution-of-content`** bans, beside B7's names,
+  the builtins `compile` and `__import__`; the modules `_pickle`, `cPickle`,
+  `marshal`, `shelve`, `dill`, `jsonpickle`, `runpy` and `code`; and
+  `yaml`'s `load_all`, `full_load`, `full_load_all`, `unsafe_load` and
+  `unsafe_load_all`, in every import form it already read.
+- **`SPEC.md` §1.3 and `CLAUDE.md` standing rule 9** say what the rule is: a
+  static ban on exactly the names it lists, not a proof that nothing is
+  executed or deserialized. A name it does not list, and dynamic reach such
+  as `getattr(builtins, "eval")` or `sys.modules`, are outside it, as §1.4
+  says of the clock gate.
+
+Added
+
+- **A planted case per name the lists gained**, in `tests/test_gates.py`,
+  each passing the rule on the parent; and one for `import yaml.constructor`
+  then `yaml.load` (H2 N-3), which the rule's default self-alias map caught
+  already and nothing held: a pin.
+- **The limit test** holds `sys.modules["builtins"].exec` passing, and the
+  look-alike test holds `re.compile`, a variable named `code` and
+  `import codecs` clean.
+- **Mutations shown caught**: each name the lists gained, dropped alone, is
+  red; each family put back to B7's list is red; the self-alias map emptied
+  is red (the N-3 plant alone).
+
+### The late arrivals pinned, at a full unclaimed bound and in their version (2026-10-23)
+
+Derived parent `e0ab738`. The second of the commits that disposition the
+series' cold review, answering the first half's R-2 (H1 R-2) and the second
+half's T-5 (H2 T-5). Two sentences of `SPEC.md` were true in the code and
+held by no test. **No behaviour changed** and `SPEC.md` is not edited: both
+sentences already say what the code does. The new tests are pins, green on
+the parent, and say so.
+
+Added
+
+- **A pin for §5.5's clause from B1** in `tests/test_completion.py`: a late
+  record no adapter claims, for a completed trace, at a full
+  `max_unclaimed_traces`, is `refused_at_cap` naming that bound, the trace
+  stays completed, and no `late_arrival` is emitted. Under `Cap(1)` and
+  `max_unclaimed_traces=1`, health check 0 is completed, health check 1 takes
+  the one place, and health check 0's record again is refused; once the tick
+  completes health check 1, the same record is admitted as `late_arrival`,
+  with the gap running from the original completion.
+- **A pin for §4.1's "`None` for every code that is not about one"**:
+  `late_arrival`'s `Event.version` is `None`, while `Routed.version` carries
+  the absorption's version.
+- **Mutations shown caught**: the late record admitted at a full unclaimed
+  bound, and `version=book.generation` on the `late_arrival` event, are each
+  red on their pin alone, suite-wide.
+
+### §5.2 says which reading opens a book attached mid-stream (2026-10-23)
+
+Derived parent `6aa7750`. The first of the commits that disposition the
+series' cold review, answering the second half's R-1 (H2 R-1). B5's §5.2
+paragraph said the first tick after a completion is attached opens each held
+trace's book, and that `Quiet` counts from that tick. That is false when a
+record for a held trace is routed after the attach and before any tick: with
+a completion set, `route` reads the clock, and the book opens at the record.
+**No behaviour changed**: the new test is a pin, green on the parent, and
+says so.
+
+Changed
+
+- **`SPEC.md` §5.2**: after a completion is attached, the first clock reading
+  for a held trace opens its book — the first tick, or a record routed for
+  that trace, whichever comes first — and `Quiet`, and the `completed`
+  event's `seconds`, count from that reading.
+
+Added
+
+- **A pin** in `tests/test_completion.py`: body 0 routed with no completion,
+  `Quiet(1.0)` attached an hour later, body 1 routed half a second after the
+  attach with no tick between; a tick 0.75 s after body 1 completes nothing,
+  and the trace completes at the tick 1.0 s after it, with `seconds == 1.0`.
+  B5's T1 pin, attach then tick, stays.
+- **Mutation shown caught**: `_activity` that updates a book but never opens
+  one, so only a tick opens it (the new pin, alone).
+
+### B10 — the backlog series closes, and its plan is deleted (2026-10-22)
+
+Derived parent `fff8a9e`. The backlog series' last batch (B10). No behaviour
+changed but the version `--version` prints: nothing under `spanweave_live/`
+moved but `__version__`. This is the close. The series' plan is deleted, and
+what outlives it is folded into tracked files.
+
+Added
+
+- **`TASKS.md` registers the backlog series**, above the zoo series: the
+  plan's open-items table with each item's outcome (taken, with its batch's
+  commit; declined; deferred), B1–B10 with the commit that closed each, the
+  plan's decisions log (§3), moved as it stood, and resume note (§4) folded
+  in, the order of what remains before the merge (§2), and the origins (§5).
+  Each item the series closed, declined or deferred is marked so in place, in
+  the zoo series' and the receiver series' tables, dated 2026-10-22.
+- **Two threads, registered open**, each found by a batch and not this
+  series': the `SEAMS` literal cited by its line number, `tests/gates.py:237`,
+  with nothing re-deriving the line (B7); and §8.7's test failing in a
+  `git archive` export, which has no `corpus/` (B8). Each carries its
+  measurement, and the next plan's open-items table decides it.
+- **`tests/test_record.py` holds the backlog series as it holds the zoo's**:
+  its registry's order and commits, its changelog entries under `0.0.3`, its
+  post-close entries (none yet), and its decisions log against the plan's §3
+  at `fff8a9e`, which must be its last plan state as history gives it. The
+  tests that held the zoo series alone are one case a series now, and the
+  version must be the newest series'. `CLAUDE.md` and this file's preamble
+  must cite the backlog's plan state, by the test B8 wrote, which reads the
+  closed series from history.
+
+Changed
+
+- **The version is `0.0.3`** (`pyproject.toml`, `spanweave_live.__version__`,
+  `uv.lock`). Nothing is frozen. This file groups B1–B10 under `0.0.3`, and
+  their headings take the `### <id> — ` form the record test reads, where
+  they had `### <id>: `.
+- **`CLAUDE.md`** says no series is open and where the backlog series' plan
+  is. Standing rule 5 carries the `no_graph` clause the plan's §0.6 added (a
+  trace no adapter can read is an event with a code), and cites §5.4.
+  `SPEC.md` §0 names the backlog series beside the receiver's and the zoo's.
+  `TASKS.md`'s preamble names three series and where each plan resolves.
+
+Removed
+
+- **`WORKPLAN.md`**, as its §0.6 said from the series' first commit. It is
+  at `git show fff8a9e:WORKPLAN.md`. No `plan:` commit follows this one.
+
+Not here: `reviews/` is unchanged. No review of this series had been archived
+when this commit was made. The cold review runs after it, in two halves
+(`TASKS.md`, *What remains before the merge*).
+
+Tests red on the parent (`fff8a9e`, worktree under the scratchpad): 6 of the
+new file's 20 items, every backlog case of the five tests now run once a
+series and the version test; the 14 green there are the zoo's cases and the
+tests this commit did not change. Mutations shown caught, each red on the
+test named, and on the post-close test too for the last:
+- `spanweave_live.__version__` left at `0.0.2`: red (the version);
+- B4 registered as its `plan:` commit `7319ac2`: red (the commits);
+- a moved decisions row edited ("every record" to "most records"): red (the
+  decisions log);
+- run 2 written B5 → B4 → …: red (the order);
+- `CLAUDE.md` citing the backlog's plan at `40f0915`, and the preamble
+  likewise, each: red (the plan states);
+- B10's heading written `### B10: `: red (the entries).
+The test caught one defect of this commit before it was made: the decisions
+log said six rows where the plan has seven. Two mutations of the new test
+code, each green against a defect the real test catches: the decisions-log
+test returning before its row comparison when no sentence moved (the edited
+row is then green), and the series cases reduced to the zoo's (B4 as its plan
+commit is then green). Two more are red on the true tree: the registry's row
+prefix widened to every row, and the post-close test's slice for a series
+with no entries after its close dropped.
+
+`make check` green (1037 passed, ruff, format, mypy --strict clean, the gates'
+run 91), `make conformance` green (126), `make showcase` green (12) with the
+table unchanged, `make install-check` green, the console script saying
+`0.0.3`.
+
+### B9 — the record made true (2026-10-22)
+
+Parent `40f0915`. The zoo series' cold review, run 1, R-14, and run 2, R-10;
+the receiver series' run-2 review, T4, T9 and T12. **No library behaviour
+changed**: every sentence added states what the code already does.
+
+Changed
+
+- **`SPEC.md` §7.2 states no count** of the tests the `push` mutation takes
+  down (R-14). The count is the suite's size and moves with it, and nothing
+  re-derived the one it stated; the shape it teaches — both `verbatim` cases
+  green, the `trimmed` and `compact` ones red — stays, held by the framer
+  control test in `tests/test_endpoint.py`.
+- **`SPEC.md` §6.5 says what happens to a window lost to
+  `delta_unavailable`** (T4): it is not retried and not re-reported, because
+  the cursor advanced before the delta was asked for; and a subscriber whose
+  first window was lost starts its fold from its first update's
+  `builder.graph()`.
+- **`CONTRIBUTING.md`'s socket rule names its two exceptions** (R-10), as
+  `SPEC.md` §7.2 and §8.7 argue them: `tests/test_endpoint.py`, bound on
+  `127.0.0.1` port 0, and `tests/test_cli.py`'s spawned `serve`.
+- **`SPEC.md` §4.2's measurement cites its artifact** (T12),
+  `tools/bench_routing.py`, with the date and the machine of the run it
+  quotes, and states the share per repeat rather than from two ranges.
+- **`TASKS.md`'s R2a entry carries the correction of R2a's "69/69"** (T9):
+  68, re-collected; the commit body is immutable.
+- The sdist ships `tools/`, and `make install-check` asserts the benchmark is
+  in it.
+
+Added
+
+- **`tools/bench_routing.py`**, the benchmark §4.2 cites. It reads the real
+  clock, so it is not a test and `make check` does not run it.
+- **`tests/test_record.py`**: the test files that import a socket module are
+  exactly the ones `CONTRIBUTING.md`'s socket rule names. Red on the parent;
+  shown red with `import socket` planted in `tests/test_framing.py` and with
+  `from http import client` in `tests/test_routing.py`.
+- **`tests/test_subscriptions.py`**: a joiner whose first window was lost is
+  not re-sent it, the loss is one event, and its fold from the first update's
+  `builder.graph()` is the final graph byte for byte. Green on the parent, as
+  a statement of existing behaviour is; shown red with the cursor rolled back
+  on a refusal (a retry).
+
+### B8 — the record test reads what it holds (2026-10-22)
+
+Parent `3937f12`. The zoo series' cold review, run 2, R-16 and R-18; its
+bounded fix review, R-7. **No library behaviour changed**, and no document's
+text did: every sentence the new assertions read was already true, and they
+are green on the tree.
+
+Changed
+
+- **`tests/test_record.py`'s decisions-log test** compares the zoo series'
+  log with the plan's §3 at the sha the log cites, `git show
+  3077bec:WORKPLAN.md`, which must be the series' last plan state as history
+  gives it (the last commit to change `WORKPLAN.md` before the commit that
+  deleted it). The moved rows must be the plan's, in its order; the one row
+  that differs must be the plan's with the sentence the paragraph below the
+  table quotes replaced by the sentence it says the row now carries; and each
+  count the log's first line states is held. It replaces the length check.
+- **The W1 test** reads the CHANGELOG's V4 entry as well as `TASKS.md`.
+- **The `history` fixture** names a missing git binary, a tree with no
+  `.git` (an sdist, a `git archive` export) and a shallow clone as three
+  failures; the second was called "shallow" before (R-18). It still fails
+  rather than skips, as the module's docstring says, and CI's `check` job,
+  with `fetch-depth: 0`, takes none of the three.
+
+Added
+
+- **`tests/test_record.py`**: `CLAUDE.md` and the CHANGELOG's preamble cite
+  each closed series' last plan state, by the series' name, as history gives
+  it; and the post-close entries of `## 0.0.2` run newest first by their
+  commits (R-7). The mapping from an entry to its commit is the entry's own
+  "Derived parent `<sha>`.", which every one of them opens with: its commit is
+  that parent's one child, which changes the CHANGELOG, at whose parent the
+  heading is absent. `git blame` gives the same commits today but would move
+  with a later edit to a heading, so the test does not use it.
+- **Shown red with the new assertions and green on the parent's
+  `tests/test_record.py`**, each planted in a worktree at the parent: X6
+  (thread V2(c) undone in the row), X8 (a moved row dropped and the counts
+  lowered), X9 and X10 (`CLAUDE.md` citing the zoo plan at `5369cac`, or at
+  `b500342`), X13 (the V4 entry's W1 sha changed to `898e9f5`), and R-7's
+  swap of the newest and the oldest post-close entries. Two mutations of the
+  new code, each green against a defect the real test catches: the moved row
+  accepted with any change (a second sentence of it changed is then green),
+  and the cited series' names not compared with history's (the receiver's
+  citation dropped from `CLAUDE.md` is then green).
+
+### B7 — the trace-content gate (2026-10-22)
+
+Parent `3159579`. The receiver series' run-1 review, R0-4, its open half:
+standing rule 9 (no `eval`, `exec`, `pickle`, `yaml.load` on trace content)
+was gated nowhere. **No library behaviour changed**; the package already held
+none of the names, and the new rule is green over it.
+
+Changed
+
+- **`SPEC.md` §1.3** states that trace payloads are never executed or
+  deserialized into objects, the rule that holds it, that it has no seam, and
+  its limit. **`CLAUDE.md`'s standing rule 9** says both of its halves are
+  gated.
+
+Added
+
+- **`tests/gates.py`'s `no-execution-of-content`**, the fifth rule: no module
+  under `spanweave_live/` uses `eval` or `exec` (called or referenced, bare or
+  on `builtins` under any `import … as` alias, or imported from `builtins`),
+  imports `pickle`, or uses `yaml.load` (on `yaml` under any alias, or imported
+  from `yaml` under any name). `yaml.safe_load`, `ast.literal_eval` and a
+  `.eval()` method are not caught. The rule is syntactic: `getattr(builtins,
+  "eval")` passes it, and a test holds that it does.
+- **`tests/test_gates.py`**: the planted violations, red on the parent (no
+  rule there catches them); the no-seam test; the look-alike control; the
+  stated limit; a nested module of a planted package caught by
+  `check_package`.
+- **Mutations shown caught**: `exec`, `pickle` or `yaml.load` dropped from
+  the rule; `import … as` aliases not followed; the `from … import` branch
+  removed; calls caught but not references; the rule left out of
+  `ALL_RULES`; the rule skipping nested modules; a seam honoured; the rule
+  matching source text instead of the AST.
+
+### B6 — the framer's remainder, tested where it crosses (2026-10-22)
+
+Parent `f0987b5`. The receiver series' run-1 review, R1-6 and R2-2. **No
+behaviour changed**: both tests below are pins, green on the parent, and say
+so.
+
+Changed
+
+- **`SPEC.md` §3.2** says its BOM consequence is tested, by which sweep, and
+  against which control; **§4.7** states gate A's one-stream pass and the
+  count it asserts.
+
+Added
+
+- **`tests/test_framing.py`**: the multi-byte stream opens with a BOM, so the
+  two-way split sweep cuts the BOM at both of its inner boundaries (R1-6);
+  beside it, the control that the BOM's halves read in two calls are
+  `undecodable_bytes`. A framer that did not hold a partial BOM at the head
+  of the stream is red here and green on the parent's sweep.
+- **`tests/test_conformance.py`**: gate A gains one pass that concatenates the
+  interleaved line arrivals of every pair of two line-delimited renderings
+  into one stream and chunks it across its lines, counting the pushes that
+  arrive while the remainder holds one trace's partial line and carry the
+  other trace's bytes, and asserting that count is above zero (R2-2). A framer
+  that drops what follows a push's last newline is red here and green on
+  every line-atomic pass of gate A.
+
+### B5 — completion's edges, stated and pinned (2026-10-22)
+
+Parent `7319ac2`. The receiver series' run-2 review, T1; the zoo series' cold
+review, run 2, R-11, R-14 and R-15. **No behaviour changed**: every test
+below is a pin, green on the parent, and says so.
+
+Changed
+
+- **`SPEC.md` §5.2** says what a completion attached after records were
+  routed measures: `Quiet` from the tick that opens the book, and the
+  `completed` event's `seconds` from it; and why the CLI's end-of-input
+  `Cap(0)` does not meet that case.
+- **`SPEC.md` §5.3 and §5.5, and `README.md`'s third trap**, say `RootEnded`
+  acts per generation: a later generation of a trace whose root arrived in an
+  earlier one is never completed by `RootEnded` alone either, and end of
+  input completes it.
+
+Added
+
+- **Pins** in `tests/test_completion.py`: routed with `completion=None`,
+  `Quiet(1.0)` attached an hour later, completes one second after the first
+  tick and reports `seconds == 1.0` (T1's probe B).
+- **Pins** in `tests/test_zoo_policies.py`: on Z3 and Z1 under
+  `RootEnded(1.0)`, body 0 re-fed after completion opens a second generation
+  that does not complete on the first's root, nor at all up to `now = 10^6`,
+  and end of input writes it as `<trace_id>.2.json`; `ROOTLESS` is the zoo's
+  two Z5 captures; §5.3's `now = k` (both), `last + 0.5` and "*N*-th record"
+  are re-derived, the schedule from a run's ticks and `completed` events.
+- **Mutations shown caught**: `book.root_ended_at = None` deleted from
+  `_began` (the two re-feed pins, both captures); `ROOTLESS = ()`; §5.3's
+  `now = k` edited to `k + 0.25` at each occurrence, `last + 0.5` to
+  `last + 0.75`, and "*N*-th" to "*N - 1*-th" (each red); a tick that skips
+  a trace with no book, and a tick-opened book whose first record is at
+  `0.0` (the T1 pin, alone).
+
+### B4 — `released` carries its version (2026-10-22)
+
+Derived parent `72d60e8`. The receiver series' run-2 review, T5: a
+`released` event stated the version it released in `detail` alone, though
+`Event.version` exists for exactly that, so a caller could only read the
+number out of a sentence (§1.5).
+
+Changed
+
+- **`released`'s `Event.version`** is the builder's version at release, the
+  number `Completed.version` holds, in a generation a late arrival opened as
+  in the first. `detail` keeps its text; `completed`'s `version` stays
+  `None`. The CLI's `router` line for `released` (§8.3) now carries
+  `version`, since a field that is not `None` is written.
+- **`SPEC.md`** §4.1, §5.4 and §6.1 say it is done.
+
+Added
+
+- **Tests red on the parent** in `tests/test_completion.py`: `released.version
+  == Completed.version` for one completion, and for both generations of a
+  trace whose second generation a late arrival opened.
+- **Mutations shown caught**: `version` left `None` (both tests);
+  `version=book.generation` (both); `version=len(self._builders)` (both);
+  `version=index`, the arrival count (the late-generation test).
+
+### B3 — a refusal is OTLP's `Status`, in the request's encoding (2026-10-21)
+
+Derived parent `29b2996`. The zoo series' cold review, run 2, R-9 and R-13: a
+refusal answered `{"code": "<the receiver's code>"}` as `application/json`
+whatever the request declared, which is OTLP's `google.rpc.Status` in neither
+encoding — `Status.code` is an integer, so `json_format` refuses the body, and
+a protobuf request was answered in JSON.
+
+Changed
+
+- **A refusal's body.** A `415` or a `400` is answered with OTLP's `Status`:
+  the receiver's code in `message`, `code` omitted (OTLP: a server "MAY omit
+  `Status.code`"). A request declaring `application/json` gets
+  `{"message":"<code>"}` as `application/json`; one declaring
+  `application/x-protobuf` gets the `Status` with field 2 alone — `0x12`, the
+  varint length, the code's ASCII — as `application/x-protobuf`; one declaring
+  neither gets the JSON form. A poster that matched on the old `{"code": …}`
+  body reads `message` now; the event, its code and its count are unchanged.
+- **No protobuf runtime under `spanweave_live/`.** Writing one field of the
+  receiver's own reply is not reading a dialect (the maintainer's decision for
+  B3), so `endpoint.py` writes the tag and the varint itself, and V1's
+  decision holds.
+- **`SPEC.md`** §7.2: the refusal paragraph states the rule, the refusal
+  departure from OTLP is gone, and the `partial_success` departure stays,
+  now named as declined (the backlog series' decision) rather than a thread;
+  what the section is tested against says how the refusal is held.
+  **`README.md`**'s `serve` example says the refusal body changed.
+
+Added
+
+- **Tests red on the parent** in `tests/test_endpoint.py`: every refusal this
+  file makes — the four checks the declared type does not decide and both
+  `400` cases — under each declared type and a spelling of each, decodes as a
+  `Status` (protobuf through the `otlp` extra's runtime, JSON through
+  `json_format.Parse`, `Status` declared from its `.proto` since the extra
+  ships no `google.rpc`) whose `message` is the event's code, with the
+  declared type; a request declaring neither type is answered in JSON; a
+  protobuf refusal is its bytes as spelled; a `message` past one varint byte
+  reads back whole; and a protobuf refusal over the socket carries its type.
+  The existing refusal assertions move to the new body.
+- **Mutations shown caught**: a protobuf refusal with the JSON body; `code`
+  sent as the receiver's string; the length byte off by one; the declared type
+  matched verbatim, without HTTP's rule; a varint missing its continuation
+  bit; a protobuf refusal typed `application/json`.
+
+### B2 — a named adapter routes as it builds (2026-10-21)
+
+Derived parent `c4ec4a4`. The zoo series' thread V2(a) and its cold review's
+run 1, R-9, both shapes: under `Router(adapter=X)` routing classified across
+every adapter, so a record two adapters claim reached the no-trace builder
+announced by nothing, and a flat record no adapter claims reached it announced
+`unclaimed` and read as X's, where `spanweave.build(…, adapter=X)` put each in
+its trace.
+
+Changed
+
+- **Under a named adapter, routing asks that adapter alone.** A
+  `Router(adapter=X)` takes a record's trace id from X's `parse` of it, with no
+  `classify` across adapters and no envelope, because `build` under the name
+  reads every record as X's. A record X states no single trace id for is
+  `no_trace` (`no_id`); every other record is a claimed one, so under a name
+  every trace counts against `max_traces` and `max_unclaimed_traces` bounds
+  nothing. Unnamed routing is unchanged.
+- **`trace_id_of(record, *, adapter=None)`**: the public function takes the
+  name too, and answers as the router does.
+- **Measured before any code**, over the corpus' conformance renderings and
+  captured files and each zoo capture's JSON and raw bodies, under each named
+  adapter, with a scratch script: every trace's live graph under B2's routing
+  equals the batch build under the same name of that trace's records, and no
+  trace differs. The same inputs gave the same answer under the parent's
+  routing, so the corpus and the zoo do not reach the defect; the hand-made
+  records of `tests/test_routing.py` do.
+- **`SPEC.md`** §1.1, §4.1, §4.2, §4.3, §4.5, §4.7, §4.8 and §8.3: the rule,
+  and §4.3's exception gone with the sentences that named it (§1.1, §4.2,
+  §8.3). **`README.md`**'s `Router` row and **`CLAUDE.md`**'s standing rule 5
+  likewise.
+
+Added
+
+- **Tests red on the parent** in `tests/test_routing.py`, each under both
+  named adapters: R-9's table — a record both adapters claim, and a flat one
+  neither claims, reach `t1`, two nodes live as in the batch build under the
+  name; an export's ambiguous span reaches its trace; an unclaimed span whose
+  envelope the library refuses reaches its trace (the envelope is not asked);
+  a record the name states no id for is `no_id`; an unread export is a
+  claimed trace that `max_unclaimed_traces=0` does not refuse; and
+  `trace_id_of(…, adapter=X)`. The pin
+  `test_under_a_named_adapter_an_ambiguous_record_reaches_no_trace_unannounced`
+  is gone.
+- **Pins, green on the parent and saying so**: gate A once under each named
+  adapter over its dialect's renderings (`tests/test_conformance.py`), and the
+  zoo gate under each named adapter on the JSON and raw paths
+  (`tests/test_zoo_gate.py`).
+- **Mutations shown caught**: `classify` across adapters under a name; the
+  envelope asked under a name for an unclaimed unpacked record; a named
+  trace not counted as claimed; `trace_id_of` ignoring its `adapter`.
+
+### B1 — the traces no adapter can read are bounded too (2026-10-21)
+
+Derived parent `11a1452`. The zoo series' Qodo finding 2: `max_traces` counts
+only traces holding a claimed record, so a client that can POST exports with
+fresh trace ids and no span any adapter reads grew builders and subscription
+cursors without bound and without an event (the bounded fix review's
+`cap_bound.py`, `reviews/2026-10-20-zoo-fixes.md` R-1).
+
+Added
+
+- **`Router(max_unclaimed_traces=None)`** and the CLI's
+  `--max-unclaimed-traces N`, on both commands beside `--max-traces`. It
+  bounds the traces the router holds a builder for that hold no claimed
+  record. At the bound, an unclaimed record that would start a new such trace
+  is `refused_at_cap`, counted, its `detail` naming `max_unclaimed_traces`; no
+  builder, no book, no cursor. A record for a held such trace is never refused
+  by it; a trace that absorbs its first claimed record leaves this count for
+  `max_traces`'; completion releases from whichever count holds it; the
+  no-trace builder is bounded by neither. The default is no bound.
+- **Ten tests**, nine in `tests/test_routing.py` and one in
+  `tests/test_cli.py`, nine of them red on the parent; the tenth, that the
+  default bounds nothing, is a guard and passes there. The bounded review's shape —
+  `max_traces=1`, `max_unclaimed_traces=10`, one subscriber, one claimed trace,
+  100 two-span health checks — holds 11 builders and 11 cursors, refuses 90
+  traces and counts 180 `refused_at_cap`, both records of each refused trace
+  (`test_the_cap_bound_shape_holds_eleven_builders_and_eleven_cursors`).
+- **Mutations shown caught**: the bound counted over every held trace
+  (`len(self._builders)`); a further record for a held unclaimed-only trace
+  refused (the `existing is None` condition dropped); a trace that gained a
+  claimed record kept in this count (`_claimed` joined only by a builder's
+  first record); and `>` for `>=` at the bound.
+
+Changed
+
+- **`SPEC.md`** §2.3, §4.1 (and §6.1's copy of the `Router` block), §4.3, §4.5,
+  §5.5, §6.2, §6.4, §8.1 and §8.7: the bound, its rules, and what the defaults
+  leave unbounded (both kinds of trace, the no-trace builder). §8.7's count of
+  the CLI's process tests is 78 of 87, re-derived by `tests/test_record.py`.
+- **`README.md`**: the `serve` example says it is unbounded as written and
+  which two flags bound it; the bounds list and the `Router` row name the new
+  bound.
 
 ## 0.0.2 — the zoo series (2026-10-19)
 
