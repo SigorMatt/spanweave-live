@@ -72,10 +72,10 @@ registered, dated 2026-10-22; a declined or deferred row says so there too.
 | receiver, R0-4 (its open half) | standing rule 9 (no `eval`, `exec`, `pickle`, `yaml.load` on trace content) is gated nowhere | **closed by B7** (`a467bc5`) |
 | zoo, run 2's R-16 and R-18 | `tests/test_record.py` holds lengths and resolvability, not contents, and names a tree with no `.git` "shallow" | **closed by B8** (`a743893`); R-16's prose part is declined, below |
 | zoo, the bounded review's R-7 | the CHANGELOG's post-close entries are held newest-first by date alone | **closed by B8** (`a743893`) |
-| zoo, run 1's R-14 | SPEC §7.2's "ten" tests the `push` mutation takes down is more, held by no test | **closed by B9** (`f6b971b`): §7.2 states no count |
+| zoo, run 1's R-14 | SPEC §7.2's "ten" tests the `push` mutation takes down is 16, held by no test | **closed by B9** (`f6b971b`): §7.2 states no count. This "What" cell is the plan's; B9 measured 19, at `40f0915` (`f6b971b`'s body). Until 2026-10-23 the cell read "is more", with no note (run 2's R-8 of the series' cold review, under *The review* below) |
 | zoo, run 2's R-10 | two test files open loopback sockets, against `CONTRIBUTING.md`'s rule, and no review disposed of the conflict | **closed by B9** (`f6b971b`) |
 | receiver, T4 | the cursor's advance on `delta_unavailable` is unspecified in §6.5 | **closed by B9** (`f6b971b`) |
-| receiver, T9 | R2a's commit body's "69/69" is not reproducible (68) | **closed by B9** (`f6b971b`), a record line in R2a's entry |
+| receiver, T9 | R2a's commit body's "69/69" is not reproducible (68) | **closed by B9** (`f6b971b`), a record line in R2a's entry. Restated there on 2026-10-23: the 69 and the 68 answer two deselection sets (run 2's R-5 of the series' cold review, under *The review* below) |
 | receiver, T12 | §4.2's measurement has no artifact anyone can re-run | **closed by B9** (`f6b971b`) |
 | zoo, conformant `partial_success` (the bounded review's R-2) | a body the reader read in part is answered with OTLP's full-success message | **declined** (*Decisions taken*, below): an OTLP/HTTP body is one export, read whole or refused; §7.2 states the departure, and it stays |
 | zoo, run 1's R-11, its CLI half | the CLI's `no_trace` line carries the code, not which envelope field failed | **declined** (*Decisions taken*, below): a library caller holds the record and can ask `spanweave.envelope`; the CLI has no record to ask about |
@@ -105,6 +105,17 @@ throughout: no batch needed a pin move.
 
 Run boundaries, for reading the history: run 1 was B1 → B2 → B3; run 2 was B4 → B5 → B6 → B7 → B8 → B9 → B10.
 
+**B1–B9 were each marked `done` before any CI ran on their tips.** CI ran on
+`backlog` at the opener `11a1452` and at the two run tips only, `72d60e8`
+(run 1's last `plan:` commit) and `6aa7750` (B10), and at each run tip all
+seven jobs are green (`gh run list --branch backlog` and `gh run view`, read
+on 2026-10-23). The plan's §2 ("every batch: CI green on the pushed tip") and
+its §0.1 step 8 (one push per run) disagreed, and the series followed the
+second; the next plan carries one rule.
+Until 2026-10-23 this registry did not say the `done` marks were made without
+CI (run 1's R-3 and run 2's R-9 of the series' cold review, under *The
+review* below).
+
 Every batch but the last was one code commit followed by one `plan:` commit
 that recorded its status and what it taught; the series' only other `plan:`
 commit is the opener `11a1452`, which also made `CLAUDE.md` say a series was
@@ -115,10 +126,12 @@ resolves it with `git log`.
 
 ## Decisions taken  *(`WORKPLAN.md` §3, folded)*
 
-Seven rows: seven moved here as they stood, and none taken after the close.
-These are the decisions the maintainer took for the series, all on
-2026-10-21 with its plan; a batch never took one of these itself. The plan's
-wording is at `git show fff8a9e:WORKPLAN.md`, its last state.
+Eight rows: seven moved here as they stood, and the last one taken after the
+close, the dispositions of the series' cold review. These are the decisions
+the maintainer took for the series, the seven on 2026-10-21 with its plan and
+the last on 2026-10-23 with its review; a batch never took one of these
+itself. The plan's wording is at `git show fff8a9e:WORKPLAN.md`, its last
+state.
 
 | Date | Batch | Decision | By |
 |---|---|---|---|
@@ -129,6 +142,7 @@ wording is at `git show fff8a9e:WORKPLAN.md`, its last state.
 | 2026-10-21 | declined | Conformant `partial_success`: an OTLP/HTTP body is one export, read whole or refused; a body read in part is not one export, and the count OTLP asks for is of spans, which only a dialect read can count (§1.1). §7.2's stated departure stands. | maintainer |
 | 2026-10-21 | declined | The CLI's `no_trace` line naming the envelope field that failed: every receiver event carries a code, and the library caller who holds the record can ask `spanweave.envelope` for the sentence. | maintainer |
 | 2026-10-21 | declined | Tests for `CLAUDE.md`'s prose: a number is held by a test, prose by review. | maintainer |
+| 2026-10-23 | review | The cold review's two halves, run 1 (`11a1452..72d60e8`, R-1 to R-6) and run 2 and the close (`72d60e8..6aa7750`, R-1 to R-9, threads T-1 to T-5 and notes N-1 to N-6), are dispositioned as one set and graded by the series' merge rule as run 2 reads it: a defect this series introduced blocks, whether or not another claim depends on it; an older one is a thread. So run 1's three findings it called non-blocking, R-1, R-2 and R-5, block, and so does the sentence of its R-6. Accepted: every blocking finding of both halves; run 2's T-4, because B2 and B6 are what made README's count partial; and, because each costs a line or an assertion and the next plan would only take them, run 2's T-3, T-5, N-2, N-3, N-5 and N-6. Registered as threads, for the next receiver series: run 1's R-4, the behaviour half of run 1's R-6, and run 2's T-1 and T-2. Recorded as notes: run 2's N-1 and N-4. The fixes are seven commits after the close, one concern each, the seventh archiving both halves and setting the record lines right in place. | maintainer |
 
 ## What the batches learned  *(`WORKPLAN.md` §4, folded)*
 
@@ -136,8 +150,11 @@ The resume note, by batch. Several entries are **corrections of the plan's own
 rows**: a batch that falsified its acceptance criterion had that criterion
 rewritten in the plan commit that followed it, with the reason. Where a number
 is held by a test, this section names the test rather than restating it; each
-batch's `make check` count is in its commit body, and the plan's last §4,
-where the orchestrator recorded it, is at `git show fff8a9e:WORKPLAN.md`.
+batch's `make check` count is in the plan's last §4, where the orchestrator
+recorded it, at `git show fff8a9e:WORKPLAN.md`, and B10's, which no `plan:`
+commit followed, in its commit body. Until 2026-10-23 this paragraph said each
+batch's count is in its commit body, which B1–B6's are not (run 2's R-6 of the
+series' cold review, under *The review* below).
 
 ### The series opens (`11a1452`)
 
@@ -161,6 +178,10 @@ where the orchestrator recorded it, is at `git show fff8a9e:WORKPLAN.md`.
   §6.2, §8.7), each holding a sentence the bound made false. §8.7's count of
   the CLI's process tests moved with B1's `--max-unclaimed-traces` test; it is
   the one `tests/test_record.py` re-derives.
+- **`3ceb8df`'s body names no derived parent.** It is `11a1452`, as B1's
+  `CHANGELOG.md` entry says. A commit body cannot be amended, so the parent is
+  recorded here, on 2026-10-23 (run 1's R-1 of the series' cold review, under
+  *The review* below).
 
 ### B2 — a named adapter routes as it builds (`57ad222`)
 
@@ -169,7 +190,9 @@ where the orchestrator recorded it, is at `git show fff8a9e:WORKPLAN.md`.
   as JSON and, separately, as raw bodies, under each named adapter, each
   trace's live graph against the batch build under the same name of that
   trace's records. None differed and none was excluded, so the stop did not
-  fire; the counts are in `57ad222`'s body and the plan's last §4.
+  fire; the counts are in the plan's last §4, not in `57ad222`'s body. Until
+  2026-10-23 this line named `57ad222`'s body too, which has none of them
+  (run 2's R-6 of the series' cold review, under *The review* below).
 - **The row listed gate A under a name as red on the parent; it is green
   there**, under the parent's routing too, and the row was corrected: it and
   the zoo gate per adapter are pins. The defect the row names is reached by
@@ -271,12 +294,19 @@ where the orchestrator recorded it, is at `git show fff8a9e:WORKPLAN.md`.
 Two things the batches found that are **not this series'**, registered here
 with their measurements by the merge rule (*What remains before the merge*,
 below): an older defect is registered, and the next plan's open-items table
-decides it.
+decides it. Below them, since 2026-10-23, are the four threads the series'
+cold review raised (*The review*, below), each with the review's
+measurements, by the maintainer's decision of that date (*Decisions taken*,
+above).
 
 | # | Thread | Disposition |
 |---|---|---|
 | B7(i) | The `SEAMS` literal is cited by its line number, `tests/gates.py:237`, and no test re-derives the line | **open, for the next receiver series.** Measured on 2026-10-22 at `fff8a9e`: the literal is line 237 of `tests/gates.py`, and `tests/gates.py:237` is cited in `spanweave_live/completion.py`, in three tests (`tests/test_completion.py`, `tests/test_gates.py`, `tests/test_ingest.py`), in a dated `CHANGELOG.md` entry and twice in the receiver series' part of this registry. A line added above it moves the literal and leaves every citation green |
 | B8(i) | In a `git archive` export, which has no `corpus/` (a submodule is not archived), `tests/test_record.py`'s §8.7 test fails | **open, for the next receiver series.** Measured on 2026-10-22 at `fff8a9e`, in an export unpacked under the scratchpad: `tests/test_cli.py` collects 34 items there against the 87 §8.7 states, so the test fails `assert 34 == 87`, where the `history` tests fail by name. Its parametrized cases are the corpus' renderings, which the export lacks |
+| run 1's R-4 | Under a named adapter, routing that took the parse of the sole adapter `classify` names, instead of the named adapter's, survives every test: a mutation of B2's code, equivalent at the pin | **open, for the next receiver series.** Measured by the review at `72d60e8`: the mutation survives all 184 tests in the three files B2 touched, because at pin `17edf61` the two adapters' parses disagree on the trace id of 0 of 588 corpus records, and of no hand-made probe, so no test can tell the two apart. A pin move that adds an adapter reading trace ids differently adds the test. Registered on 2026-10-23 |
+| run 1's R-6 | `http.server`'s own answers: a method outside `_METHODS`, such as `TRACE`, gets a `501` with an HTML body, and a malformed request line an HTML `400` with no status line. Neither reaches `respond`, neither is a `Status`, and neither is counted | **open, for the next receiver series.** Older than the series: §7.2 named the uncounted `501` before B3, and §1.5's "each is an event" was false for both before it. Measured over loopback by the review's B3 sub-agent: after three requests, the two above and one `respond` refused, the counts were `{'unreadable_body': 1}`, from the third alone. The sentences are scoped since the series' sixth post-close commit (`5a59e41`): §7.2 and §1.5 name both answers as neither a `Status` nor counted. The behaviour is unchanged. Registered on 2026-10-23 |
+| run 2's T-1 | The framer's handling of a BOM in mid-stream depends on where the chunks fall | **open, for the next receiver series.** Measured by the review at `6aa7750`, on the stream line 1, a BOM, line 2: the one-shot read gives 1 record and `malformed_record`; through the `Framer`, splits at 1–42 give the same, and splits at 43–46 give **2 clean records**, because the reader forgives a BOM at the start of every call and the split puts the BOM there. So a diagnostic depends on chunking, against §3.2's aim and `CLAUDE.md` rule 8. From the same cause, a BOM-stripping framer differs from the real one on a BOM inside a line at a push boundary (it drops the U+FEFF), and no test can tell, because the sweep's fixture holds one BOM, at offset 0. Registered on 2026-10-23 |
+| run 2's T-2 | A tree with no `.git` fails more than B8(i), above, registered; this row extends it | **open, for the next receiver series, with B8(i).** Measured by the review in a `git archive` export with `corpus/` and `showcase/` copied in: 3 failed, 1026 passed and 8 errors at `6aa7750`, and 3 failed, 1022 passed and 5 errors at `a743893`. The 3 failures are older tests that shell out to git: two in `tests/test_pins.py` (each dependency against its submodule's sha) and `tests/test_showcase.py::test_the_rules_file_and_the_trace_are_the_pinned_submodule_s_own_bytes`. Without `corpus/`, §8.7's test fails `assert 34 == 87`, as B8(i) says, and so does B8's W1 check, which reads `corpus/TASKS.md`. Registered on 2026-10-23 |
 
 ## What remains before the merge  *(`WORKPLAN.md` §2, folded)*
 
@@ -306,6 +336,107 @@ fix commits is bounded — the standard per-commit rules plus the previous
 review's own survivors and probes, and no new search — and if it finds a
 blocking defect, that fix goes to the merge on green CI without a further
 review: the loop ends there.
+
+## The review
+
+**No review of this series was archived at B10's commit**, and B10 recorded
+none here. The series' cold review ran after it, in two halves, as the plan's
+§2 ordered: run 1's over `11a1452..72d60e8`, and run 2's and the close's over
+`72d60e8..6aa7750`. Each was made by an aux session reading detached
+worktrees at fixed shas, which **edited no tracked file and committed
+nothing**, so that every fix is the builder's, made from the review file.
+Both halves are here **byte for byte**, each copied with `cp` from the name it
+was written with, `cmp` silent:
+
+| archived as | written as | bytes | sha256 |
+|---|---|---|---|
+| `reviews/2026-10-22-backlog-run1.md` | `patches/REVIEW-2026-10-22.md` | 12906 | `0736f95c01ecf502895a715ef86829ef1147a2cc2a68044116625b8deeb3be78` |
+| `reviews/2026-10-23-backlog-run2.md` | `patches/REVIEW-2026-10-23.md` | 33627 | `8a1f17e1f63f0261e7db54afad780ca74938be16fbdd61fe9701e6d39c5593b6` |
+
+`patches/` is gitignored, so the reviews lived there untracked until they were
+archived, by the last of the seven commits that dispositioned them. Below, as
+in those commits, **run 1's R-n** is the first half's R-n, and **run 2's
+R-n**, **T-n** and **N-n** the second's. The copies are unedited, and three
+things are worth knowing before reading them:
+
+- **Their line numbers and plan citations are at the trees they read**: run
+  1's at `72d60e8`, with its plan there (`git show 72d60e8:WORKPLAN.md`), and
+  run 2's at `6aa7750`, with the plan at `git show fff8a9e:WORKPLAN.md`, since
+  B10 deleted it. The fix commits moved some of those lines.
+- **Run 1's verdict says three of its findings are non-blocking; it grades
+  four so**: R-1, R-2, R-3 and R-5.
+- **Both halves say the ruleset requires six of CI's seven jobs**: ruleset
+  `25363236` requires all seven, the names *What remains before the merge*
+  lists (`gh api`, read on 2026-10-23). Both say all seven are green at the
+  tips they read, which is true.
+
+**Graded by the series' merge rule as run 2 reads it**: a defect this series
+introduced blocks, whether or not another claim depends on it; an older one
+is a thread. That is stricter than run 1's grading, under which a defect
+introduced here that no claim depends on was "non-blocking". The
+maintainer's decision of 2026-10-23 (*Decisions taken*, above) accepted
+every blocking finding of both halves, run 1's R-1, R-2, R-3 and R-5 and the
+sentence of its R-6, and run 2's R-1 to R-9; run 2's T-4, because B2 and B6
+made README's count partial; and run 2's T-3, T-5, N-2, N-3, N-5 and N-6,
+because each costs a line or an assertion. The rest are threads, registered
+under *Threads, registered* above with the review's measurements, or notes,
+recorded here one line each. The fixes are seven commits after the close,
+numbered below in the order they landed: `e0ab738`, `ece0491`, `8f3dd91`,
+`5881daf`, `50acb4f`, `5a59e41`, and the commit that archived the review,
+which `git log -1 -- reviews/2026-10-22-backlog-run1.md` resolves. A record
+line is set right in place, where the false or missing sentence was, by the
+seventh, each dated 2026-10-23.
+
+### Run 1 — `reviews/2026-10-22-backlog-run1.md`, five blocking findings
+
+| # | Finding | Disposition |
+|---|---|---|
+| R-1 | `3ceb8df` (B1): the body names no derived parent; only the CHANGELOG entry says `11a1452` | **a record line, set right** in B1's entry under *What the batches learned* above: the parent is `11a1452`. A commit body cannot be amended |
+| R-2 | `3ceb8df` (B1): §5.5's clause, a late unclaimed record for a completed trace at a full `max_unclaimed_traces` is `refused_at_cap`, the trace stays completed and no `late_arrival` is emitted, is true and held by no test | **closed by `ece0491`** (commit 2): a pin in `tests/test_completion.py` holds the clause, and that with a free place the same record is admitted as `late_arrival`. The record admitted at a full bound is red on it |
+| R-3 | `c4ec4a4`, `29b2996` (plan): B1 and B2 were marked `done` with no push and no CI run on their tips; the plan's §2 and §0.1 step 8 disagree | **a record line, with run 2's R-9**, set right under *The batches, with final status* above: B1–B9 were each marked `done` before any CI ran on their tips, CI ran at the run tips, green on all seven jobs, and the next plan carries one rule. Graded non-blocking by run 1, and blocking by the rule above |
+| R-5 | `57ad222` (B2): SPEC §4.8 and the named zoo pin's docstring gave one of the two reasons the pin was green on the parent | **closed by `5a59e41`** (commit 6): both give both reasons, no capture holds a record two adapters claim and no zoo record is flat, and the pin asserts each |
+| R-6 | `303f50f` (B3): §7.2's "A refusal answers OTLP's `google.rpc.Status`" does not say which refusals; `http.server`'s own `501` and HTML `400` are neither a `Status` nor counted | **its sentence closed by `5a59e41`** (commit 6): §7.2 scopes it to the refusals `Endpoint` makes and names the two answers `http.server` gives itself, and §1.5 says the same. **The behaviour, older than the series, is a thread** (run 1's R-6 under *Threads, registered*, above) |
+
+### Run 1 — one thread
+
+| # | Thread | Disposition |
+|---|---|---|
+| R-4 | `57ad222` (B2): one mutation survives, the parse of the sole adapter `classify` names used instead of the named adapter's, equivalent at pin `17edf61` | **registered** (run 1's R-4 under *Threads, registered*, above), for the next receiver series: a pin move that adds an adapter reading trace ids differently adds the test |
+
+### Run 2 — `reviews/2026-10-23-backlog-run2.md`, nine blocking findings
+
+| # | Finding | Disposition |
+|---|---|---|
+| R-1 | `6d2c559` (B5): §5.2 said the first tick after the attach opens each held trace's book, false when a record for the trace is routed after the attach and before any tick | **closed by `e0ab738`** (commit 1): §5.2 says the first clock reading for a held trace, the first tick or a record routed for it, opens its book, and a pin holds the record-first order |
+| R-2 | `a141fd2` (B6): SPEC §3.2 and the sweep's docstring named, as what the sweep catches, a framer that accepts a BOM only whole at offset 0, which stays green | **closed by `50acb4f`** (commit 5): both name a partial BOM handed on across two reader calls, and say a framer that strips a whole BOM at offset 0 stays green |
+| R-3 | `a467bc5` (B7): §1.3 said nothing from a trace is executed or deserialized and that the rule holds it statically, while the rule listed four names and whole families passed | **closed by `8f3dd91`** (commit 3): the lists gain the families the review measured, and §1.3 and `CLAUDE.md` rule 9 say the rule is a static ban on exactly the names it lists |
+| R-4 | `f6b971b` (B9): `CONTRIBUTING.md`'s socket bullet said a test file that opens a socket is red in the record test, which reads imports | **closed by `5881daf`** (commit 4): the bullet says **imports**, and that the check is static; a committed case holds the `from … import` half |
+| R-5 | `f6b971b` (B9): the R2a bullet and the open-items row called R2a's "69" wrong; it reproduces under one deselection set, and 68 under another | **a record line, set right** in R2a's entry (the receiver series' *What the batches learned*, below), and noted in the open-items row above: two deselection sets, two numbers |
+| R-6 | `6aa7750` (B10): the folded §4 said each batch's `make check` count is in its commit body, and that B2's counts are in `57ad222`'s body | **record lines, set right** in *What the batches learned* above: the counts are in the plan's §4 at `fff8a9e`, B10's in its body |
+| R-7 | `6aa7750` (B10): SPEC §0 named B7 among the batches that amended a section from 3 onward | **closed by `5a59e41`** (commit 6): B1–B6 and B9 |
+| R-8 | `6aa7750` (B10): zoo run 1's R-14 "What" cell edited without saying so; zoo run 1's R-10 not marked in place; the receiver T9 and T12 marks run into the text they close | **record lines, set right**: the cell reads as the plan had it, with a dated note that B9 measured 19 (*The open items*, above); zoo run 1's R-10 carries its dated mark; the T9 and T12 marks stand apart from the text they close (the zoo series' and the receiver series' parts, below) |
+| R-9 | the six `plan:` commits of run 2: B4–B9 were each marked `done` with no push and no CI run on their tips, run 1's R-3 again | **a record line, with run 1's R-3**, set right under *The batches, with final status* above |
+
+### Run 2 — five threads
+
+| # | Thread | Disposition |
+|---|---|---|
+| T-1 | The framer's mid-stream BOM depends on chunking (`spanweave_live/framing.py`, older than B6) | **registered** (run 2's T-1 under *Threads, registered*, above), for the next receiver series |
+| T-2 | A tree with no `.git` fails more than B10 registered, extending B8(i) | **registered** (run 2's T-2 under *Threads, registered*, above), for the next receiver series, with B8(i) |
+| T-3 | The zoo series' "PR `zoo` → `main` is open, as #2" is stale | **a record line, set right**, accepted although older: the sentence says the PR merged at `2478e2c` (the zoo series' *What remains before the merge*, below) |
+| T-4 | README's gate A count is the main pass's alone, since B2's and B6's passes | **closed by `5a59e41`** (commit 6), accepted because B2 and B6 made the count partial: README says the 29 200 comparisons are the main pass's and names the passes beside it |
+| T-5 | `late_arrival`'s `Event.version` is held by no test | **closed by `ece0491`** (commit 2), accepted: a pin holds it `None`, and `version=book.generation` on the event is red |
+
+### Run 2 — six notes
+
+| # | Note | Disposition |
+|---|---|---|
+| N-1 | B4: §4.1's "§5's fourth code about a version" is true in context and reads better as "the fourth code about a version, and §5's only one" | **recorded**; true as it stands |
+| N-2 | B6: nothing pins the crossing count's condition; the weak and same-trace counts survive | **closed by `50acb4f`** (commit 5), accepted: each line-atomic pass of gate A counts 0 and the one-stream pass more than 0, and both weaker counts are red |
+| N-3 | B7: `import yaml.constructor` then `yaml.load` is caught by the self-alias map, which no planted case holds | **closed by `8f3dd91`** (commit 3), accepted: a planted case holds it, and the map emptied is red |
+| N-4 | B8: the five `history` failures in a tree with no `.git` are pytest ERRORs, not FAILED; "it fails rather than skips" is true | **recorded**; nothing is skipped, and the exit code is 1 |
+| N-5 | B10: the open-items table's shas and the in-place close marks are held by no test | **closed by `5881daf`** (commit 4), accepted: the record test holds each taken row's sha against the registry and each close mark it implies |
+| N-6 | B10: `plan_states()` finds each close by its subject, "the <name> series closes", which only the test's docstring said | **closed by `5a59e41`** (commit 6), accepted: `CONTRIBUTING.md` states the phrase, and a test holds it |
 
 ## Origins  *(`WORKPLAN.md` §5, folded)*
 
@@ -587,7 +718,8 @@ halves and its findings are dispositioned as one set (*The review*, below), by
 nine commits after the close: `1df7a35`, `d52669c`, `26ca329`, `2bb1aed`,
 `84cbdf2`, `54dba83`, `41cc44d`, `05cd4be`, and the commit that archived the
 review, which `git log -1 -- reviews/2026-10-19-zoo-run1.md` resolves. The
-PR `zoo` → `main` is open, as #2. The bounded review of those nine commits and
+PR `zoo` → `main` is #2, merged at `2478e2c`; until 2026-10-23 this sentence
+said it is open (run 2's T-3 of the backlog series' cold review). The bounded review of those nine commits and
 Qodo's review of the PR (its first fetch archived) have run, and are
 dispositioned as one set (*The review*, below) by five more commits:
 `d511a48`, `5062951`, `ca9e774`, `567febe`, and the commit that archived the
@@ -672,7 +804,7 @@ the ninth, the commit that archived the review.
 | # | Thread | Disposition |
 |---|---|---|
 | R-9 | Older, identical at `2ef0231` (V2's thread (a)): routing classifies across every adapter whatever adapter the router was given | **open, for the next receiver series, in two shapes.** The first is **V2(a)** (*Threads, registered*, above): under `Router(adapter=X)` a record two adapters claim reaches the no-trace builder with no event, where `spanweave.build(…, adapter=X)` puts it in the trace (batch 2 nodes; live 1, and 1 in the no-trace builder; at `2ef0231` and `b01c945` alike); an ambiguous OTLP span behaves the same, `counts == {}`. The second, registered here: under a named adapter, a flat record no adapter claims is announced `no_trace` (`unclaimed`) since V2, but the no-trace builder reads it as the named adapter's, with `unknown_span_kind`, `orphan_parent`, `missing_timestamp` and no `unclaimed_record`, so not §4.2's "an `unknown` node plus an `unclaimed_record` diagnostic"; and the batch build under the same name puts it in its trace (batch 2 nodes; live 1, no-trace builder 1). The CLI has no `--adapter` flag, so only library callers reach either **Closed by B2** (`57ad222`, the backlog series), both shapes: under a named adapter a record both adapters claim and a flat record no adapter claims each reach the trace the named adapter's `parse` names, as the batch build under the name does. This row said **open** until 2026-10-22. |
-| R-10 | Older pattern (V2's thread (b)): `Unpacked` is not exported by `spanweave/__init__`, and routing needs it to tell `unclaimed` from `no_envelope` | **registered at V4 as V2(b)** (above): kept, and open for spanweave's next series |
+| R-10 | Older pattern (V2's thread (b)): `Unpacked` is not exported by `spanweave/__init__`, and routing needs it to tell `unclaimed` from `no_envelope` | **registered at V4 as V2(b)** (above): kept, and open for spanweave's next series — **Deferred by the backlog series** (2026-10-22), with V2(b), to spanweave's next series, *the reader's malformed input*, which gives a public way; then a pin move here drops the import. Still open. This mark was added on 2026-10-23; until then this row was the one the backlog series decided that carried no mark (run 2's R-8 of that series' cold review). |
 | R-11 | By decision of 2026-10-19 (V2's thread (c)): three different envelope refusals give one identical event | **registered at V4 as V2(c)** (above), by design. **Its CLI half is a new thread, for the next receiver series: the CLI's `no_trace` line carries the code, not which field failed.** Envelopes refused for "no trace_id", "no span_id" and "the envelope's name is not a string" each give exactly `('no_trace', 'no_envelope', 'not_an_envelope')`. A `Router` caller holds the record and can ask `spanweave.envelope`; a CLI user cannot, because the record sits in the no-trace builder, which is never written (§5.4, §8.5), and the stderr line carries the index, the detail `no_envelope` and the library's code, where a `refused` line's `detail` is the library's message **Its CLI half was declined by the backlog series** (its decisions log, 2026-10-21): every receiver event carries a code, and a library caller who holds the record can ask `spanweave.envelope`; the CLI has no record to ask about. This row said **open** until 2026-10-22. |
 | R-12 | V1's decision (V1's thread (i)): a protobuf request got a JSON answer; the zoo's exporter, through its client `opentelemetry-exporter-otlp-common==0.66b1` (`http.py:203–204`), reads no answer body, and the `200` answer, an empty proto3 message, is zero bytes | **closed by V1a** (`a856ec2`, V1(i) above): a protobuf request is answered in its own encoding, zero bytes. Its premise that a stock exporter cannot decode a JSON answer survived into V1a's reason, and is run 2's R-5 |
 | R-13 | The rule is stated (V1's thread (ii)): a protobuf body declared JSON is read as JSON; V1's note undercounted it | **kept as V1(ii)**, by decision, and **the undercount is a record line, set right** in V1's entry above: 23 of the 29 raw bodies answer `200`, not Z5's alone, and 6 answer `400` |
@@ -992,13 +1124,17 @@ drift and the spec is the one a reader of the library reaches first.
   `install-check`" line was already corrected by the plan commit `9a2e40f`, and
   the plan is not a batch's file to edit. It reads as **closed by `9a2e40f`**,
   not as skipped.
-- **The commit body's "69/69 green with R2a's tests deselected" is 68**
-  (thread T9, below; recorded 2026-10-22 by B9 of the backlog series). The
-  body is immutable, so the number is corrected here and not there:
+- **The commit body's "69/69 green with R2a's tests deselected" answers one
+  deselection set, and 68 another** (thread T9, below). Under R2a's `push`
+  mutation at `7fdbff3`, deselecting its corrupted- and skipped-record tests
+  (`-k "not corrupt and not skipped"`) leaves **69 passed**, as the body says;
+  deselecting its dedup-cache test too, which R2a added for another finding,
+  leaves **68**. Two deselection sets, two numbers, re-measured on 2026-10-23.
   `tests/test_framing.py` collects 68 items at R2a's parent `9a2e40f` and 172
-  at `7fdbff3`, so deselecting R2a's framing additions leaves 68, re-collected
-  on 2026-10-22. The claim's substance stands — T9's stronger run, the parent
-  tree with its own tests under the same mutation, is 125 passed.
+  at `7fdbff3`. The claim's substance stands — T9's stronger run, the parent
+  tree with its own tests under the same mutation, is 125 passed. Recorded on
+  2026-10-22 by B9 of the backlog series, this bullet said until 2026-10-23
+  that the 69 is 68 (run 2's R-5 of the backlog series' cold review).
 
 ### R2b — the framer's cap (`d152c3b`, CI green, 6/6)
 
@@ -1521,10 +1657,10 @@ Nothing blocked run 3.
 | T6 | The R2b row's mutation criterion named the wrong assertion (the drop-mutation is caught by the diagnostic-code and byte-reconstruction assertions before `skipped_records`), the second run in which a row's criterion was imprecise — so: **a row should name the mutation, not predict which assertion fires** | **moot as a row, kept as a convention.** There are no rows left: `WORKPLAN.md` is deleted and the batch-row form went with it. `CONTRIBUTING.md`'s bar already asks for a named *mutation* ("a framer that hands partial lines over") and never for a predicted assertion, which is the convention the thread asked for. Recorded because the next series inherits the shape, not the file |
 | T7 | R2b's commit body stated a parent sha that is not the parent (`7fdbff3`, which is `d152c3b~2`); harmless only by luck, since the two trees differed solely in `WORKPLAN.md` | **closed about the rule, not about the history.** The rule *is* fixed going forward, in the place that outlives the plan: `CONTRIBUTING.md`'s "confirmed red on the parent" bullet asks for the sha `<sha>^` **resolved to**, recorded in the commit body (§0.3 of the deleted plan was the other home). But this row recorded **once** what happened **six times of the seven code commits of run 3**, every one of the six landing after the review that named T7 (`63cbcca`, the run-2 review decision, is their common ancestor) — and **four** of the six bodies use the word "**derived**" for a sha that is not. Commit bodies are immutable, so the history cannot be repaired; it is written out here instead. Each parent below was re-resolved with `git rev-parse <sha>^` on 2026-10-07: `a4ce94b`→**`63cbcca`** (R2c; body says "red on the derived parent (704ce6a"), `c1e6946`→**`33364b4`** (R5a; body says "the derived parent `33364b4^` = `a4ce94b`" — right arithmetic, wrong subject: `33364b4^` *is* `a4ce94b`, but `33364b4` is the `plan:` commit that *follows* R5a, so it is R5a's own parent and not something to take `^` of), `baa32cb`→**`afc6a7a`** (R3a; "the derived parent `c1e6946`", repeated in `CHANGELOG.md`), `8ae7a5d`→**`e033f6c`** (R6; "the code parent `baa32cb`", disclosed as such), `d21859d`→**`3f593a6`** (R7; "the derived parent `8ae7a5d`"), `c3dcab0`→**`0acbed7`** (R8; "red on parent (`d21859d`"). In every case the cited sha is `^^` — the previous **code** commit, with a `plan:` commit in between — and harmless only because the two trees differed in `WORKPLAN.md` alone; only `86183b0`, which cites no parent at all, is clean. The R5a, R3a, R6, R7 and R8 entries above printed the uncorrected sha and now print the derived one |
 | T8 | `WORKPLAN.md:213` still read "§3.4 records that the remainder has no cap", correct as dated history but a reversed claim with no forward pointer for a reader hitting it first | **moot at close** — the file is deleted — and answered here: the R1 entry above states the "no cap" position *and* the decision that replaced it, in that order, in one place |
-| T9 | R2a's commit body said "69/69 green with R2a's tests deselected", which is not reproducible: the parent tree under the same mutation is 125 passed, and deselecting R2a's framing additions gives 68 | **open as a correction of the record.** The claim's substance was confirmed by a stronger run; only the number is off. Registered because run 1 raised the same class of thing (P-3, the factor of two) and the series' credibility rests on its numbers being re-derivable **Closed by B9** (`f6b971b`, the backlog series), as a record line in R2a's entry above. This row said **open** until 2026-10-22. |
+| T9 | R2a's commit body said "69/69 green with R2a's tests deselected", which is not reproducible: the parent tree under the same mutation is 125 passed, and deselecting R2a's framing additions gives 68 | **open as a correction of the record.** The claim's substance was confirmed by a stronger run; only the number is off. Registered because run 1 raised the same class of thing (P-3, the factor of two) and the series' credibility rests on its numbers being re-derivable — **Closed by B9** (`f6b971b`, the backlog series), as a record line in R2a's entry above. This row said **open** until 2026-10-22, and its mark ran into the text above it until 2026-10-23 (run 2's R-8 of the backlog series' cold review). |
 | T10 | "a `Tail` … *is* the iterator" is literally false in four places; and §7.1's "the asymmetry is **forced**" is *chosen*, not forced — a caller-supplied event sink would let `tail` stay a generator | **closed**, and the overclaiming word corrected, with §3.1's reason kept. Not "all four by R5a", which is what this disposition used to say and is wrong twice over. **Three** places carry the corrected wording at the tip, and R5a (`c1e6946`) is the commit that wrote all three: `SPEC.md:1629`, `spanweave_live/ingest.py:431` and `CHANGELOG.md:519` (measured, `grep -n "single-use iterable"`). The **fourth** was the `WORKPLAN.md` row, and R5a did not touch it: `git show --name-only c1e6946` does not list that file, and `git log -S"single-use iterable" -- WORKPLAN.md` returns `63cbcca` and `86183b0` only. So the fourth was changed by a `plan:` commit, to words that do not contain the phrase, and then deleted with the file by `86183b0`. This thread is the finding that a *correction* contained a precision defect — "the one place a project that strikes through its own premises cannot afford one" — so a disposition repeating the defect it closes was the worst available place for one. Corrected 2026-10-07 |
 | T11 | Dynamic import escapes the gate: `importlib.import_module("time")` and `__import__("time")` both pass, so the gate's claim should be stated as "no **static** ambient import" | **closed by R5a**, as the finding's first option: the claim is stated as static. Nothing in the package imports `importlib`, and either form is conspicuous in review |
-| T12 | §4.2's measurement is load-bearing spec text with no artifact: no benchmark script or test exists, so no later reader can re-derive it, and the quoted µs ranges taken as independent bounds give a wider interval than the stated one | **open.** §4.2's conclusion — optimisation, not necessity, no batch — does not depend on the precision, so this is provenance rather than correctness. A re-runnable benchmark under `tests/` would close it; the series did not add one **Closed by B9** (`f6b971b`, the backlog series): the benchmark is `tools/bench_routing.py`, not a test because it reads the real clock, and §4.2 cites it with its date and machine as provenance. This row said **open** until 2026-10-22. |
+| T12 | §4.2's measurement is load-bearing spec text with no artifact: no benchmark script or test exists, so no later reader can re-derive it, and the quoted µs ranges taken as independent bounds give a wider interval than the stated one | **open.** §4.2's conclusion — optimisation, not necessity, no batch — does not depend on the precision, so this is provenance rather than correctness. A re-runnable benchmark under `tests/` would close it; the series did not add one — **Closed by B9** (`f6b971b`, the backlog series): the benchmark is `tools/bench_routing.py`, not a test because it reads the real clock, and §4.2 cites it with its date and machine as provenance. This row said **open** until 2026-10-22, and its mark ran into the text above it until 2026-10-23 (run 2's R-8 of the backlog series' cold review). |
 | T13 | Three protocol-text lags: §0.1 step 6's stop list did not authorize the `awaiting PR #4` stop that §3 and the R2c row did; `awaiting <batch>` bookkeeping was applied inconsistently; and one plan subject read alone misleads about which commit closed an item | **moot at close**, and none of the three affected behaviour. The status is right; "all three are text in a deleted file" was not. It holds for (i) and (ii), both `WORKPLAN.md` text. Item (iii) is an **immutable commit subject** — `7a6e6a6 plan: R2a done, and one of its items was closed by the plan commit` — which reads alone as though `7a6e6a6` closed the item, where the commit that did is `9a2e40f` (**R0-1**). A subject cannot be edited, so that one is moot because it is unreachable, not because its text was deleted; `7a6e6a6` itself changed `WORKPLAN.md` and nothing else. Recorded because the next series inherits the protocol: a stop list should name every stop its decisions authorize, a status convention should say which convention it follows, and a `plan:` subject should name the commit that closed the item |
 
 ### The record made true — the close review's eight blocking findings (2026-10-07)

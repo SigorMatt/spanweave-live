@@ -21,6 +21,97 @@ a `Router` field and a CLI flag were added (B1), `released` gained its version
 (B4) and a refusal its `Status` body (B3). Under this heading are the backlog
 series' batches B1–B10, newest first.
 
+### The series' cold review, both halves, archived byte for byte, its dispositions, and the record lines (2026-10-23)
+
+Derived parent `5a59e41`. The seventh and last of the commits that
+disposition the series' cold review. It archives both halves, dispositions
+every finding of both in `TASKS.md`, and sets right the record lines that
+answer the first half's R-1 and R-3 (H1 R-1, H1 R-3) and the second half's
+R-5, R-6, R-8, R-9 and T-3 (H2 R-5, H2 R-6, H2 R-8, H2 R-9, H2 T-3). The
+dispositions are the maintainer's, the 2026-10-23 `review` row of the backlog
+series' decisions log in `TASKS.md`. **Prose only**, and two files copied: no
+behaviour changed and no test changed, and `SPEC.md` is untouched. So, as for
+the zoo series' *The series' cold review, both halves, archived byte for
+byte, and its dispositions*, no parent run and no mutation of added code
+apply. Nothing under `tests/` reads `reviews/` but `tests/install_check.py`,
+which keeps it out of the wheel and the sdist, and no test holds an archive
+to its sha256.
+
+Added
+
+- **`reviews/2026-10-22-backlog-run1.md`** and
+  **`reviews/2026-10-23-backlog-run2.md`**, `patches/REVIEW-2026-10-22.md`
+  and `patches/REVIEW-2026-10-23.md` unchanged: each a `cp`, `cmp` silent.
+  Run 1 is 12906 bytes, sha256
+  `0736f95c01ecf502895a715ef86829ef1147a2cc2a68044116625b8deeb3be78`; run 2
+  is 33627 bytes, sha256
+  `8a1f17e1f63f0261e7db54afad780ca74938be16fbdd61fe9701e6d39c5593b6`. Both
+  are in the table under the backlog series' new *The review* in `TASKS.md`,
+  the zoo series' table, by the same columns. Until now the findings the six
+  entries below answer could not be read in a stranger's checkout.
+- **One disposition line per finding**, 26 in all, under *The review*: run
+  1's five blocking findings and one thread, and run 2's nine blocking
+  findings, five threads and six notes. Each names the commit that took it,
+  `e0ab738` to `5a59e41`, or the record line this commit sets right, or that
+  it is registered as a thread or recorded as a note.
+- **Four threads**, registered under the backlog series' *Threads,
+  registered* with the review's measurements, for the next receiver series:
+  run 1's R-4 (a mutation of B2's routing equivalent at the pin), run 1's R-6
+  (`http.server`'s own `501` and HTML `400`, neither a `Status` nor
+  counted), run 2's T-1 (the framer's mid-stream BOM depends on chunking) and
+  run 2's T-2 (a tree with no `.git` fails more than B8(i) registered).
+- **A row of the decisions log**, dated 2026-10-23, batch `review`, the
+  maintainer's: the grading by the series' merge rule as run 2 reads it, what
+  was accepted and why, what is registered and what recorded. The log now
+  says it is eight rows, and `tests/test_record.py` holds that.
+
+Fixed
+
+The record lines, set right in `TASKS.md` where each sentence was, each now
+saying what it said until 2026-10-23:
+
+- **B1's entry** names `3ceb8df`'s derived parent, `11a1452`, which its body
+  does not (H1 R-1).
+- **Under the batches table**: B1–B9 were each marked `done` before any CI
+  ran on their tips; CI ran at the run tips `72d60e8` and `6aa7750`, green on
+  all seven jobs; the plan's §2 and §0.1 step 8 disagreed, and the next plan
+  carries one rule (H1 R-3, H2 R-9).
+- **R2a's entry** (the receiver series): R2a's "69" reproduces with its
+  corrupted- and skipped-record tests deselected, and 68 is with its
+  dedup-cache test deselected too (H2 R-5). The open-items row for T9 says
+  so.
+- **The folded §4's two pointers** say the counts are in the plan's §4 at
+  `fff8a9e`, not in B1–B6's or `57ad222`'s bodies (H2 R-6).
+- **The open-items table's row for zoo run 1's R-14** reads as the plan had
+  it ("is 16"), with a note that B9 measured 19; **zoo run 1's R-10** carries
+  its deferral mark; and **the receiver series' T9 and T12 marks** stand
+  apart from the text they close (H2 R-8).
+- **The zoo series' *What remains before the merge*** says PR #2 merged at
+  `2478e2c` (H2 T-3).
+
+Measured for this entry, in the main checkout at the parent unless named:
+
+- **The archives**: `cmp` printed nothing for either, `sha256sum` gave the
+  two digests above, and `wc -c` the two sizes. `git check-ignore` does not
+  ignore them.
+- **CI**: `gh run list --branch backlog` and `gh run view`, read-only, give
+  runs at `11a1452`, `72d60e8` and `6aa7750` only, all seven jobs green at
+  the two run tips; the ruleset's required checks, read with `gh api`, are
+  the seven names `TASKS.md` lists.
+- **R2a's 69 and 68**, in a worktree at `7fdbff3` with its `corpus/` pin:
+  R2a's mutation, `push` reporting `skipped_records=0`, is 52 failed /
+  120 passed over `tests/test_framing.py`; with
+  `-k "not corrupt and not skipped"` it is 69 passed, and with
+  `and not dedup` added, 68.
+- **The counts' places**: `git log -1 --format=%B` of B1–B6 gives no
+  `make check` count; the plan's §4 at `fff8a9e` gives each of B1–B9's,
+  and the 82, 164 and 1822 of B2's measurement; B10's body gives its own.
+- **The merge**: `2478e2c`'s parents are `cddc694` and `6024cb1`, "Merge pull
+  request #2 from SigorMatt/zoo".
+
+`make install-check` was run, because `reviews/` grew and the install check is
+what keeps it out of what ships.
+
 ### The record of the series' reasons and counts made true (2026-10-23)
 
 Derived parent `50acb4f`. The sixth of the commits that disposition the
