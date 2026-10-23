@@ -1000,6 +1000,85 @@ def test_a_late_record_opens_a_new_builder_and_says_so_with_the_gap():
     assert router.builder("t1") is late.builder
 
 
+def test_pin_a_late_arrival_s_event_carries_no_version():
+    """A pin, green on its parent: no behaviour changed for it (`SPEC.md` §4.1).
+
+    `Event.version` is "`None` for every code that is not about one", and
+    `late_arrival` is about a gap, not a version: the record it reports is
+    absorbed at version 1 of generation 2, and the event carries neither
+    number. `Routed.version` is where the absorption's version is.
+    """
+    clock = Clock()
+    router = router_with(Cap(1), clock=clock)
+    router.route(openinference("a"))
+    assert len(router.tick()) == 1
+
+    clock.tick(1.0)
+    late = router.route(openinference("b"))
+    (event,) = late.events
+    assert event.code == LATE_ARRIVAL
+    assert event.version is None
+    assert late.version == 1
+    assert "generation 2" in event.detail
+
+
+def test_pin_a_late_unclaimed_record_at_a_full_unclaimed_bound_is_refused():
+    """A pin, green on its parent: no behaviour changed for it (`SPEC.md` §5.5).
+
+    B1's clause of §5.5: a late record no adapter claims, for a completed
+    trace, at a full `max_unclaimed_traces`, is `refused_at_cap`; the trace
+    stays completed and no `late_arrival` is emitted. With a free place, the
+    same record is admitted as `late_arrival`, and the gap it carries runs
+    from the original completion, which is what "stays completed" means.
+
+    `max_unclaimed_traces=1` and `Cap(1)`: health check 0 is completed at the
+    first tick, health check 1 takes the one place 2 s later, and health
+    check 0's record again 3 s after that is refused. The tick then completes
+    health check 1, and the same record 4 s later is a `late_arrival` with a
+    gap of 9 s.
+    """
+    from tests.test_routing import health_check
+
+    t0, t1 = f"{0:032x}", f"{1:032x}"
+    clock = Clock()
+    router = router_with(Cap(1), clock=clock, max_unclaimed_traces=1)
+    (late_record,) = health_check(0)
+    assert router.route(late_record).events == ()
+    (first,) = router.tick()
+    assert first.trace_id == t0
+
+    clock.tick(2.0)
+    (other,) = health_check(1)
+    assert router.route(other).events == ()
+    assert router.trace_ids == (t1,)
+
+    clock.tick(3.0)
+    refused = router.route(late_record)
+    (event,) = refused.events
+    assert event.code == REFUSED_AT_CAP
+    assert event.trace_id == t0
+    assert "max_unclaimed_traces" in event.detail
+    assert refused.builder is None and refused.version is None
+    assert router.trace_ids == (t1,)
+    assert LATE_ARRIVAL not in router.counts
+
+    (second,) = router.tick()
+    assert second.trace_id == t1
+    assert router.trace_ids == ()
+
+    clock.tick(4.0)
+    admitted = router.route(late_record)
+    (late,) = admitted.events
+    assert late.code == LATE_ARRIVAL
+    assert late.trace_id == t0
+    assert late.seconds == 9.0, "the gap runs from the original completion"
+    assert "generation 2" in late.detail
+    assert admitted.builder is not None and admitted.version == 1
+    assert router.trace_ids == (t0,)
+    assert router.counts[REFUSED_AT_CAP] == 1
+    assert router.counts[LATE_ARRIVAL] == 1
+
+
 def test_a_late_arrival_is_never_silent():
     """The event is the whole point: a vanished builder with nothing said about
     it is the silence this project does not do (`§1.5`)."""

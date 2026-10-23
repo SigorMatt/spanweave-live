@@ -21,6 +21,32 @@ a `Router` field and a CLI flag were added (B1), `released` gained its version
 (B4) and a refusal its `Status` body (B3). Under this heading are the backlog
 series' batches B1–B10, newest first.
 
+### The late arrivals pinned, at a full unclaimed bound and in their version (2026-10-23)
+
+Derived parent `e0ab738`. The second of the commits that disposition the
+series' cold review, answering the first half's R-2 (H1 R-2) and the second
+half's T-5 (H2 T-5). Two sentences of `SPEC.md` were true in the code and
+held by no test. **No behaviour changed** and `SPEC.md` is not edited: both
+sentences already say what the code does. The new tests are pins, green on
+the parent, and say so.
+
+Added
+
+- **A pin for §5.5's clause from B1** in `tests/test_completion.py`: a late
+  record no adapter claims, for a completed trace, at a full
+  `max_unclaimed_traces`, is `refused_at_cap` naming that bound, the trace
+  stays completed, and no `late_arrival` is emitted. Under `Cap(1)` and
+  `max_unclaimed_traces=1`, health check 0 is completed, health check 1 takes
+  the one place, and health check 0's record again is refused; once the tick
+  completes health check 1, the same record is admitted as `late_arrival`,
+  with the gap running from the original completion.
+- **A pin for §4.1's "`None` for every code that is not about one"**:
+  `late_arrival`'s `Event.version` is `None`, while `Routed.version` carries
+  the absorption's version.
+- **Mutations shown caught**: the late record admitted at a full unclaimed
+  bound, and `version=book.generation` on the `late_arrival` event, are each
+  red on their pin alone, suite-wide.
+
 ### §5.2 says which reading opens a book attached mid-stream (2026-10-23)
 
 Derived parent `6aa7750`. The first of the commits that disposition the
